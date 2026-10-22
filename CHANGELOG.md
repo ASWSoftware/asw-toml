@@ -25,5 +25,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   error, which converts to `true` when it succeeded). A column counts characters (Unicode code
   points) from 1, and a path is written in TOML's dotted-key syntax (`server."host name".port`).
   `ToString()` names a code, a line break or a severity, and writes a message as one line of text.
+- `TASWTomlOptions` (`ASWToml_Options.h`), the settings for TOML files in three groups:
+  - `Reading` (`TASWTomlReadingOptions`): the largest file loaded (16 MiB) and how many arrays and
+    inline tables a value may have inside one another (100; a deeper value fails the load with
+    `NestingTooDeep`).
+  - `Writing` (`TASWTomlWritingOptions`): the comment prefix of new comment lines (`"# "`), the
+    line ending (`ELineEnding`) and byte order mark (`EBomMode`), both as the loaded file had them
+    by default, and a blank line before a new table (on).
+  - `Saving` (`TASWTomlSavingOptions`): atomic saves (on), backups (off, `.bak`) and creating
+    missing folders (on).
+
+  Each group's `Validate()` checks its own settings (e.g. the comment prefix must start with `#`
+  and hold only what a TOML comment may), and `TASWTomlOptions::Validate()` checks the three; a
+  problem is `ETomlCode::InvalidOptions` with a message naming the setting.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

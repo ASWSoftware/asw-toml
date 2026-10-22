@@ -116,6 +116,10 @@
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
     </PropertyGroup>
     <ItemGroup>
+        <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Options.cpp">
+            <DependentOn>..\..\..\..\ASWToml\ASWToml_Options.h</DependentOn>
+            <BuildOrder>51</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Types.cpp">
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Types.h</DependentOn>
             <BuildOrder>47</BuildOrder>
@@ -127,6 +131,10 @@
         <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Version.cpp">
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Version.h</DependentOn>
             <BuildOrder>2</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\..\tests\Test_ASWToml_Options.cpp">
+            <DependentOn>..\..\..\tests\Test_ASWToml_Options.h</DependentOn>
+            <BuildOrder>52</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\tests\Test_ASWToml_Types.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_Types.h</DependentOn>

@@ -98,6 +98,10 @@
         <TASM_Debugging>None</TASM_Debugging>
     </PropertyGroup>
     <ItemGroup>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Options.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Options.h</DependentOn>
+            <BuildOrder>19</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_Types.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Types.h</DependentOn>
             <BuildOrder>15</BuildOrder>
@@ -114,6 +118,10 @@
             <BuildOrder>0</BuildOrder>
             <PCH>true</PCH>
         </PCHCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_Options.cpp">
+            <DependentOn>..\tests\Test_ASWToml_Options.h</DependentOn>
+            <BuildOrder>20</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\tests\Test_ASWToml_Types.cpp">
             <DependentOn>..\tests\Test_ASWToml_Types.h</DependentOn>
             <BuildOrder>17</BuildOrder>

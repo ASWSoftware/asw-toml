@@ -1,0 +1,226 @@
+/* **************************************************************************
+ASWToml_Options.cpp
+Author: Anthony S. West - ASW Software
+
+See header for info.
+
+Copyright 2026 ASW Software
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+************************************************************************** */
+
+//---------------------------------------------------------------------------
+// Module header
+#include "ASWToml_Options.h"
+//---------------------------------------------------------------------------
+#include <string>
+#include <string_view>
+#include <utility>
+//---------------------------------------------------------------------------
+#include "ASWToml_Utils.h"
+//---------------------------------------------------------------------------
+
+namespace ASWToml
+{
+
+namespace
+{
+
+bool HasCommentControlCharacter(std::string_view text) noexcept;
+bool HasLineBreakOrNul(std::string_view text) noexcept;
+TASWTomlResult Invalid(std::string message);
+
+//---------------------------------------------------------------------------
+/*
+    HasCommentControlCharacter
+
+    Whether 'text' holds a control character that TOML doesn't allow in a comment: U+0000 to U+0008, U+000A to U+001F
+    or U+007F (a tab is allowed)
+*/
+bool HasCommentControlCharacter(std::string_view text) noexcept
+{
+    for (char const c : text)
+    {
+        unsigned char const byte = static_cast<unsigned char>(c);
+
+        if ((byte < 0x20 && byte != '\t') || byte == 0x7F)
+            return true;
+    }
+
+    return false;
+}
+//---------------------------------------------------------------------------
+/*
+    HasLineBreakOrNul
+
+    Whether 'text' has a line break or a NUL, which no file name may have
+*/
+bool HasLineBreakOrNul(std::string_view text) noexcept
+{
+    return text.find_first_of(std::string_view("\r\n\0", 3)) != std::string_view::npos;
+}
+//---------------------------------------------------------------------------
+/*
+    Invalid
+
+    An InvalidOptions result with 'message'
+*/
+TASWTomlResult Invalid(std::string message)
+{
+    TASWTomlResult result;
+    result.Code = ETomlCode::InvalidOptions;
+    result.Message = std::move(message);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+
+} // namespace
+
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+char const* ToString(EBomMode bom) noexcept
+{
+    switch (bom)
+    {
+        case EBomMode::Auto:
+            return "Auto";
+
+        case EBomMode::Always:
+            return "Always";
+
+        case EBomMode::Never:
+            return "Never";
+    }
+
+    return "Unknown";
+}
+//---------------------------------------------------------------------------
+char const* ToString(ELineEnding lineEnding) noexcept
+{
+    switch (lineEnding)
+    {
+        case ELineEnding::Auto:
+            return "Auto";
+
+        case ELineEnding::Native:
+            return "Native";
+
+        case ELineEnding::LF:
+            return "LF";
+
+        case ELineEnding::CRLF:
+            return "CRLF";
+    }
+
+    return "Unknown";
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlReadingOptions
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlReadingOptions::Validate() const
+{
+    if (MaxFileSize == 0)
+        return Invalid("Reading.MaxFileSize is 0; no file could be loaded.");
+
+    if (MaxNestingDepth == 0)
+        return Invalid("Reading.MaxNestingDepth is 0; no array or inline table could be read.");
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlWritingOptions
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlWritingOptions::Validate() const
+{
+    // CommentPrefix: a comment as TOML reads it, so a written comment line reads back
+    if (CommentPrefix.empty() || CommentPrefix[0] != '#')
+    {
+        return Invalid("Writing.CommentPrefix \"" + CommentPrefix +
+            "\" must start with '#', the only comment character in TOML.");
+    }
+
+    if (HasCommentControlCharacter(CommentPrefix))
+        return Invalid("Writing.CommentPrefix holds a control character other than a tab (e.g. a line break).");
+
+    if (!Detail::IsValidUtf8(CommentPrefix))
+        return Invalid("Writing.CommentPrefix isn't valid UTF-8.");
+
+    // The enumerations, in case one was cast from a number
+    if (std::string_view(ToString(LineEnding)) == "Unknown")
+        return Invalid("Writing.LineEnding isn't one of the ELineEnding values.");
+
+    if (std::string_view(ToString(Bom)) == "Unknown")
+        return Invalid("Writing.Bom isn't one of the EBomMode values.");
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlSavingOptions
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlSavingOptions::Validate() const
+{
+    if (Backup)
+    {
+        if (BackupSuffix.empty())
+            return Invalid("Saving.BackupSuffix is empty, so the backup would replace the file itself.");
+
+        if (HasLineBreakOrNul(BackupSuffix) || BackupSuffix.find_first_of("/\\:") != std::string::npos)
+        {
+            return Invalid("Saving.BackupSuffix \"" + BackupSuffix +
+                "\" can't hold '/', '\\', ':', line breaks or NUL.");
+        }
+    }
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlOptions
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlOptions::Validate() const
+{
+    TASWTomlResult result = Reading.Validate();
+    if (!result.IsOk())
+        return result;
+
+    result = Writing.Validate();
+    if (!result.IsOk())
+        return result;
+
+    return Saving.Validate();
+}
+//---------------------------------------------------------------------------
+
+} // namespace ASWToml

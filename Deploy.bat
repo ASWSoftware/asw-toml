@@ -46,6 +46,10 @@ if errorlevel 1 exit /b 1
 call :CopyFile "cmake\ASWTomlConfig.cmake.in" "%TARGET_DIR%\cmake\ASWTomlConfig.cmake.in"
 if errorlevel 1 exit /b 1
 
+call :CopyFile "ASWToml\ASWToml_Options.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Options.cpp"
+if errorlevel 1 exit /b 1
+call :CopyFile "ASWToml\ASWToml_Options.h" "%TARGET_DIR%\ASWToml\ASWToml_Options.h"
+if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Types.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Types.cpp"
 if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Types.h" "%TARGET_DIR%\ASWToml\ASWToml_Types.h"

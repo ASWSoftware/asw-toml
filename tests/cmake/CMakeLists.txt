@@ -40,6 +40,7 @@ endif()
 
 add_executable(ASWTomlTests
     ${ASWUNITTESTS_SOURCES}
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Options.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Types.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Utils.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Version.cpp"
