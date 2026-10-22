@@ -35,6 +35,10 @@ set(ASWTOML_SANITIZE "" CACHE STRING
 set_property(CACHE ASWTOML_SANITIZE PROPERTY STRINGS "" thread address)
 
 add_library(ASWToml STATIC
+    ASWToml/ASWToml_Types.cpp
+    ASWToml/ASWToml_Types.h
+    ASWToml/ASWToml_Utils.cpp
+    ASWToml/ASWToml_Utils.h
     ASWToml/ASWToml_Version.cpp
     ASWToml/ASWToml_Version.h
 )

@@ -17,5 +17,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Threads::Threads`), with install rules and a CMake package, so `find_package(ASWToml CONFIG)`
   finds an installed copy (and the threads library).
 - `Deploy.bat`, which copies the library sources, build files and docs to a folder.
+- The shared types in `ASWToml_Types.h`: `ETomlCode` (what happened, with values that never change),
+  `ELineBreak` (`None`, `LF` or `CRLF`: the line break that ends a line), `ESeverity`,
+  `TASWTomlMessage` (a warning or error for the application's log callback, with the file, line,
+  column, path of the key or table, and system error it is about), `TMessageVector` (a list of
+  messages) and `TASWTomlResult` (an operation's outcome, with the file, line and column of an
+  error, which converts to `true` when it succeeded). A column counts characters (Unicode code
+  points) from 1, and a path is written in TOML's dotted-key syntax (`server."host name".port`).
+  `ToString()` names a code, a line break or a severity, and writes a message as one line of text.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop
