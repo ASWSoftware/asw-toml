@@ -38,5 +38,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Each group's `Validate()` checks its own settings (e.g. the comment prefix must start with `#`
   and hold only what a TOML comment may), and `TASWTomlOptions::Validate()` checks the three; a
   problem is `ETomlCode::InvalidOptions` with a message naming the setting.
+- The file layer that loading and saving will use (`ASWToml_File.cpp`, internal): whole files read
+  and written in binary mode with the operating system's own file APIs, a size limit on reads, and
+  saves that replace the file atomically (keeping its attributes on Windows, and its permissions
+  and symbolic link elsewhere), with an optional backup and missing folders created. File paths
+  are UTF-8: `ASWToml::PathToUtf8()` and `ASWToml::Utf8ToPath()` (`ASWToml_File.h`, its only
+  public part) convert a `std::filesystem::path` to and from that form on every platform, e.g.
+  `ASWToml::PathToUtf8(folder / "app.toml")` (on Windows through the path's wide form, since a
+  narrow `std::filesystem::path` string is in the ANSI code page with MSVC and libc++; text that
+  isn't valid UTF-8 or UTF-16 converts with U+FFFD instead of failing).
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

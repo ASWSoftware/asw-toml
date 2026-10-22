@@ -7,8 +7,10 @@ Windows and Linux, which keeps the file's comments and layout.
 
 ASWToml is in development toward 1.0.0; the `develop` branch carries `1.0.0-dev.N` versions. So far
 it has the project structure, the version (`ASWToml_Version.h`), the CMake target and package, the
-unit-test projects and CI. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The interface
-may change in any way until 1.0.0.
+unit-test projects and CI, and the foundations the rest builds on: the shared result and message
+types (`ASWToml_Types.h`), the options (`ASWToml_Options.h`) and the file layer with its UTF-8 path
+conversions (`ASWToml_File.h`). Reading and writing TOML comes next. [CHANGELOG.md](CHANGELOG.md)
+lists what each change adds. The interface may change in any way until 1.0.0.
 
 ## Design
 

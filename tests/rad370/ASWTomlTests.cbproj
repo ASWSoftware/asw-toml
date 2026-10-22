@@ -98,6 +98,10 @@
         <TASM_Debugging>None</TASM_Debugging>
     </PropertyGroup>
     <ItemGroup>
+        <CppCompile Include="..\..\ASWToml\ASWToml_File.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_File.h</DependentOn>
+            <BuildOrder>21</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_Options.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Options.h</DependentOn>
             <BuildOrder>19</BuildOrder>
@@ -118,6 +122,10 @@
             <BuildOrder>0</BuildOrder>
             <PCH>true</PCH>
         </PCHCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_File.cpp">
+            <DependentOn>..\tests\Test_ASWToml_File.h</DependentOn>
+            <BuildOrder>22</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\tests\Test_ASWToml_Options.cpp">
             <DependentOn>..\tests\Test_ASWToml_Options.h</DependentOn>
             <BuildOrder>20</BuildOrder>
@@ -133,6 +141,10 @@
         <CppCompile Include="..\tests\Test_ASWToml_Version.cpp">
             <DependentOn>..\tests\Test_ASWToml_Version.h</DependentOn>
             <BuildOrder>2</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\tests\UT_Helper_TempDir.cpp">
+            <DependentOn>..\tests\UT_Helper_TempDir.h</DependentOn>
+            <BuildOrder>23</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\third_party\asw-unit-tests\src\ASWUnitTests_CLI.cpp">
             <DependentOn>..\..\third_party\asw-unit-tests\src\ASWUnitTests_CLI.h</DependentOn>
