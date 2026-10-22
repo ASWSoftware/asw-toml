@@ -34,9 +34,13 @@ if not exist "%TARGET_DIR%\ASWToml\." (
     )
 )
 
+call :CopyFile "CHANGELOG.md" "%TARGET_DIR%\CHANGELOG.md"
+if errorlevel 1 exit /b 1
 call :CopyFile "CMakeLists.txt" "%TARGET_DIR%\CMakeLists.txt"
 if errorlevel 1 exit /b 1
 call :CopyFile "LICENSE" "%TARGET_DIR%\LICENSE"
+if errorlevel 1 exit /b 1
+call :CopyFile "README.md" "%TARGET_DIR%\README.md"
 if errorlevel 1 exit /b 1
 
 call :CopyFile "cmake\ASWTomlConfig.cmake.in" "%TARGET_DIR%\cmake\ASWTomlConfig.cmake.in"
