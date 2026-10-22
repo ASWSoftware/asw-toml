@@ -1,0 +1,48 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{B4883673-C55B-429C-B607-DC32A74318CC}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="ASWTomlTests_VCL_GUI.cbproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="..\..\..\rad370\ASWTomlTests.cbproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="ASWTomlTests_VCL_GUI">
+        <MSBuild Projects="ASWTomlTests_VCL_GUI.cbproj"/>
+    </Target>
+    <Target Name="ASWTomlTests_VCL_GUI:Clean">
+        <MSBuild Projects="ASWTomlTests_VCL_GUI.cbproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ASWTomlTests_VCL_GUI:Make">
+        <MSBuild Projects="ASWTomlTests_VCL_GUI.cbproj" Targets="Make"/>
+    </Target>
+    <Target Name="ASWTomlTests">
+        <MSBuild Projects="..\..\..\rad370\ASWTomlTests.cbproj"/>
+    </Target>
+    <Target Name="ASWTomlTests:Clean">
+        <MSBuild Projects="..\..\..\rad370\ASWTomlTests.cbproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ASWTomlTests:Make">
+        <MSBuild Projects="..\..\..\rad370\ASWTomlTests.cbproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="ASWTomlTests_VCL_GUI;ASWTomlTests"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="ASWTomlTests_VCL_GUI:Clean;ASWTomlTests:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="ASWTomlTests_VCL_GUI:Make;ASWTomlTests:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
