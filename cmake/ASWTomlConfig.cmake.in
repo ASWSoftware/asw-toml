@@ -1,0 +1,13 @@
+# The CMake package file of an installed ASWToml (see the root CMakeLists.txt). After
+#     find_package(ASWToml CONFIG REQUIRED)
+# link to the ASWToml::ASWToml target.
+
+@PACKAGE_INIT@
+
+# ASWToml::ASWToml links to Threads::Threads
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+
+include("${CMAKE_CURRENT_LIST_DIR}/ASWTomlTargets.cmake")
+
+check_required_components(ASWToml)
