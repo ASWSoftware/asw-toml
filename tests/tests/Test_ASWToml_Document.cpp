@@ -19,12 +19,15 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
+#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -48,6 +51,7 @@ namespace
 using namespace std::string_literals;
 
 using ASWToml::ELineBreak;
+using ASWToml::ELineEnding;
 using ASWToml::ETomlCode;
 using ASWToml::TASWTomlDocument;
 using ASWToml::TASWTomlOptions;
@@ -71,6 +75,9 @@ using TExpectedMap = std::map<std::string, std::pair<std::string, std::string> >
 
 // The values of a document by their paths, in the corpus's form
 using TValueMap = std::map<std::string, TASWTomlValue const*>;
+
+// How many texts of a fuzz test ended with each code
+using TCodeCountMap = std::map<ETomlCode, std::size_t>;
 
 // The UTF-8 byte order mark
 std::string const Bom = "\xEF\xBB\xBF";
@@ -153,18 +160,51 @@ std::string const LookupText =
     "name = \"p1\"\n"
     "tags = [{ k = 1 }]\n";
 
+// The fuzz tests: the seed of the first random text, and how many texts each test makes
+constexpr std::uint32_t FuzzFirstSeed = 20261023;
+constexpr std::size_t FuzzTextCount = 4000;
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TCorpusText
+//
+// A text of the round-trip corpus, and the values it reads as
+/////////////////////////////////////////////////////////////////////////////
+struct TCorpusText
+{
+    std::string Name;
+    std::string Text;
+    TASWTomlValue Expected; // The root table, with each table's keys in the order the text defines them
+};
+
+// The round-trip corpus
+using TCorpusTextVector = std::vector<TCorpusText>;
+
+
 std::string CorpusEscaped(std::string_view text);
 char const* CorpusType(TASWTomlValue const& value) noexcept;
 ASWToml::TASWTomlOptions DepthOptions(std::size_t maxDepth);
 std::string Escaped(std::string const& text);
 TExpectedMap ExpectedValues(std::string_view expected);
+std::string FindFailure(TASWTomlDocument const& document, TASWTomlValue const& value,
+    ASWToml::TASWTomlPath const& path);
 void FlattenValues(TASWTomlValue const& value, std::string const& path, TValueMap& values);
+bool IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& right);
+bool IsInText(ASWToml::TASWTomlResult const& result, std::string_view text);
 std::string KeyList(TASWTomlValue const& value);
+std::string MutatedText(std::mt19937& generator, std::string_view source);
 std::string NestedArrays(std::size_t depth);
 std::string NestedArraysOfTables(std::size_t count);
 std::string NestedInlineTables(std::size_t depth);
+std::string RandomDocumentText(std::mt19937& generator);
+std::string RandomKey(std::mt19937& generator);
+ASWToml::TASWTomlOptions RandomOptions(std::mt19937& generator);
+std::string RandomPieceText(std::mt19937& generator);
+std::string RandomValueText(std::mt19937& generator, std::size_t depth);
+TCorpusTextVector RoundTripCorpus();
 bool SameValue(std::string const& expected, TASWTomlValue const& value);
 std::string ValuesDiffer(ASWUnitTests::TTomlTestFile const& file, TASWTomlValue const& root);
+std::string WithLineBreaks(std::string_view text, std::string_view lineBreak);
 
 //---------------------------------------------------------------------------
 /*
@@ -324,6 +364,42 @@ TExpectedMap ExpectedValues(std::string_view expected)
 }
 //---------------------------------------------------------------------------
 /*
+    FindFailure
+
+    The path of the first value at or in 'value', which is at 'path' in 'document', that Find() doesn't give, by that
+    path or by the path read back from its ToString(); empty when Find() gives each one
+*/
+std::string FindFailure(TASWTomlDocument const& document, TASWTomlValue const& value,
+    ASWToml::TASWTomlPath const& path)
+{
+    if (document.Find(path) != &value || document.Find(ASWToml::TASWTomlPath(path.ToString())) != &value)
+        return "\"" + Escaped(path.ToString()) + "\"";
+
+    if (TTable const* const table = value.AsTable())
+    {
+        for (ASWToml::TASWTomlKeyValue const& keyValue : *table)
+        {
+            ASWToml::TASWTomlPath child = path;
+            std::string failure = FindFailure(document, keyValue.Value, child.Append(keyValue.Key));
+            if (!failure.empty())
+                return failure;
+        }
+    }
+    else if (TArray const* const array = value.AsArray())
+    {
+        for (std::size_t i = 0; i < array->size(); ++i)
+        {
+            ASWToml::TASWTomlPath child = path;
+            std::string failure = FindFailure(document, (*array)[i], child.Append(i));
+            if (!failure.empty())
+                return failure;
+        }
+    }
+
+    return std::string();
+}
+//---------------------------------------------------------------------------
+/*
     FlattenValues
 
     Adds 'value', at 'path' in the corpus's form, and the values in it to 'values'
@@ -345,6 +421,88 @@ void FlattenValues(TASWTomlValue const& value, std::string const& path, TValueMa
 }
 //---------------------------------------------------------------------------
 /*
+    IdenticalValues
+
+    Whether 'left' and 'right' are the same values in the same order: each table's keys in the same order, and two
+    floats the same number with the same sign (two NaNs are the same when their signs are)
+*/
+bool IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& right)
+{
+    if (left.GetType() != right.GetType())
+        return false;
+
+    if (double const* const number = left.AsFloat())
+    {
+        double const other = *right.AsFloat();
+        bool const same = std::isnan(*number) ? std::isnan(other) : *number == other;
+
+        return same && std::signbit(*number) == std::signbit(other);
+    }
+
+    if (TArray const* const array = left.AsArray())
+    {
+        TArray const& others = *right.AsArray();
+        if (array->size() != others.size())
+            return false;
+
+        for (std::size_t i = 0; i < array->size(); ++i)
+        {
+            if (!IdenticalValues((*array)[i], others[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+    if (TTable const* const table = left.AsTable())
+    {
+        TTable const& others = *right.AsTable();
+        if (table->size() != others.size())
+            return false;
+
+        for (std::size_t i = 0; i < table->size(); ++i)
+        {
+            if ((*table)[i].Key != others[i].Key || !IdenticalValues((*table)[i].Value, others[i].Value))
+                return false;
+        }
+
+        return true;
+    }
+
+    return left == right;
+}
+//---------------------------------------------------------------------------
+/*
+    IsInText
+
+    Whether the Line and Column of 'result' are a place in 'text' (after a UTF-8 byte order mark, which isn't
+    counted): a line it has, and a character of that line or the place after its last one
+*/
+bool IsInText(ASWToml::TASWTomlResult const& result, std::string_view text)
+{
+    if (text.substr(0, Bom.size()) == Bom)
+        text.remove_prefix(Bom.size());
+
+    if (result.Line == 0 || result.Column == 0)
+        return false;
+
+    std::size_t start = 0;
+    for (std::size_t line = 1; line < result.Line; ++line)
+    {
+        std::size_t const lineFeed = text.find('\n', start);
+        if (lineFeed == std::string_view::npos)
+            return false;
+
+        start = lineFeed + 1;
+    }
+
+    std::size_t const end = text.find('\n', start);
+    std::string_view const line = text.substr(start, end == std::string_view::npos ? end : end - start);
+
+    return result.Column <= ASWToml::Detail::CountCodePoints(line) + 1;
+}
+//---------------------------------------------------------------------------
+/*
     KeyList
 
     The keys of the table 'value' in order, separated by spaces; empty when it isn't a table
@@ -360,6 +518,72 @@ std::string KeyList(TASWTomlValue const& value)
     }
 
     return list;
+}
+//---------------------------------------------------------------------------
+/*
+    MutatedText
+
+    'source' with one to three random edits: a byte replaced, inserted or deleted, the text cut off, or a line
+    repeated, deleted or swapped with another (which makes keys and tables defined twice, or out of order)
+*/
+std::string MutatedText(std::mt19937& generator, std::string_view source)
+{
+    char const bytes[] = {
+        '[', ']', '{', '}', '=', ',', '.', '"', '\'', '#', '\n', '\r', ' ', '\t', 'a', '1', '-', ':', '\\',
+        '\x7F', '\xC3', '\xFF', '\0',
+    };
+
+    std::string text(source);
+    std::size_t const editCount = 1 + generator() % 3;
+
+    for (std::size_t edit = 0; edit < editCount; ++edit)
+    {
+        std::uint32_t const kind = static_cast<std::uint32_t>(generator() % 7);
+        std::size_t const offset = generator() % (text.size() + 1);
+        char const byte = bytes[generator() % sizeof(bytes)];
+
+        if (kind < 4)
+        {
+            if (kind == 0 && offset < text.size())
+                text[offset] = byte;
+            else if (kind == 1)
+                text.insert(offset, 1, byte);
+            else if (kind == 2 && offset < text.size())
+                text.erase(offset, 1);
+            else
+                text.resize(offset);
+
+            continue;
+        }
+
+        // The lines, each with its line feed
+        TStringVector lines;
+        for (std::size_t start = 0; start < text.size();)
+        {
+            std::size_t const end = std::min(text.find('\n', start), text.size() - 1) + 1;
+            lines.push_back(text.substr(start, end - start));
+            start = end;
+        }
+
+        if (lines.empty())
+            continue;
+
+        std::size_t const first = generator() % lines.size();
+        std::size_t const second = generator() % lines.size();
+        std::string const repeated = lines[first];
+        if (kind == 4)
+            lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(second), repeated);
+        else if (kind == 5)
+            lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(first));
+        else
+            std::swap(lines[first], lines[second]);
+
+        text.clear();
+        for (std::string const& line : lines)
+            text += line;
+    }
+
+    return text;
 }
 //---------------------------------------------------------------------------
 /*
@@ -408,6 +632,410 @@ std::string NestedInlineTables(std::size_t depth)
         text += " }";
 
     return text + "\n";
+}
+//---------------------------------------------------------------------------
+/*
+    RandomDocumentText
+
+    A random TOML text of up to 11 lines: blank and comment lines, headers, headers of arrays of tables, and keys
+    with values (of every kind, arrays and inline tables included, over several lines at times), with LF or CRLF
+    line breaks and at times a byte order mark. The keys come from a few names, so a key or table is often defined
+    twice or in a way TOML's table rules forbid.
+*/
+std::string RandomDocumentText(std::mt19937& generator)
+{
+    std::string text = generator() % 16 == 0 ? Bom : std::string();
+    std::size_t const lineCount = generator() % 12;
+
+    for (std::size_t line = 0; line < lineCount; ++line)
+    {
+        if (generator() % 6 == 0)
+            text += generator() % 2 == 0 ? "  " : "\t";
+
+        std::uint32_t const kind = static_cast<std::uint32_t>(generator() % 12);
+        if (kind == 1)
+        {
+            text += "# comment";
+        }
+        else if (kind == 2 || kind == 3)
+        {
+            text += "[" + RandomKey(generator) + "]";
+        }
+        else if (kind == 4)
+        {
+            text += "[[" + RandomKey(generator) + "]]";
+        }
+        else if (kind > 4)
+        {
+            char const* const equals[] = { " = ", "=", " =\t" };
+            text += RandomKey(generator) + equals[generator() % 3] + RandomValueText(generator, 0);
+        }
+
+        if (kind != 1 && generator() % 4 == 0)
+            text += " # comment";
+
+        if (line + 1 < lineCount || generator() % 2 == 0)
+            text += generator() % 3 == 0 ? "\r\n" : "\n";
+    }
+
+    return text;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomKey
+
+    A random key: mostly one part, else two or three separated by dots (with blanks around them at times), each a
+    bare key or a basic or literal string from a few names, some of them the same key written another way
+*/
+std::string RandomKey(std::mt19937& generator)
+{
+    char const* const names[] = { "a", "b", "c", "a", "b", "\"a\"", "'b'", "\"x.y\"", "\"\"", "1", "k-2" };
+    char const* const dots[] = { ".", ".", " . ", "\t.\t" };
+
+    std::size_t const count = generator() % 3 == 0 ? 2 + generator() % 2 : 1;
+    std::string key = names[generator() % (sizeof(names) / sizeof(names[0]))];
+    for (std::size_t i = 1; i < count; ++i)
+        key += std::string(dots[generator() % 4]) + names[generator() % (sizeof(names) / sizeof(names[0]))];
+
+    return key;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomOptions
+
+    Default options, but one time in four with a Reading.MaxNestingDepth of 1 to 4, so values nest too deep
+*/
+ASWToml::TASWTomlOptions RandomOptions(std::mt19937& generator)
+{
+    ASWToml::TASWTomlOptions options;
+    if (generator() % 4 == 0)
+        options.Reading.MaxNestingDepth = 1 + generator() % 4;
+
+    return options;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomPieceText
+
+    A random text of up to 30 pieces of TOML from a weighted alphabet (brackets, braces, keys, '=', values, commas,
+    blanks, comments and line breaks most often, then quotes, a carriage return, a byte order mark and bytes that
+    aren't UTF-8), which is seldom valid TOML
+*/
+std::string RandomPieceText(std::mt19937& generator)
+{
+    std::string const pieces[] = {
+        "[", "[", "]", "]", "[[", "]]", "{", "{", "}", "}", "=", " = ", " = ", ",", ",", ".", "a", "a", "b", "b",
+        "\"k\"", "'k'", "1", "1", "\"s\"", "[1]", "{}", "true", "1979-05-27", "#", " # c", " ", " ", "\t", "\n",
+        "\n", "\n", "\r\n", "\r", "\"\"\"", "'''", "\\", "\xC3\xA9", "\xFF", std::string(1, '\0'), Bom,
+    };
+
+    std::string text;
+    std::size_t const count = generator() % 31;
+
+    for (std::size_t i = 0; i < count; ++i)
+        text += pieces[generator() % (sizeof(pieces) / sizeof(pieces[0]))];
+
+    return text;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomValueText
+
+    A random value 'depth' arrays and inline tables deep: a scalar of any kind (one time in 64 an integer too large
+    to read), or below a depth of 4 an array or an inline table of up to three values, with blanks, line breaks,
+    comments and a trailing comma at times
+*/
+std::string RandomValueText(std::mt19937& generator, std::size_t depth)
+{
+    char const* const scalars[] = {
+        "1", "-2", "0x1F", "0o17", "1_000", "3.5", "-inf", "nan", "6e-3", "\"s\"", "'C:\\x'", "\"\"\"m\nl\"\"\"",
+        "'''r\r\n'''", "\"\\u00E9\\e\\x41\"", "true", "false", "1979-05-27", "07:32", "1979-05-27T07:32:00Z",
+        "1979-05-27 07:32:00.5",
+    };
+    char const* const trivia[] = { "", "", " ", "\n  ", " # c\n", "\r\n" };
+
+    std::uint32_t const kind = depth < 4 ? static_cast<std::uint32_t>(generator() % 8) : 0;
+    if (kind < 6)
+    {
+        if (generator() % 64 == 0)
+            return "99999999999999999999";
+
+        return scalars[generator() % (sizeof(scalars) / sizeof(scalars[0]))];
+    }
+
+    bool const isArray = kind == 6;
+    std::size_t const count = generator() % 4;
+    std::string text = isArray ? "[" : "{";
+
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (i > 0)
+            text += ",";
+
+        text += trivia[generator() % 6];
+        if (!isArray)
+            text += RandomKey(generator) + " = ";
+
+        text += RandomValueText(generator, depth + 1);
+    }
+
+    if (count > 0 && generator() % 3 == 0)
+        text += ",";
+
+    text += trivia[generator() % 6];
+
+    return text + (isArray ? "]" : "}");
+}
+//---------------------------------------------------------------------------
+/*
+    RoundTripCorpus
+
+    Texts of every layout the model keeps, each with the values it reads as
+*/
+TCorpusTextVector RoundTripCorpus()
+{
+    std::chrono::year_month_day const date{ std::chrono::year{ 1979 }, std::chrono::May, std::chrono::day{ 27 } };
+    double const infinity = std::numeric_limits<double>::infinity();
+    double const minusNan = -std::numeric_limits<double>::quiet_NaN();
+    ASWToml::TASWTomlLocalTime const time{ std::chrono::hours{ 7 }, std::chrono::minutes{ 32 } };
+    ASWToml::TASWTomlLocalTime const fraction{ std::chrono::hours{ 0 }, std::chrono::minutes{ 32 },
+        std::chrono::seconds{ 0 }, std::chrono::microseconds{ 999999 } };
+
+    ASWToml::TASWTomlLocalTime const halfSecond{ std::chrono::hours{ 0 }, std::chrono::minutes{ 32 },
+        std::chrono::seconds{ 0 }, std::chrono::milliseconds{ 500 } };
+
+    // Elements of the arrays of tables below
+    TASWTomlValue const alpha = TTable{ { "name", "alpha" }, { "ports", TArray{ 8000, 8001, 8002 } } };
+    TASWTomlValue const beta = TTable{ { "name", "beta" }, { "ports", TArray{ 8000 } },
+        { "limits", TTable{ { "max", 100 } } } };
+    TASWTomlValue const firstA = TTable{ { "x", 1 }, { "b", TTable{ { "y", 2 } } },
+        { "c", TArray{ TTable{ { "z", 3 } }, TTable() } } };
+
+    TCorpusTextVector corpus;
+
+    corpus.push_back({ "empty", "", TTable() });
+    corpus.push_back({ "blank and comment lines", "\n  \n\t\n# only comments\n   # indented\n#\n", TTable() });
+
+    corpus.push_back({ "a settings file",
+        "# Application settings\n"
+        "title = \"My App\"   # shown in the title bar\n"
+        "version = 3\n"
+        "\n"
+        "[window]\n"
+        "width = 1024\n"
+        "height = 768\n"
+        "maximized = false\n"
+        "\n"
+        "[paths]\n"
+        "data = 'C:\\Users\\me\\Data'\n"
+        "cache = \"/var/cache/app\"\n"
+        "\n"
+        "[[servers]]\n"
+        "name = \"alpha\"\n"
+        "ports = [ 8000, 8001, 8002 ]\n"
+        "\n"
+        "[[servers]]\n"
+        "name = \"beta\"\n"
+        "ports = [8000]\n"
+        "\n"
+        "[servers.limits]   # of beta\n"
+        "max = 100\n",
+        TTable{
+            { "title", "My App" },
+            { "version", 3 },
+            { "window", TTable{ { "width", 1024 }, { "height", 768 }, { "maximized", false } } },
+            { "paths", TTable{ { "data", "C:\\Users\\me\\Data" }, { "cache", "/var/cache/app" } } },
+            { "servers", TArray{ alpha, beta } },
+        } });
+
+    corpus.push_back({ "CRLF line breaks", "# c\r\na = 1\r\n\r\n[t]\r\nb = \"x\"\r\n",
+        TTable{ { "a", 1 }, { "t", TTable{ { "b", "x" } } } } });
+    corpus.push_back({ "mixed line breaks", "a = 1\r\nb = 2\nc = 3\r\n\n[t]\r\nx = 'y'\n",
+        TTable{ { "a", 1 }, { "b", 2 }, { "c", 3 }, { "t", TTable{ { "x", "y" } } } } });
+    corpus.push_back({ "no line break at the end", "a = 1\n[t]\nb = [1, 2] # end",
+        TTable{ { "a", 1 }, { "t", TTable{ { "b", TArray{ 1, 2 } } } } } });
+    corpus.push_back({ "a byte order mark", Bom + "# c\r\nkey = \"value\"\r\n", TTable{ { "key", "value" } } });
+
+    corpus.push_back({ "comments everywhere",
+        "# file comment\n"
+        "\n"
+        "[ t ]  # header comment\n"
+        "a = [  # after the bracket\n"
+        "  1,   # one\n"
+        "  # a comment line in an array\n"
+        "  2,\n"
+        "  # before the closing bracket\n"
+        "]  # after the array\n"
+        "b = {  # after the brace\n"
+        "  x = 1,  # in an inline table\n"
+        "  # a comment line in an inline table\n"
+        "  y = 2,\n"
+        "  # before the closing brace\n"
+        "}  # after the inline table\n"
+        "[[ p ]]  # header of an array of tables\n"
+        "c = 'v'#no blank before the hash\n",
+        TTable{
+            { "t", TTable{ { "a", TArray{ 1, 2 } }, { "b", TTable{ { "x", 1 }, { "y", 2 } } } } },
+            { "p", TArray{ TTable{ { "c", "v" } } } },
+        } });
+
+    corpus.push_back({ "multi-line arrays and trailing commas",
+        "a = [\n]\n"
+        "b = [ # c\n]\n"
+        "c = [\n  [1, 2,],\n  [\n    3,\n  ],\n]\n"
+        "d = [1,2,3,]\n",
+        TTable{
+            { "a", TArray() },
+            { "b", TArray() },
+            { "c", TArray{ TArray{ 1, 2 }, TArray{ 3 } } },
+            { "d", TArray{ 1, 2, 3 } },
+        } });
+
+    corpus.push_back({ "inline tables over lines",
+        "t = {\n  a = 1,\n  b = { c = [\n    2,\n  ] },\n  d.e = 3,\n}\n"
+        "u = {}\n"
+        "v = { }\n"
+        "w = {\n}\n",
+        TTable{
+            { "t", TTable{ { "a", 1 }, { "b", TTable{ { "c", TArray{ 2 } } } }, { "d", TTable{ { "e", 3 } } } } },
+            { "u", TTable() },
+            { "v", TTable() },
+            { "w", TTable() },
+        } });
+
+    corpus.push_back({ "dotted keys",
+        "a.b.c = 1\n"
+        "a . b . d = 2\n"
+        "a.\"e f\".g = 3\n"
+        "[t]\n"
+        "x.y = 4\n"
+        "x\t.\tz = 5\n",
+        TTable{
+            { "a", TTable{ { "b", TTable{ { "c", 1 }, { "d", 2 } } }, { "e f", TTable{ { "g", 3 } } } } },
+            { "t", TTable{ { "x", TTable{ { "y", 4 }, { "z", 5 } } } } },
+        } });
+
+    corpus.push_back({ "quoted keys",
+        "\"a.b\" = 1\n"
+        "'c.d'.e = 2\n"
+        "\"\" = 3\n"
+        "\"quote\\\"d\" = 4\n"
+        "'\xC3\xA9t\xC3\xA9' = 5\n"
+        "[\"x.y\".'z']\n"
+        "k = 6\n",
+        TTable{
+            { "a.b", 1 },
+            { "c.d", TTable{ { "e", 2 } } },
+            { "", 3 },
+            { "quote\"d", 4 },
+            { "\xC3\xA9t\xC3\xA9", 5 },
+            { "x.y", TTable{ { "z", TTable{ { "k", 6 } } } } },
+        } });
+
+    corpus.push_back({ "headers with blanks", "  [ a . b ]  \n\t[[ c ]]\t# c\n[ d.\"e f\" ]\n",
+        TTable{
+            { "a", TTable{ { "b", TTable() } } },
+            { "c", TArray{ TTable() } },
+            { "d", TTable{ { "e f", TTable() } } },
+        } });
+
+    corpus.push_back({ "arrays of tables with sub-tables",
+        "[[a]]\nx = 1\n[a.b]\ny = 2\n[[a.c]]\nz = 3\n[[a.c]]\n[[a]]\n[a.b]\ny = 4\n",
+        TTable{ { "a", TArray{ firstA, TTable{ { "b", TTable{ { "y", 4 } } } } } } } });
+
+    corpus.push_back({ "blanks and tabs", "\ta\t=\t1\t\n  [\tt\t]\n b =  2  #\tc\n",
+        TTable{ { "a", 1 }, { "t", TTable{ { "b", 2 } } } } });
+
+    corpus.push_back({ "every form of scalar",
+        "s1 = \"tab\\tquote\\\"back\\\\slash \\u00E9\\U0001F600\\x41\\e\"\n"
+        "s2 = 'C:\\Users\\me'\n"
+        "s3 = \"\"\"\nfirst\r\nsecond \\\n    third\"\"\"\n"
+        "s4 = '''\nraw \\n\nline'''\n"
+        "i1 = +17\n"
+        "i2 = 0xDEAD_BEEF\n"
+        "i3 = 0o755\n"
+        "i4 = 0b1101\n"
+        "i5 = -9_223_372_036_854_775_808\n"
+        "f1 = 6.626e-34\n"
+        "f2 = -0.0\n"
+        "f3 = +inf\n"
+        "f4 = -nan\n"
+        "f5 = 1e1_0\n"
+        "b1 = true\n"
+        "d1 = 1979-05-27T07:32:00Z\n"
+        "d2 = 1979-05-27 00:32:00.999999-07:00\n"
+        "d3 = 1979-05-27t07:32:00z\n"
+        "d4 = 1979-05-27T07:32:00\n"
+        "d5 = 1979-05-27\n"
+        "d6 = 07:32\n"
+        "d7 = 00:32:00.5\n",
+        TTable{
+            { "s1", "tab\tquote\"back\\slash \xC3\xA9\xF0\x9F\x98\x80" "A\x1B" },
+            { "s2", "C:\\Users\\me" },
+            { "s3", "first\nsecond third" },
+            { "s4", "raw \\n\nline" },
+            { "i1", 17 },
+            { "i2", 0xDEADBEEF },
+            { "i3", 0755 },
+            { "i4", 13 },
+            { "i5", std::numeric_limits<std::int64_t>::min() },
+            { "f1", 6.626e-34 },
+            { "f2", -0.0 },
+            { "f3", infinity },
+            { "f4", minusNan },
+            { "f5", 1e10 },
+            { "b1", true },
+            { "d1", ASWToml::TASWTomlOffsetDateTime{ date, time } },
+            { "d2", ASWToml::TASWTomlOffsetDateTime{ date, fraction, std::chrono::minutes{ -7 * 60 } } },
+            { "d3", ASWToml::TASWTomlOffsetDateTime{ date, time } },
+            { "d4", ASWToml::TASWTomlLocalDateTime{ date, time } },
+            { "d5", date },
+            { "d6", time },
+            { "d7", halfSecond },
+        } });
+
+    corpus.push_back({ "characters outside ASCII",
+        "# Gr\xC3\xBC\xC3\x9F" "e \xE2\x82\xAC\n"
+        "smile = \"\xF0\x9F\x98\x80\"\n"
+        "\"cl\xC3\xA9\" = 'valeur'\n",
+        TTable{ { "smile", "\xF0\x9F\x98\x80" }, { "cl\xC3\xA9", "valeur" } } });
+
+    // Nested exactly as deep as the default Reading.MaxNestingDepth (100) allows: 30 tables of a header, 29 of a
+    // dotted key, 20 arrays and 21 inline tables
+    std::string header = "[h1";
+    std::string key = "d1";
+    for (int i = 2; i <= 30; ++i)
+    {
+        header += ".h" + std::to_string(i);
+        key += ".d" + std::to_string(i);
+    }
+
+    std::string value = std::string(20, '[');
+    for (int i = 0; i < 21; ++i)
+        value += "{ i = ";
+
+    value += "1";
+    for (int i = 0; i < 21; ++i)
+        value += " }";
+
+    value += std::string(20, ']');
+
+    TASWTomlValue deep = 1;
+    for (int i = 0; i < 21; ++i)
+        deep = TTable{ { "i", deep } };
+
+    for (int i = 0; i < 20; ++i)
+        deep = TArray{ deep };
+
+    for (int i = 30; i >= 1; --i)
+        deep = TTable{ { "d" + std::to_string(i), deep } };
+
+    for (int i = 30; i >= 1; --i)
+        deep = TTable{ { "h" + std::to_string(i), deep } };
+
+    corpus.push_back({ "nesting at the limit", header + "]\n" + key + " = " + value + "\n", deep });
+
+    return corpus;
 }
 //---------------------------------------------------------------------------
 /*
@@ -496,6 +1124,29 @@ std::string ValuesDiffer(ASWUnitTests::TTomlTestFile const& file, TASWTomlValue 
     }
 
     return differences;
+}
+//---------------------------------------------------------------------------
+/*
+    WithLineBreaks
+
+    'text' with each line break ("\n" or "\r\n") written as 'lineBreak'
+*/
+std::string WithLineBreaks(std::string_view text, std::string_view lineBreak)
+{
+    std::string converted;
+
+    for (std::size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n')
+            continue;
+
+        if (text[i] == '\n')
+            converted += lineBreak;
+        else
+            converted += text[i];
+    }
+
+    return converted;
 }
 //---------------------------------------------------------------------------
 
@@ -1351,6 +2002,200 @@ ASW_TEST(TTest_ASWToml_DocumentErrors, Values_Errors)
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentFuzz
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentFuzz::TTest_ASWToml_DocumentFuzz()
+    : inherited("ASWToml_DocumentFuzz_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentFuzz::~TTest_ASWToml_DocumentFuzz()
+{
+}
+//---------------------------------------------------------------------------
+ETomlCode TTest_ASWToml_DocumentFuzz::CheckParseOrFail(std::string const& text, TASWTomlOptions const& options,
+    std::string const& name, std::source_location loc)
+{
+    std::string const before = "kept = 1\n";
+    TASWTomlValue const beforeValues = TTable{ { "kept", 1 } };
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(before).IsOk(), name + ": the first text should parse", loc);
+
+    ASWToml::TASWTomlResult const result = document.Parse(text, options);
+    if (!result.IsOk())
+    {
+        bool const known = result.Code == ETomlCode::ParseFailed || result.Code == ETomlCode::InvalidUtf8 ||
+            result.Code == ETomlCode::ValueOutOfRange || result.Code == ETomlCode::NestingTooDeep ||
+            result.Code == ETomlCode::DuplicateKey || result.Code == ETomlCode::UnsupportedEncoding;
+        bool const unplaced = result.Code == ETomlCode::UnsupportedEncoding;
+        bool const placed = unplaced ? result.Line == 0 && result.Column == 0 : IsInText(result, text);
+        bool const kept = document.ToText() == before && document.GetRoot() == beforeValues &&
+            document.GetOptions().Reading.MaxNestingDepth == ASWToml::TASWTomlReadingOptions::DefaultMaxNestingDepth;
+
+        if (!known || result.Message.empty() || !placed || !kept)
+        {
+            CheckTrue(false, name + ": a text that doesn't parse should fail with a code of the text, a message and its "
+                "place in the text, and leave the document as it was (" + ASWToml::ToString(result.Code) + " at " +
+                std::to_string(result.Line) + ":" + std::to_string(result.Column) + ": " + result.Message + ")", loc);
+        }
+
+        return result.Code;
+    }
+
+    std::string failures;
+    if (document.ToText() != text)
+        failures += " It isn't written back byte for byte.";
+
+    std::string const notFound = FindFailure(document, document.GetRoot(), ASWToml::TASWTomlPath());
+    if (!notFound.empty())
+        failures += " Find() doesn't give the value at " + notFound + ".";
+
+    for (ELineBreak const lineBreak : { ELineBreak::LF, ELineBreak::CRLF })
+    {
+        TASWTomlOptions converting = options;
+        converting.Writing.LineEnding = lineBreak == ELineBreak::LF ? ELineEnding::LF : ELineEnding::CRLF;
+        std::string const expected = WithLineBreaks(text, ASWToml::Detail::LineBreakText(lineBreak));
+
+        TASWTomlDocument converted;
+        TASWTomlDocument reread;
+        if (!converted.Parse(text, converting).IsOk() || converted.ToText() != expected ||
+            !reread.Parse(expected, options).IsOk() || !IdenticalValues(reread.GetRoot(), document.GetRoot()))
+        {
+            failures += std::string(" Written with ") + ASWToml::ToString(lineBreak) + " line breaks, it doesn't read "
+                "as the same values.";
+        }
+    }
+
+    if (!failures.empty())
+        CheckTrue(false, name + ": a text that parses should keep its text and values." + failures, loc);
+
+    return ETomlCode::Ok;
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentFuzz::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentFuzz::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentFuzz::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentFuzz::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentFuzz, MutatedTexts_ParseOrFailCleanly)
+{
+    // Arrange
+    // Our corpus and toml-test's valid files, mutated
+    TStringVector sources;
+    for (TCorpusText const& corpusText : RoundTripCorpus())
+        sources.push_back(corpusText.Text);
+
+    for (TTomlTestFile const& file : TomlTestValidFiles())
+        sources.emplace_back(file.Text);
+
+    TCodeCountMap counts;
+
+    for (std::size_t i = 0; i < FuzzTextCount; ++i)
+    {
+        std::uint32_t const seed = FuzzFirstSeed + static_cast<std::uint32_t>(i);
+        std::mt19937 generator(seed);
+        std::string const text = MutatedText(generator, sources[generator() % sources.size()]);
+        TASWTomlOptions const options = RandomOptions(generator);
+
+        // Act & Assert
+        ++counts[CheckParseOrFail(text, options, "seed " + std::to_string(seed) + ", \"" + Escaped(text) + "\"")];
+    }
+
+    // Assert
+    CheckTrue(counts[ETomlCode::Ok] > 0, "some mutated texts should parse");
+    CheckTrue(counts[ETomlCode::ParseFailed] > 0, "some should fail with ParseFailed");
+    CheckTrue(counts[ETomlCode::DuplicateKey] > 0, "some should fail with DuplicateKey");
+    CheckTrue(counts[ETomlCode::InvalidUtf8] > 0, "some should fail with InvalidUtf8");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentFuzz, RandomDocuments_ParseOrFailCleanly)
+{
+    // Arrange
+    TCodeCountMap counts;
+
+    for (std::size_t i = 0; i < FuzzTextCount; ++i)
+    {
+        std::uint32_t const seed = FuzzFirstSeed + static_cast<std::uint32_t>(i);
+        std::mt19937 generator(seed);
+        std::string const text = RandomDocumentText(generator);
+        TASWTomlOptions const options = RandomOptions(generator);
+
+        // Act & Assert
+        ++counts[CheckParseOrFail(text, options, "seed " + std::to_string(seed) + ", \"" + Escaped(text) + "\"")];
+    }
+
+    // Assert
+    CheckTrue(counts[ETomlCode::Ok] > FuzzTextCount / 10, "many random documents should parse");
+    CheckTrue(counts[ETomlCode::DuplicateKey] > FuzzTextCount / 10, "many should break a table rule");
+    CheckTrue(counts[ETomlCode::NestingTooDeep] > 0, "some should nest too deep");
+    CheckTrue(counts[ETomlCode::ValueOutOfRange] > 0, "some should hold an integer too large");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentFuzz, RandomPieces_ParseOrFailCleanly)
+{
+    // Arrange
+    TCodeCountMap counts;
+
+    for (std::size_t i = 0; i < FuzzTextCount; ++i)
+    {
+        std::uint32_t const seed = FuzzFirstSeed + static_cast<std::uint32_t>(i);
+        std::mt19937 generator(seed);
+        std::string const text = RandomPieceText(generator);
+        TASWTomlOptions const options = RandomOptions(generator);
+
+        // Act & Assert
+        ++counts[CheckParseOrFail(text, options, "seed " + std::to_string(seed) + ", \"" + Escaped(text) + "\"")];
+    }
+
+    // Assert
+    CheckTrue(counts[ETomlCode::Ok] > 0, "some random texts should parse");
+    CheckTrue(counts[ETomlCode::ParseFailed] > FuzzTextCount / 2, "most should fail with ParseFailed");
+    CheckTrue(counts[ETomlCode::InvalidUtf8] > 0, "some should fail with InvalidUtf8");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentFuzz, RandomTexts_AreTheSameEverywhere)
+{
+    // Arrange
+    // The standard requires the 10000th number of a default-constructed std::mt19937 to be 4123659995, so a seed in a
+    // failure message gives the same text on every platform
+    std::mt19937 generator;
+    generator.discard(9999);
+    std::mt19937 first(FuzzFirstSeed);
+    std::mt19937 again(FuzzFirstSeed);
+    std::mt19937 next(FuzzFirstSeed + 1);
+
+    // Act
+    std::uint32_t const tenThousandth = static_cast<std::uint32_t>(generator());
+    std::string const text = RandomDocumentText(first);
+    std::string const sameSeed = RandomDocumentText(again);
+    std::string const nextSeed = RandomDocumentText(next);
+
+    // Assert
+    CheckTrue(tenThousandth == 4123659995u, "std::mt19937 should give the numbers the standard defines");
+    CheckEquals(text, sameSeed, "the same seed should give the same text");
+    CheckFalse(text == nextSeed, "another seed should give another text");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentLookups
 /////////////////////////////////////////////////////////////////////////////
 
@@ -1620,6 +2465,104 @@ ASW_TEST(TTest_ASWToml_DocumentLookups, Parse_ReplacesTheValues)
     CheckEquals(ETomlCode::DuplicateKey, failed.Code, "a key defined twice");
     CheckNotFound(document, "c", "the failed text's key");
     CheckTrue(document.GetRoot() == TASWTomlValue(TTable{ { "b", 2 } }), "the values are kept on a failure");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentRoundTrip
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentRoundTrip::TTest_ASWToml_DocumentRoundTrip()
+    : inherited("ASWToml_DocumentRoundTrip_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentRoundTrip::~TTest_ASWToml_DocumentRoundTrip()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRoundTrip::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRoundTrip::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRoundTrip::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRoundTrip::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRoundTrip, Corpus_ConvertedLineBreaksKeepTheValues)
+{
+    for (TCorpusText const& corpusText : RoundTripCorpus())
+    {
+        for (ELineBreak const lineBreak : { ELineBreak::LF, ELineBreak::CRLF })
+        {
+            // Arrange
+            std::string const name = corpusText.Name + " with " + ASWToml::ToString(lineBreak);
+            TASWTomlOptions options;
+            options.Writing.LineEnding = lineBreak == ELineBreak::LF ? ELineEnding::LF : ELineEnding::CRLF;
+            TASWTomlDocument document;
+            CheckTrue(document.Parse(corpusText.Text, options).IsOk(), name + ": the text should parse");
+
+            // Act
+            std::string const converted = document.ToText();
+            TASWTomlDocument reread;
+            ASWToml::TASWTomlResult const result = reread.Parse(converted);
+
+            // Assert
+            CheckEquals(Escaped(WithLineBreaks(corpusText.Text, ASWToml::Detail::LineBreakText(lineBreak))),
+                Escaped(converted), name + ": every line break converted, nothing else");
+            CheckTrue(result.IsOk(), name + ": the converted text should parse: " + result.Message);
+            CheckTrue(IdenticalValues(corpusText.Expected, reread.GetRoot()), name + ": the same values");
+        }
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRoundTrip, Corpus_HasTheExpectedValues)
+{
+    for (TCorpusText const& corpusText : RoundTripCorpus())
+    {
+        // Arrange
+        TASWTomlDocument document;
+
+        // Act
+        ASWToml::TASWTomlResult const result = document.Parse(corpusText.Text);
+
+        // Assert
+        CheckTrue(result.IsOk(), corpusText.Name + ": the text should parse: " + result.Message);
+        CheckTrue(IdenticalValues(corpusText.Expected, document.GetRoot()),
+            corpusText.Name + ": the values, with each table's keys in order");
+        CheckEquals(""s, FindFailure(document, document.GetRoot(), ASWToml::TASWTomlPath()),
+            corpusText.Name + ": Find() should give each value by its path");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRoundTrip, Corpus_WritesBackByteForByte)
+{
+    for (TCorpusText const& corpusText : RoundTripCorpus())
+    {
+        // Arrange
+        TASWTomlDocument document;
+        CheckTrue(document.Parse(corpusText.Text).IsOk(), corpusText.Name + ": the text should parse");
+
+        // Act
+        std::string const written = document.ToText();
+
+        // Assert
+        CheckEquals(Escaped(corpusText.Text), Escaped(written), corpusText.Name + ": the text written");
+    }
 }
 //---------------------------------------------------------------------------
 
@@ -2140,9 +3083,11 @@ ASW_TEST(TTest_ASWToml_DocumentToText, RoundTrip_ByteForByte)
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentErrors, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentFuzz, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentLookups, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentModel, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentParse, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentRoundTrip, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentTables, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentToText, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_TomlTest, "Document")

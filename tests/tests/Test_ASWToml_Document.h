@@ -151,6 +151,43 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentFuzz
+//
+// Random and mutated texts (each picked by a seed, the same on every platform): each one parses, is written back byte
+// for byte and keeps its values, or fails cleanly
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentFuzz : public TAutoTestGroup<TTest_ASWToml_DocumentFuzz>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentFuzz> inherited;
+
+private:
+    // Checks what Parse() does with 'text' and 'options' ('name' in a message), in a document that holds another
+    // text: either it parses, and then the document writes it back byte for byte, Find() gives each value by its path,
+    // and written with LF or CRLF line breaks it reads as the same values; or it fails with ParseFailed, InvalidUtf8,
+    // ValueOutOfRange, NestingTooDeep, DuplicateKey or UnsupportedEncoding, a message, and a line and column in the
+    // text (none for UnsupportedEncoding), and the document keeps its text, values and options. Returns the code.
+    ASWToml::ETomlCode CheckParseOrFail(std::string const& text, ASWToml::TASWTomlOptions const& options,
+        std::string const& name, std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_MutatedTexts_ParseOrFailCleanly();
+    void Test_RandomDocuments_ParseOrFailCleanly();
+    void Test_RandomPieces_ParseOrFailCleanly();
+    void Test_RandomTexts_AreTheSameEverywhere();
+
+public:
+    TTest_ASWToml_DocumentFuzz();
+    ~TTest_ASWToml_DocumentFuzz() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentLookups
 //
 // TASWTomlDocument::GetRoot() and Find(): the document's values, and the value at a path
@@ -178,6 +215,33 @@ public: // Test methods, each defined with ASW_TEST
 public:
     TTest_ASWToml_DocumentLookups();
     ~TTest_ASWToml_DocumentLookups() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentRoundTrip
+//
+// A corpus of texts of every layout: each reads as its values and is written back byte for byte, also with its line
+// breaks converted
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentRoundTrip : public TAutoTestGroup<TTest_ASWToml_DocumentRoundTrip>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentRoundTrip> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Corpus_ConvertedLineBreaksKeepTheValues();
+    void Test_Corpus_HasTheExpectedValues();
+    void Test_Corpus_WritesBackByteForByte();
+
+public:
+    TTest_ASWToml_DocumentRoundTrip();
+    ~TTest_ASWToml_DocumentRoundTrip() override;
 
     void SetUp_Group() override;
     void SetUp_Test(ITestCase& testCase) override;
