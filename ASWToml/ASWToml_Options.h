@@ -97,12 +97,18 @@ struct TASWTomlReadingOptions
     // The default MaxNestingDepth: far deeper than a settings file needs
     static constexpr std::size_t DefaultMaxNestingDepth = 100;
 
+    // The largest MaxNestingDepth: values this deep take well under a quarter of a 1 MB thread stack to read, copy,
+    // compare or destroy, also in an unoptimized build
+    static constexpr std::size_t MaxNestingDepthLimit = 128;
+
     // The largest file a load reads, in bytes; a larger one fails with ETomlCode::FileTooLarge
     std::size_t MaxFileSize = DefaultMaxFileSize;
 
-    // How many arrays and inline tables a value may have inside one another, e.g. 2 for a = [[1, 2], [3]] or
-    // b = { c = [1] }. A deeper value fails the load with ETomlCode::NestingTooDeep, so a file can't make the parser
-    // overflow the stack.
+    // How many tables, arrays and inline tables a value may be inside (the root table not counted), from 1 to
+    // MaxNestingDepthLimit, e.g. 4 for the 1 of a.b.c = [[1]] (inside the tables a and b and two arrays), 2 for the
+    // value of x under the header [server.http], or 2 for each key of an element of the array of tables [[products]]
+    // (the array and the element's table). A deeper value fails the load with ETomlCode::NestingTooDeep, so a file
+    // can't make the parser or the values overflow the stack.
     std::size_t MaxNestingDepth = DefaultMaxNestingDepth;
 
     // Ok if these options can be used, else ETomlCode::InvalidOptions with the first problem found, e.g. a MaxFileSize

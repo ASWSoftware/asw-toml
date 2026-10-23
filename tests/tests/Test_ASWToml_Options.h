@@ -49,7 +49,9 @@ private:
 public: // Test methods, each defined with ASW_TEST
     void Test_Defaults_AreValid();
     void Test_Defaults_MatchDocumentedValues();
+    void Test_Validate_AcceptsLargestMaxNestingDepth();
     void Test_Validate_AcceptsSmallestLimits();
+    void Test_Validate_RejectsMaxNestingDepthAboveLimit();
     void Test_Validate_RejectsZeroMaxFileSize();
     void Test_Validate_RejectsZeroMaxNestingDepth();
 

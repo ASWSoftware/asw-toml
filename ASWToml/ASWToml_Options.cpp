@@ -181,7 +181,13 @@ TASWTomlResult TASWTomlReadingOptions::Validate() const
         return Invalid("Reading.MaxFileSize is 0; no file could be loaded.");
 
     if (MaxNestingDepth == 0)
-        return Invalid("Reading.MaxNestingDepth is 0; no array or inline table could be read.");
+        return Invalid("Reading.MaxNestingDepth is 0; no table, array or inline table could be read.");
+
+    if (MaxNestingDepth > MaxNestingDepthLimit)
+    {
+        return Invalid("Reading.MaxNestingDepth is " + std::to_string(MaxNestingDepth) + "; it can be at most " +
+            std::to_string(MaxNestingDepthLimit) + ", so a deep value can't overflow the stack.");
+    }
 
     return TASWTomlResult();
 }

@@ -26,9 +26,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   points) from 1, and a path is written in TOML's dotted-key syntax (`server."host name".port`).
   `ToString()` names a code, a line break or a severity, and writes a message as one line of text.
 - `TASWTomlOptions` (`ASWToml_Options.h`), the settings for TOML files in four groups:
-  - `Reading` (`TASWTomlReadingOptions`): the largest file loaded (16 MiB) and how many arrays and
-    inline tables a value may have inside one another (100; a deeper value fails the load with
-    `NestingTooDeep`).
+  - `Reading` (`TASWTomlReadingOptions`): the largest file loaded (16 MiB) and how many tables,
+    arrays and inline tables a value may be inside (100, and at most 128; a deeper value fails the
+    load with `NestingTooDeep`, so a file can't overflow the stack).
   - `Writing` (`TASWTomlWritingOptions`): the comment prefix of new comment lines (`"# "`), the
     line ending (`ELineEnding`) and byte order mark (`EBomMode`), both as the loaded file had them
     by default, and a blank line before a new table (on).
@@ -105,5 +105,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Append()` adds a part, `GetParts()` gives them (`TASWTomlPathPart`), and `ToString()` writes the
   path as messages show it, each key bare when it can be, else a basic string, so it reads back as
   the same path.
+- `TASWTomlDocument` (`ASWToml_Document.h`), a TOML text read into a model that keeps every byte of
+  it: comments, blank lines, spacing, how each key is quoted, how each value is written, the
+  layout of arrays and inline tables, and each line's own line break. `Parse(text, options)` reads
+  TOML 1.1 (UTF-8, with or without a byte order mark) and fails on the first error, changing
+  nothing: `InvalidOptions`, `UnsupportedEncoding` (a UTF-16 or UTF-32 byte order mark),
+  `InvalidUtf8` (wherever it is in the text), `ParseFailed`, `ValueOutOfRange` or `NestingTooDeep`,
+  with the line and column of the error. `ToText()` writes the text back byte for byte with the
+  default options; `Writing.Bom` adds or removes the byte order mark, and `Writing.LineEnding`
+  writes every line break as LF, CRLF or the platform's, in comments and multi-line strings too.
+  `HasBom()`, `GetLineBreak()` (the text's most common line break, the platform's when it has
+  none) and `GetOptions()` tell what was read. A document is copyable; it isn't thread-safe.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

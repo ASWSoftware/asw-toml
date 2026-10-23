@@ -117,6 +117,21 @@ ASW_TEST(TTest_ASWToml_ReadingOptions, Defaults_MatchDocumentedValues)
         static_cast<std::uint64_t>(options.MaxNestingDepth), "MaxNestingDepth should be DefaultMaxNestingDepth");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ReadingOptions, Validate_AcceptsLargestMaxNestingDepth)
+{
+    // Arrange
+    ASWToml::TASWTomlReadingOptions options;
+    options.MaxNestingDepth = ASWToml::TASWTomlReadingOptions::MaxNestingDepthLimit;
+
+    // Act
+    ASWToml::TASWTomlResult const result = options.Validate();
+
+    // Assert
+    CheckEquals(static_cast<std::uint64_t>(128), static_cast<std::uint64_t>(options.MaxNestingDepth),
+        "MaxNestingDepthLimit should be 128");
+    CheckTrue(result.IsOk(), "MaxNestingDepthLimit should be valid: " + result.Message);
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_ReadingOptions, Validate_AcceptsSmallestLimits)
 {
     // Arrange
@@ -129,6 +144,16 @@ ASW_TEST(TTest_ASWToml_ReadingOptions, Validate_AcceptsSmallestLimits)
 
     // Assert
     CheckTrue(result.IsOk(), "limits of 1 should be valid: " + result.Message);
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ReadingOptions, Validate_RejectsMaxNestingDepthAboveLimit)
+{
+    // Arrange
+    ASWToml::TASWTomlReadingOptions options;
+    options.MaxNestingDepth = ASWToml::TASWTomlReadingOptions::MaxNestingDepthLimit + 1;
+
+    // Act & Assert
+    CheckInvalid(options, "Reading.MaxNestingDepth is 129; it can be at most 128", "a MaxNestingDepth above the limit");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_ReadingOptions, Validate_RejectsZeroMaxFileSize)
