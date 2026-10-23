@@ -57,6 +57,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_IsValidUtf8_AcceptsValidText();
     void Test_IsValidUtf8_RejectsInvalidSequences();
     void Test_LineBreakText_MatchesEachBreak();
+    void Test_MessageText_QuotesAndCuts();
     void Test_NativeLineBreak_MatchesPlatform();
     void Test_SetLineAndColumn_CountsLinesAndCharacters();
 

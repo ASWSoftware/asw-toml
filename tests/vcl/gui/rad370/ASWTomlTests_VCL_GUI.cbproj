@@ -124,6 +124,10 @@
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Options.h</DependentOn>
             <BuildOrder>51</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Path.cpp">
+            <DependentOn>..\..\..\..\ASWToml\ASWToml_Path.h</DependentOn>
+            <BuildOrder>60</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Scalars.cpp">
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Scalars.h</DependentOn>
             <BuildOrder>58</BuildOrder>
@@ -151,6 +155,10 @@
         <CppCompile Include="..\..\..\tests\Test_ASWToml_Options.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_Options.h</DependentOn>
             <BuildOrder>52</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\..\tests\Test_ASWToml_Path.cpp">
+            <DependentOn>..\..\..\tests\Test_ASWToml_Path.h</DependentOn>
+            <BuildOrder>61</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\tests\Test_ASWToml_Scalars.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_Scalars.h</DependentOn>

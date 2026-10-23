@@ -235,6 +235,24 @@ ASW_TEST(TTest_ASWToml_Utils, LineBreakText_MatchesEachBreak)
         "a value that isn't an ELineBreak should have no characters");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Utils, MessageText_QuotesAndCuts)
+{
+    // Arrange
+    std::string const forty(40, 'x');
+
+    // Act & Assert
+    CheckEquals(std::string("\"0x_FF\""), ASWToml::Detail::MessageText("0x_FF"), "a short text in quotes");
+    CheckEquals(std::string("\"\""), ASWToml::Detail::MessageText(""), "an empty text");
+    CheckEquals(std::string("\"a?b?c?\""), ASWToml::Detail::MessageText(Bytes("a\tb\x7F" "c\0", 6)),
+        "control characters (a tab, DEL and NUL) as '?'");
+    CheckEquals("\"" + forty + "\"", ASWToml::Detail::MessageText(forty), "40 bytes in full");
+    CheckEquals("\"" + forty + "\"...", ASWToml::Detail::MessageText(forty + "y"), "41 bytes cut to 40");
+    CheckEquals("\"" + forty.substr(1) + "\"...", ASWToml::Detail::MessageText(forty.substr(1) + "\xC3\xA9"),
+        "cut before a UTF-8 sequence that would be split, never inside it");
+    CheckEquals("\"" + forty.substr(2) + "\xC3\xA9\"...",
+        ASWToml::Detail::MessageText(forty.substr(2) + "\xC3\xA9" "z"), "a UTF-8 sequence that fits is kept");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Utils, NativeLineBreak_MatchesPlatform)
 {
     // Act

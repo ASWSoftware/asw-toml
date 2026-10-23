@@ -1090,6 +1090,35 @@ TTest_ASWToml_Keys::~TTest_ASWToml_Keys()
 {
 }
 //---------------------------------------------------------------------------
+void TTest_ASWToml_Keys::CheckReadFails(std::string const& text, ETomlCode code, std::size_t offset,
+    std::string const& expectedText, std::string const& msg, std::source_location loc)
+{
+    std::string key = "unchanged";
+    std::size_t position = 0;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadKey(text, position, key);
+
+    CheckEquals(code, result.Code, msg + ": the code", loc);
+    CheckEquals(offset, position, msg + ": the position should be the error's offset", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message should name the problem", loc);
+    CheckEquals(std::size_t(1), result.Line, msg + ": the line", loc);
+    CheckEquals(offset + 1, result.Column, msg + ": the column", loc);
+    CheckEquals("unchanged"s, key, msg + ": the key should be left as it was", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Keys::CheckReads(std::string const& text, std::string const& key, std::size_t end,
+    std::string const& msg, std::source_location loc)
+{
+    std::string read = "unchanged";
+    std::size_t position = 0;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadKey(text, position, read);
+
+    CheckTrue(result.IsOk(), msg + ": the key should be read: " + result.Message, loc);
+    CheckEquals(key, read, msg + ": the key", loc);
+    CheckEquals(end, position, msg + ": the position should be after the key", loc);
+}
+//---------------------------------------------------------------------------
 void TTest_ASWToml_Keys::CheckWrites(std::string const& key, std::string const& expected, std::string const& msg,
     std::source_location loc)
 {
@@ -1131,6 +1160,65 @@ void TTest_ASWToml_Keys::TearDown_Test(ITestCase& /*testCase*/)
 
 // /////// Begin tests after this line ///////////////////////
 
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Keys, ReadKey_BareKeys)
+{
+    // Arrange & Act & Assert
+    CheckReads("port", "port", 4, "a word to the end of the text");
+    CheckReads("bare_key-1 = 2", "bare_key-1", 10, "letters, digits, '_' and '-', up to a blank");
+    CheckReads("ABCxyz09=", "ABCxyz09", 8, "up to '='");
+    CheckReads("1234", "1234", 4, "digits");
+    CheckReads("-", "-", 1, "a hyphen alone");
+    CheckReads("server.port", "server", 6, "one part of a dotted key, up to the dot");
+    CheckReads("true]", "true", 4, "a word that is a value elsewhere, up to ']'");
+    CheckReads("1.5", "1", 1, "digits with a dot are two parts");
+    CheckReads("a\xC3\xA9", "a", 1, "up to a character outside ASCII");
+
+    // From an offset inside a text
+    std::string key;
+    std::size_t position = 2;
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadKey("a.b.c", position, key);
+
+    CheckTrue(result.IsOk(), "a part after a dot should be read: " + result.Message);
+    CheckEquals("b"s, key, "the part after the first dot");
+    CheckEquals(std::size_t(3), position, "the position should be after that part");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Keys, ReadKey_QuotedKeys)
+{
+    // Arrange & Act & Assert
+    CheckReads("\"host name\" = 1", "host name", 11, "a basic string");
+    CheckReads("'C:\\x'.y", "C:\\x", 6, "a literal string, up to the dot");
+    CheckReads("\"a.b\"", "a.b", 5, "a dot in a quoted key");
+    CheckReads("\"\"", "", 2, "an empty basic string");
+    CheckReads("''", "", 2, "an empty literal string");
+    CheckReads("\"a\\tb\\u00E9\"", "a\tb\xC3\xA9", 12, "escapes");
+    CheckReads("\"\xC3\xA9\"", "\xC3\xA9", 4, "a character outside ASCII");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Keys, ReadKey_RejectsTextThatIsNotAKey)
+{
+    // Arrange & Act & Assert
+    std::string const notAKey = "A key must be a bare key (A-Z, a-z, 0-9, '-' and '_') or a quoted string.";
+    CheckReadFails("", ETomlCode::ParseFailed, 0, notAKey, "an empty text");
+    CheckReadFails(" a", ETomlCode::ParseFailed, 0, notAKey, "a blank");
+    CheckReadFails("= 1", ETomlCode::ParseFailed, 0, notAKey, "an equals sign");
+    CheckReadFails(".a", ETomlCode::ParseFailed, 0, notAKey, "a dot");
+    CheckReadFails("[a]", ETomlCode::ParseFailed, 0, notAKey, "a bracket");
+    CheckReadFails("\xC3\xA9", ETomlCode::ParseFailed, 0, notAKey, "a character outside ASCII, unquoted");
+
+    std::string const multiLine = "A key can't be a multi-line string";
+    CheckReadFails("\"\"\"a\"\"\"", ETomlCode::ParseFailed, 0, multiLine, "a multi-line basic string");
+    CheckReadFails("'''a'''", ETomlCode::ParseFailed, 0, multiLine, "a multi-line literal string");
+    CheckReadFails("\"\"\"", ETomlCode::ParseFailed, 0, multiLine, "three quotes, which an empty key can't start");
+
+    // What ReadString() reports
+    CheckReadFails("\"a", ETomlCode::ParseFailed, 0, "The string has no closing \"", "an unclosed basic string");
+    CheckReadFails("'a\nb' = 1", ETomlCode::ParseFailed, 0, "has no closing ' on its line", "a line break");
+    CheckReadFails("\"a\\q\"", ETomlCode::ParseFailed, 2, "\\q", "an escape TOML doesn't have");
+    CheckReadFails("\"a\xFF\"", ETomlCode::InvalidUtf8, 2, "holds bytes that aren't valid UTF-8",
+        "bytes that aren't UTF-8");
+}
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Keys, WriteKey_BareKeys)
 {

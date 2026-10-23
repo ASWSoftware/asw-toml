@@ -53,9 +53,6 @@ constexpr char const* EscapeList = "\\b, \\t, \\n, \\f, \\r, \\e, \\\", \\\\, \\
 // The largest exponent DecimalExponent() counts; any larger one is far beyond a double's range
 constexpr long long MaxExponent = 1000000;
 
-// The longest part of a text a message quotes (see MessageText())
-constexpr std::size_t MaxMessageTextSize = 40;
-
 // The reason a number with an underscore that isn't between two digits isn't valid
 constexpr char const* UnderscoreReason = "an underscore must be between two digits";
 
@@ -79,12 +76,12 @@ char EscapedCharacter(char letter) noexcept;
 std::string EscapeForMessage(std::string_view text, std::size_t backslash, std::size_t digitCount);
 char EscapeLetter(char c) noexcept;
 bool IsBareKey(std::string_view key) noexcept;
+bool IsBareKeyCharacter(char c) noexcept;
 bool IsControlCharacter(unsigned char byte) noexcept;
 bool IsDateTimeCharacter(char c) noexcept;
 bool IsLetter(char c) noexcept;
 bool IsNumberCharacter(char c) noexcept;
 std::size_t LineBreakSize(std::string_view text, std::size_t offset) noexcept;
-std::string MessageText(std::string_view text);
 bool ReadDigits(std::string_view digits, int base, std::uint64_t limit, std::uint64_t& value) noexcept;
 TASWTomlResult ReadEscape(std::string_view text, std::size_t& offset, std::string& value);
 bool ReadField(std::string_view text, std::size_t offset, std::size_t digitCount, int& field) noexcept;
@@ -523,11 +520,21 @@ bool IsBareKey(std::string_view key) noexcept
 
     for (char const c : key)
     {
-        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_'))
+        if (!IsBareKeyCharacter(c))
             return false;
     }
 
     return true;
+}
+//---------------------------------------------------------------------------
+/*
+    IsBareKeyCharacter
+
+    Whether 'c' can be part of a bare key: A-Z, a-z, 0-9, '-' or '_'
+*/
+bool IsBareKeyCharacter(char c) noexcept
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
 }
 //---------------------------------------------------------------------------
 /*
@@ -587,33 +594,6 @@ std::size_t LineBreakSize(std::string_view text, std::size_t offset) noexcept
         return 2;
 
     return 0;
-}
-//---------------------------------------------------------------------------
-/*
-    MessageText
-
-    'text' in double quotes for a message, with control characters as '?', and cut to MaxMessageTextSize bytes (before
-    a UTF-8 sequence, never inside one) followed by "..." when it is longer
-*/
-std::string MessageText(std::string_view text)
-{
-    std::size_t size = text.size();
-    if (size > MaxMessageTextSize)
-    {
-        size = MaxMessageTextSize;
-        while (size > 0 && (static_cast<unsigned char>(text[size]) & 0xC0) == 0x80)
-            --size;
-    }
-
-    std::string quoted = "\"";
-    for (char const c : text.substr(0, size))
-        quoted += IsControlCharacter(static_cast<unsigned char>(c)) ? '?' : c;
-
-    quoted += '"';
-    if (size < text.size())
-        quoted += "...";
-
-    return quoted;
 }
 //---------------------------------------------------------------------------
 /*
@@ -961,6 +941,38 @@ TASWTomlResult ReadDateTime(std::string_view text, std::size_t& position, TASWTo
         value = TASWTomlLocalDateTime{ date, time };
 
     position = i;
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult ReadKey(std::string_view text, std::size_t& position, std::string& key)
+{
+    std::size_t const start = position;
+    char const first = start < text.size() ? text[start] : '\0';
+
+    if (first == '"' || first == '\'')
+    {
+        if (text.substr(start, 3) == (first == '"' ? "\"\"\"" : "'''"))
+        {
+            return ErrorAt(ETomlCode::ParseFailed, "A key can't be a multi-line string; write it in \" or '.", text,
+                start);
+        }
+
+        return ReadString(text, position, key);
+    }
+
+    std::size_t end = start;
+    while (end < text.size() && IsBareKeyCharacter(text[end]))
+        ++end;
+
+    if (end == start)
+    {
+        return ErrorAt(ETomlCode::ParseFailed,
+            "A key must be a bare key (A-Z, a-z, 0-9, '-' and '_') or a quoted string.", text, start);
+    }
+
+    key = text.substr(start, end - start);
+    position = end;
 
     return TASWTomlResult();
 }

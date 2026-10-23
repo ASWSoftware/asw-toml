@@ -24,12 +24,24 @@ limitations under the License.
 // Module header
 #include "ASWToml_Utils.h"
 //---------------------------------------------------------------------------
+#include <cstddef>
+#include <string>
+#include <string_view>
+//---------------------------------------------------------------------------
 
 namespace ASWToml
 {
 
 namespace Detail
 {
+
+namespace
+{
+
+// The longest part of a text a message quotes (see MessageText())
+constexpr std::size_t MaxMessageTextSize = 40;
+
+} // namespace
 
 //---------------------------------------------------------------------------
 std::size_t BomSize(EBom bom) noexcept
@@ -173,6 +185,30 @@ std::string_view LineBreakText(ELineBreak lineBreak) noexcept
     }
 
     return std::string_view();
+}
+//---------------------------------------------------------------------------
+std::string MessageText(std::string_view text)
+{
+    std::size_t size = text.size();
+    if (size > MaxMessageTextSize)
+    {
+        size = MaxMessageTextSize;
+        while (size > 0 && (static_cast<unsigned char>(text[size]) & 0xC0) == 0x80)
+            --size;
+    }
+
+    std::string quoted = "\"";
+    for (char const c : text.substr(0, size))
+    {
+        unsigned char const byte = static_cast<unsigned char>(c);
+        quoted += byte < 0x20 || byte == 0x7F ? '?' : c;
+    }
+
+    quoted += '"';
+    if (size < text.size())
+        quoted += "...";
+
+    return quoted;
 }
 //---------------------------------------------------------------------------
 ELineBreak NativeLineBreak() noexcept

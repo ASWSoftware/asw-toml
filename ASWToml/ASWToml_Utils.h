@@ -32,6 +32,7 @@ limitations under the License.
 #define ASWToml_UtilsH
 //---------------------------------------------------------------------------
 #include <cstddef>
+#include <string>
 #include <string_view>
 //---------------------------------------------------------------------------
 #include "ASWToml_Types.h"
@@ -88,6 +89,11 @@ inline bool IsValidUtf8(std::string_view text) noexcept
 
 // The characters of 'lineBreak' ("" for ELineBreak::None)
 std::string_view LineBreakText(ELineBreak lineBreak) noexcept;
+
+// 'text' in double quotes for a message, with control characters (U+0000 to U+001F and U+007F) as '?', and cut to 40
+// bytes (before a UTF-8 sequence, never inside one) followed by "..." when it is longer, e.g. "0x_FF". Throws only
+// std::bad_alloc.
+std::string MessageText(std::string_view text);
 
 // The platform's line break: CRLF on Windows, LF elsewhere
 ELineBreak NativeLineBreak() noexcept;

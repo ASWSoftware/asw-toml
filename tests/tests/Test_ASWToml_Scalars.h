@@ -105,11 +105,24 @@ private:
     typedef TAutoTestGroup<TTest_ASWToml_Keys> inherited;
 
 private:
+    // Checks that ReadKey() fails on 'text' (from offset 0) with 'code' at 'offset', with a message that holds
+    // 'expectedText', leaving the key as it was
+    void CheckReadFails(std::string const& text, ASWToml::ETomlCode code, std::size_t offset,
+        std::string const& expectedText, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that ReadKey() reads 'text' (from offset 0) as 'key', ending at 'end'
+    void CheckReads(std::string const& text, std::string const& key, std::size_t end, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
     // Checks that WriteKey() writes 'key' as 'expected'
     void CheckWrites(std::string const& key, std::string const& expected, std::string const& msg,
         std::source_location loc = std::source_location::current());
 
 public: // Test methods, each defined with ASW_TEST
+    void Test_ReadKey_BareKeys();
+    void Test_ReadKey_QuotedKeys();
+    void Test_ReadKey_RejectsTextThatIsNotAKey();
     void Test_WriteKey_BareKeys();
     void Test_WriteKey_QuotedKeys();
     void Test_WriteKey_RejectsInvalidUtf8();

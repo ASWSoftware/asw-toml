@@ -68,6 +68,15 @@ namespace Detail
 // and an offset -23:59 to +23:59. Throws only std::bad_alloc.
 TASWTomlResult ReadDateTime(std::string_view text, std::size_t& position, TASWTomlValue& value);
 
+// Reads the key part (TOML's simple key) that starts at 'position' in 'text': a bare key (one or more of A-Z, a-z,
+// 0-9, '-' and '_') or a basic or literal string on one line, as ReadString() reads it. In a dotted key such as
+// a."b".c, each part is read on its own; the dots, and the blanks around them, are the caller's to read.
+// On success, sets 'key' to the key (unquoted, UTF-8) and 'position' to the offset after it. On failure, leaves 'key'
+// as it was, sets 'position' to the offset of the error, and returns ParseFailed (InvalidUtf8 for bytes that aren't
+// valid UTF-8) with the Line and Column of that offset in 'text': no key at 'position', a multi-line string (""" or
+// ''') at 'position', or what ReadString() reports. Throws only std::bad_alloc.
+TASWTomlResult ReadKey(std::string_view text, std::size_t& position, std::string& key);
+
 // Reads the number that starts at 'position' in 'text': the longest run of the characters a number can have (A-Z,
 // a-z, 0-9, '_', '.', '+' and '-'), which must be a TOML integer (decimal, or hexadecimal, octal or binary after 0x,
 // 0o or 0b, with no sign) or float (with a fraction, an exponent or both, or inf or nan, each with an optional sign),

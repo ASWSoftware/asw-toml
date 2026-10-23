@@ -75,9 +75,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of the character at fault.
   - Strings in all four forms, with every escape (1.1's `\xHH` and `\e` included); a line break in
     a multi-line string reads as `\n` whether the file has LF or CRLF. A string is written as
-    `Values.StringStyle` says, with only the escapes TOML 1.0 reads (`\u001B`, not `\e`), and a key
-    as a bare key when it can be one, else a quoted one; text that isn't valid UTF-8 isn't written
-    (`InvalidValue`).
+    `Values.StringStyle` says, with only the escapes TOML 1.0 reads (`\u001B`, not `\e`); text that
+    isn't valid UTF-8 isn't written (`InvalidValue`).
+  - Keys (one part of a dotted key): read as a bare key or as a basic or literal string on one
+    line, and written as a bare key when they can be one, else as a basic string.
   - Integers in decimal, hexadecimal (`0x`), octal (`0o`) and binary (`0b`), with `_` between
     digits; one outside the 64-bit range is `ValueOutOfRange`. Written in decimal, or in the base
     `Values.IntegerBase` asks for (hexadecimal digits in upper case).
@@ -93,5 +94,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     Written with a `T` and the seconds always, a fraction only when it isn't 0 (with as few digits
     as it needs), and `Z` for offset 0, e.g. `1979-05-27T00:32:00.5-07:00`; a value that isn't
     valid isn't written (`InvalidValue`).
+- `TASWTomlPath` (`ASWToml_Path.h`), the place of a table, a key or an element of an array in a
+  document, from the root table, for the lookups and edits to come. It is made implicitly from a
+  string in TOML's dotted-key syntax, with `[n]` for an element of an array
+  (`server."host name".port`, `products[0].name`; the empty string is the root table), or from a
+  list of parts, each a key or an index of any integer type (`{ "products", 0, "name" }`). A braced
+  list is always a list of parts, so `{ "a.b" }` is the one key `a.b`. A path that can't be made
+  (text that isn't a valid path, a negative index, a key that isn't valid UTF-8, or an index first)
+  doesn't throw: `IsValid()` is false and `GetError()` says why (and at which column of the text).
+  `Append()` adds a part, `GetParts()` gives them (`TASWTomlPathPart`), and `ToString()` writes the
+  path as messages show it, each key bare when it can be, else a basic string, so it reads back as
+  the same path.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

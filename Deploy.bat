@@ -54,6 +54,10 @@ call :CopyFile "ASWToml\ASWToml_Options.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Optio
 if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Options.h" "%TARGET_DIR%\ASWToml\ASWToml_Options.h"
 if errorlevel 1 exit /b 1
+call :CopyFile "ASWToml\ASWToml_Path.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Path.cpp"
+if errorlevel 1 exit /b 1
+call :CopyFile "ASWToml\ASWToml_Path.h" "%TARGET_DIR%\ASWToml\ASWToml_Path.h"
+if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Scalars.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Scalars.cpp"
 if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Scalars.h" "%TARGET_DIR%\ASWToml\ASWToml_Scalars.h"
