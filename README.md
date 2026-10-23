@@ -230,3 +230,9 @@ git config --local core.hooksPath .githooks/
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to propose a change, build
 and test it, and report a bug.
+
+# License
+
+ASWToml is licensed under the [MIT License](LICENSE). The unit tests include the files of
+[toml-test](https://github.com/toml-lang/toml-test), also under the MIT License
+(`tests/toml-test/LICENSE-toml-test`).
