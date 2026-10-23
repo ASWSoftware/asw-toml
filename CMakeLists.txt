@@ -43,6 +43,8 @@ add_library(ASWToml STATIC
     ASWToml/ASWToml_Types.h
     ASWToml/ASWToml_Utils.cpp
     ASWToml/ASWToml_Utils.h
+    ASWToml/ASWToml_Value.cpp
+    ASWToml/ASWToml_Value.h
     ASWToml/ASWToml_Version.cpp
     ASWToml/ASWToml_Version.h
 )

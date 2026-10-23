@@ -47,5 +47,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ASWToml::PathToUtf8(folder / "app.toml")` (on Windows through the path's wide form, since a
   narrow `std::filesystem::path` string is in the ANSI code page with MSVC and libc++; text that
   isn't valid UTF-8 or UTF-16 converts with U+FFFD instead of failing).
+- `TASWTomlValue` (`ASWToml_Value.h`), a decoded TOML value of any type, detached from a document:
+  a string, integer (`std::int64_t`), float (`double`), boolean, one of the four date and time
+  types, an array (`TValueVector`, its values of any types) or a table (`TKeyValueVector` of
+  `TASWTomlKeyValue`, in the order its keys were read or set). `ETomlType` names the type (with
+  values that never change). A default value is an empty table. Nothing throws: `AsString()` and
+  the others give `nullptr` for another type, and `Find()`, `Set()`, `Remove()` and `Append()` do
+  nothing on a value that isn't a table or an array. `operator==` compares tables by their keys in
+  any order, and floats as IEEE 754 numbers.
+- The date and time types keep each part as written, with `std::chrono` parts: a local date is a
+  `std::chrono::year_month_day`, `TASWTomlLocalTime` holds the hour, minute, second (60 for a
+  leap second, at any hour) and fraction, `TASWTomlLocalDateTime` a date and a time, and
+  `TASWTomlOffsetDateTime` a date, a time and an offset from UTC, so two offsets of the same
+  instant stay apart. `IsValid()` checks the parts (a real date with a year from 0 to 9999, an
+  offset within plus or minus 23:59), and `ToDuration()`, `ToLocalTime()` and `ToSysTime()`
+  convert to `std::chrono` durations and time points, giving `std::nullopt` for a value that
+  isn't valid or that nanoseconds from 1970 can't count (outside 1677-09-21T00:12:43.145224192 to
+  2262-04-11T23:47:16.854775807); `FromDuration()`, `FromLocalTime()` and `FromSysTime()` convert
+  back.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop
