@@ -22,6 +22,11 @@ limitations under the License.
 #ifndef Test_ASWToml_UtilsH
 #define Test_ASWToml_UtilsH
 //---------------------------------------------------------------------------
+#include <cstddef>
+#include <source_location>
+#include <string>
+#include <string_view>
+//---------------------------------------------------------------------------
 #include "ASWUnitTests_TestBase.h"
 //---------------------------------------------------------------------------
 
@@ -36,6 +41,11 @@ class TTest_ASWToml_Utils : public TAutoTestGroup<TTest_ASWToml_Utils>
 private:
     typedef TAutoTestGroup<TTest_ASWToml_Utils> inherited;
 
+private:
+    // Checks that SetLineAndColumn() gives the byte at 'offset' in 'text' 'line' and 'column'
+    void CheckLineAndColumn(std::string_view text, std::size_t offset, std::size_t line, std::size_t column,
+        std::string const& msg, std::source_location loc = std::source_location::current());
+
 public: // Test methods, each defined with ASW_TEST
     void Test_BomSize_MatchesEachMark();
     void Test_CountCodePoints_CountsEachCharacterOnce();
@@ -48,6 +58,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_IsValidUtf8_RejectsInvalidSequences();
     void Test_LineBreakText_MatchesEachBreak();
     void Test_NativeLineBreak_MatchesPlatform();
+    void Test_SetLineAndColumn_CountsLinesAndCharacters();
 
 public:
     TTest_ASWToml_Utils();

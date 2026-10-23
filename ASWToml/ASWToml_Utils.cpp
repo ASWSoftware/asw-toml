@@ -184,6 +184,27 @@ ELineBreak NativeLineBreak() noexcept
 #endif
 }
 //---------------------------------------------------------------------------
+void SetLineAndColumn(TASWTomlResult& result, std::string_view text, std::size_t offset) noexcept
+{
+    if (offset > text.size())
+        offset = text.size();
+
+    std::size_t line = 1;
+    std::size_t lineStart = 0;
+
+    for (std::size_t i = 0; i < offset; ++i)
+    {
+        if (text[i] == '\n')
+        {
+            ++line;
+            lineStart = i + 1;
+        }
+    }
+
+    result.Line = line;
+    result.Column = CountCodePoints(text.substr(lineStart, offset - lineStart)) + 1;
+}
+//---------------------------------------------------------------------------
 
 } // namespace Detail
 

@@ -77,6 +77,16 @@ TTest_ASWToml_Utils::~TTest_ASWToml_Utils()
 {
 }
 //---------------------------------------------------------------------------
+void TTest_ASWToml_Utils::CheckLineAndColumn(std::string_view text, std::size_t offset, std::size_t line,
+    std::size_t column, std::string const& msg, std::source_location loc)
+{
+    ASWToml::TASWTomlResult result;
+    ASWToml::Detail::SetLineAndColumn(result, text, offset);
+
+    CheckEquals(line, result.Line, msg + ": the line", loc);
+    CheckEquals(column, result.Column, msg + ": the column", loc);
+}
+//---------------------------------------------------------------------------
 void TTest_ASWToml_Utils::SetUp_Group()
 {
 }
@@ -236,6 +246,32 @@ ASW_TEST(TTest_ASWToml_Utils, NativeLineBreak_MatchesPlatform)
 #else
     CheckEquals(ELineBreak::LF, lineBreak, "other platforms should use LF");
 #endif
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Utils, SetLineAndColumn_CountsLinesAndCharacters)
+{
+    // Arrange
+    // Line 2 ends with a CRLF, and line 3 starts with two 2-byte characters (U+00E9)
+    std::string const text = "a = 1\nb = 2\r\n\xC3\xA9\xC3\xA9 = 3";
+
+    // Act & Assert
+    CheckLineAndColumn(text, 0, 1, 1, "'a'");
+    CheckLineAndColumn(text, 4, 1, 5, "'1'");
+    CheckLineAndColumn(text, 5, 1, 6, "the first line's LF");
+    CheckLineAndColumn(text, 6, 2, 1, "'b'");
+    CheckLineAndColumn(text, 11, 2, 6, "the CR of the CRLF");
+    CheckLineAndColumn(text, 12, 2, 7, "the LF of the CRLF");
+    CheckLineAndColumn(text, 13, 3, 1, "the first U+00E9");
+    CheckLineAndColumn(text, 15, 3, 2, "the second U+00E9");
+    CheckLineAndColumn(text, 18, 3, 4, "'=', after two characters of four bytes and a space");
+    CheckLineAndColumn(text, 21, 3, 7, "the end of the text");
+    CheckLineAndColumn(text, 99, 3, 7, "an offset past the end, taken as the end");
+    CheckLineAndColumn(std::string_view(), 0, 1, 1, "an empty text");
+
+    // Arrange & Act & Assert
+    // A text that is the start of a longer one: nothing after its end is read, not even the line break there
+    std::string_view const start = std::string_view("ab\ncd").substr(0, 2);
+    CheckLineAndColumn(start, 5, 1, 3, "an offset past the end of a view");
 }
 //---------------------------------------------------------------------------
 

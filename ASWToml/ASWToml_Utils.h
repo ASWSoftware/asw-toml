@@ -92,6 +92,11 @@ std::string_view LineBreakText(ELineBreak lineBreak) noexcept;
 // The platform's line break: CRLF on Windows, LF elsewhere
 ELineBreak NativeLineBreak() noexcept;
 
+// Sets result.Line and result.Column to the place of the byte at 'offset' in 'text', both 1-based, the column in
+// characters (see CountCodePoints()). Each "\n" ends a line, so the "\r" of a CRLF is the last character of its line.
+// An offset past the end of 'text' is taken as its end.
+void SetLineAndColumn(TASWTomlResult& result, std::string_view text, std::size_t offset) noexcept;
+
 } // namespace Detail
 
 } // namespace ASWToml

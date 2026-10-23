@@ -39,6 +39,8 @@ add_library(ASWToml STATIC
     ASWToml/ASWToml_File.h
     ASWToml/ASWToml_Options.cpp
     ASWToml/ASWToml_Options.h
+    ASWToml/ASWToml_Scalars.cpp
+    ASWToml/ASWToml_Scalars.h
     ASWToml/ASWToml_Types.cpp
     ASWToml/ASWToml_Types.h
     ASWToml/ASWToml_Utils.cpp
