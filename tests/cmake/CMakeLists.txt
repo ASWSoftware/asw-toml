@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(ASWTOML_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(ASWTOML_TESTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../tests")
+set(ASWTOML_TOML_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../toml-test")
 set(ASWUNITTESTS_ROOT "${ASWTOML_ROOT}/third_party/asw-unit-tests")
 
 # The ASWUnitTests framework is a git submodule. Fail with instructions rather than falling back to a download, so a
@@ -50,11 +51,13 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Value.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Version.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_TempDir.cpp"
+    "${ASWTOML_TOML_TEST_DIR}/TomlTest_Corpus.cpp"
 )
 
 target_include_directories(ASWTomlTests PRIVATE
     "${ASWUNITTESTS_SOURCE_DIR}"
     "${ASWTOML_TESTS_DIR}"
+    "${ASWTOML_TOML_TEST_DIR}"
 )
 
 target_link_libraries(ASWTomlTests PRIVATE ASWToml::ASWToml)

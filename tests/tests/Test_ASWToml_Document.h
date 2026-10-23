@@ -237,6 +237,33 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_TomlTest
+//
+// toml-test's TOML 1.1 files (see tests/toml-test): each valid one reads as its expected values and is written back
+// byte for byte, and each invalid one fails
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_TomlTest : public TAutoTestGroup<TTest_ASWToml_TomlTest>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_TomlTest> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_InvalidFiles_Fail();
+    void Test_ValidFiles_HaveTheExpectedValues();
+    void Test_ValidFiles_WriteBackByteForByte();
+
+public:
+    TTest_ASWToml_TomlTest();
+    ~TTest_ASWToml_TomlTest() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentToText
 //
 // TASWTomlDocument::ToText(): the text back byte for byte, and the writing options' byte order mark and line endings

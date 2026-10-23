@@ -180,6 +180,11 @@ generators such as Visual Studio). The tests build at C++20 by default; add
 `-DASWTOML_CXX_STANDARD=23` (or `26`, in another build folder) to build them, and the library, at a
 later standard.
 
+The tests include every file of [toml-test](https://github.com/toml-lang/toml-test)'s TOML 1.1 list,
+compiled in from `tests/toml-test` (its README says which version and how to update it): each valid
+file must read as toml-test's expected values and be written back byte for byte, and each invalid
+one must fail.
+
 For RAD Studio, use `tests/rad370/ASWTomlTests.cbproj` or its scripts, `Build_Win64x_Debug.bat` and
 `Build_Win64x_Release.bat` (bcc64x). Output is written to `tests/build/bin/Win64x/<Config>`. GitHub
 Actions builds and runs the tests on Windows and Linux for each push and pull request to `main` and

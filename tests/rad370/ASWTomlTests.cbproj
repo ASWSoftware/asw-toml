@@ -46,7 +46,7 @@
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
         <Multithreaded>true</Multithreaded>
         <SanitizedProjectName>ASWTomlTests</SanitizedProjectName>
-        <IncludePath>..\..\ASWToml\;..\..\third_party\asw-unit-tests\src\;..\tests\;$(IncludePath)</IncludePath>
+        <IncludePath>..\..\ASWToml\;..\..\third_party\asw-unit-tests\src\;..\tests\;..\toml-test\;$(IncludePath)</IncludePath>
         <_TCHARMapping>char</_TCHARMapping>
         <ILINK_LibraryPath>..\..\ASWToml\;..\..\third_party\asw-unit-tests\src\;..\tests\;$(ILINK_LibraryPath)</ILINK_LibraryPath>
         <BCC_AllWarnings>true</BCC_AllWarnings>
@@ -181,6 +181,10 @@
         <CppCompile Include="..\tests\UT_Helper_TempDir.cpp">
             <DependentOn>..\tests\UT_Helper_TempDir.h</DependentOn>
             <BuildOrder>23</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\toml-test\TomlTest_Corpus.cpp">
+            <DependentOn>..\toml-test\TomlTest_Corpus.h</DependentOn>
+            <BuildOrder>33</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\third_party\asw-unit-tests\src\ASWUnitTests_CLI.cpp">
             <DependentOn>..\..\third_party\asw-unit-tests\src\ASWUnitTests_CLI.h</DependentOn>
