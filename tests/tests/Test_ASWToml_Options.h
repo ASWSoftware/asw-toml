@@ -128,6 +128,37 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_ValueOptions
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_ValueOptions : public TAutoTestGroup<TTest_ASWToml_ValueOptions>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_ValueOptions> inherited;
+
+private:
+    // Checks that 'options' fail Validate() with InvalidOptions and a message that contains 'expectedText'
+    void CheckInvalid(ASWToml::TASWTomlValueOptions const& options, std::string const& expectedText,
+        std::string const& msg, std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Defaults_AreValid();
+    void Test_Defaults_MatchDocumentedValues();
+    void Test_ToString_EnumNames();
+    void Test_Validate_AcceptsEveryEnumValue();
+    void Test_Validate_RejectsUnknownEnumValues();
+
+public:
+    TTest_ASWToml_ValueOptions();
+    ~TTest_ASWToml_ValueOptions() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_Options
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_Options : public TAutoTestGroup<TTest_ASWToml_Options>

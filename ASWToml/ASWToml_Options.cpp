@@ -108,6 +108,29 @@ char const* ToString(EBomMode bom) noexcept
     return "Unknown";
 }
 //---------------------------------------------------------------------------
+char const* ToString(EIntegerBase integerBase) noexcept
+{
+    switch (integerBase)
+    {
+        case EIntegerBase::Auto:
+            return "Auto";
+
+        case EIntegerBase::Decimal:
+            return "Decimal";
+
+        case EIntegerBase::Hexadecimal:
+            return "Hexadecimal";
+
+        case EIntegerBase::Octal:
+            return "Octal";
+
+        case EIntegerBase::Binary:
+            return "Binary";
+    }
+
+    return "Unknown";
+}
+//---------------------------------------------------------------------------
 char const* ToString(ELineEnding lineEnding) noexcept
 {
     switch (lineEnding)
@@ -123,6 +146,23 @@ char const* ToString(ELineEnding lineEnding) noexcept
 
         case ELineEnding::CRLF:
             return "CRLF";
+    }
+
+    return "Unknown";
+}
+//---------------------------------------------------------------------------
+char const* ToString(EStringStyle stringStyle) noexcept
+{
+    switch (stringStyle)
+    {
+        case EStringStyle::Auto:
+            return "Auto";
+
+        case EStringStyle::Basic:
+            return "Basic";
+
+        case EStringStyle::Literal:
+            return "Literal";
     }
 
     return "Unknown";
@@ -205,6 +245,25 @@ TASWTomlResult TASWTomlSavingOptions::Validate() const
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TASWTomlValueOptions
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlValueOptions::Validate() const
+{
+    // The enumerations, in case one was cast from a number
+    if (std::string_view(ToString(StringStyle)) == "Unknown")
+        return Invalid("Values.StringStyle isn't one of the EStringStyle values.");
+
+    if (std::string_view(ToString(IntegerBase)) == "Unknown")
+        return Invalid("Values.IntegerBase isn't one of the EIntegerBase values.");
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TASWTomlOptions
 /////////////////////////////////////////////////////////////////////////////
 
@@ -219,7 +278,11 @@ TASWTomlResult TASWTomlOptions::Validate() const
     if (!result.IsOk())
         return result;
 
-    return Saving.Validate();
+    result = Saving.Validate();
+    if (!result.IsOk())
+        return result;
+
+    return Values.Validate();
 }
 //---------------------------------------------------------------------------
 

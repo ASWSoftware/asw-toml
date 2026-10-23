@@ -25,7 +25,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   error, which converts to `true` when it succeeded). A column counts characters (Unicode code
   points) from 1, and a path is written in TOML's dotted-key syntax (`server."host name".port`).
   `ToString()` names a code, a line break or a severity, and writes a message as one line of text.
-- `TASWTomlOptions` (`ASWToml_Options.h`), the settings for TOML files in three groups:
+- `TASWTomlOptions` (`ASWToml_Options.h`), the settings for TOML files in four groups:
   - `Reading` (`TASWTomlReadingOptions`): the largest file loaded (16 MiB) and how many arrays and
     inline tables a value may have inside one another (100; a deeper value fails the load with
     `NestingTooDeep`).
@@ -34,9 +34,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     by default, and a blank line before a new table (on).
   - `Saving` (`TASWTomlSavingOptions`): atomic saves (on), backups (off, `.bak`) and creating
     missing folders (on).
+  - `Values` (`TASWTomlValueOptions`): how a string is written (`EStringStyle`: `Auto`, a literal
+    string such as `'C:\Users\me'` when the text holds a backslash and a literal string can hold
+    it, else a basic string; or always `Basic`; or `Literal` whenever it can hold the text) and the
+    base of an integer (`EIntegerBase`: `Auto`, which is decimal, `Decimal`, `Hexadecimal`, `Octal`
+    or `Binary`; a negative number is always decimal). Every form is read, whichever these say.
 
   Each group's `Validate()` checks its own settings (e.g. the comment prefix must start with `#`
-  and hold only what a TOML comment may), and `TASWTomlOptions::Validate()` checks the three; a
+  and hold only what a TOML comment may), and `TASWTomlOptions::Validate()` checks the four; a
   problem is `ETomlCode::InvalidOptions` with a message naming the setting.
 - The file layer that loading and saving will use (`ASWToml_File.cpp`, internal): whole files read
   and written in binary mode with the operating system's own file APIs, a size limit on reads, and

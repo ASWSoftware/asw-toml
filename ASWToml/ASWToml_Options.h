@@ -4,12 +4,13 @@ Author: Anthony S. West - ASW Software
 
 A TOML file reader/writer library.
 
-TASWTomlOptions and its three groups: how TOML text is read
+TASWTomlOptions and its four groups: how TOML text is read
 (TASWTomlReadingOptions: the largest file, the deepest nesting), written
 (TASWTomlWritingOptions: comment prefix, line ending, byte order mark, blank
 line before a new table) and saved (TASWTomlSavingOptions: atomically, with
-a backup, creating the folder), each with Validate() to check that the
-options can be used.
+a backup, creating the folder), and how values are written
+(TASWTomlValueOptions: the form of a string, the base of an integer), each
+with Validate() to check that the options can be used.
 
 Requires C++ 20 or higher.
 
@@ -58,6 +59,27 @@ enum class EBomMode : int
     Auto = 0, // As the loaded file did; none for a new file
     Always = 1,
     Never = 2,
+};
+
+// How a string value is written; every form is read, whichever this is. A literal string ('...') holds its text as
+// it is, without escapes, so 'C:\Users\me' reads as C:\Users\me, but it can't hold a ' or a control character other
+// than a tab.
+enum class EStringStyle : int
+{
+    Auto = 0, // A literal string when the text holds a backslash and a literal string can hold it, else a basic one
+    Basic = 1, // A basic string ("..."), with escapes such as \" and \n
+    Literal = 2, // A literal string when it can hold the text, else a basic one
+};
+
+// The base an integer value is written in; every base is read, whichever this is. A negative number is written in
+// decimal whatever the base, since TOML's other bases have no sign.
+enum class EIntegerBase : int
+{
+    Auto = 0, // Decimal
+    Decimal = 1, // e.g. 255
+    Hexadecimal = 2, // e.g. 0xFF (digits in upper case)
+    Octal = 3, // e.g. 0o377
+    Binary = 4, // e.g. 0b11111111
 };
 
 
@@ -147,19 +169,41 @@ struct TASWTomlSavingOptions
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TASWTomlValueOptions
+//
+// How values are written as TOML text: the form of a string and the base of an integer. Every form is read, whichever
+// these say.
+/////////////////////////////////////////////////////////////////////////////
+struct TASWTomlValueOptions
+{
+    // The form a string is written in
+    EStringStyle StringStyle = EStringStyle::Auto;
+
+    // The base an integer is written in
+    EIntegerBase IntegerBase = EIntegerBase::Auto;
+
+    // Ok if these options can be used, else ETomlCode::InvalidOptions with the first problem found, e.g. a StringStyle
+    // that isn't one of the EStringStyle values
+    TASWTomlResult Validate() const;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TASWTomlOptions
 //
-// How TOML text is read, written and saved, e.g. options.Writing.LineEnding = ELineEnding::LF. The defaults write
-// "# comment" lines, keep each line's line ending and the file's byte order mark, and save atomically.
+// How TOML text is read, written and saved, and how values are written. The defaults write "# comment" lines, keep
+// each line's line ending and the file's byte order mark, save atomically, and write an integer in decimal and a
+// string with a backslash as a literal string when one can hold it. E.g. options.Writing.LineEnding = ELineEnding::LF.
 /////////////////////////////////////////////////////////////////////////////
 struct TASWTomlOptions
 {
     TASWTomlReadingOptions Reading;
     TASWTomlWritingOptions Writing;
     TASWTomlSavingOptions Saving;
+    TASWTomlValueOptions Values;
 
     // Ok if these options can be used, else ETomlCode::InvalidOptions with the first problem found by each group's
-    // Validate(), in the order Reading, Writing, Saving
+    // Validate(), in the order Reading, Writing, Saving, Values
     TASWTomlResult Validate() const;
 };
 
@@ -167,7 +211,9 @@ struct TASWTomlOptions
 
 // The value's name, e.g. "CRLF"; "Unknown" for a value that isn't one of the enumerators
 char const* ToString(EBomMode bom) noexcept;
+char const* ToString(EIntegerBase integerBase) noexcept;
 char const* ToString(ELineEnding lineEnding) noexcept;
+char const* ToString(EStringStyle stringStyle) noexcept;
 
 } // namespace ASWToml
 

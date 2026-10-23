@@ -37,6 +37,8 @@ namespace ASWUnitTests
 namespace
 {
 
+using TIntegerBaseVector = std::vector<ASWToml::EIntegerBase>;
+using TStringStyleVector = std::vector<ASWToml::EStringStyle>;
 using TStringVector = std::vector<std::string>;
 
 } // namespace
@@ -401,6 +403,144 @@ ASW_TEST(TTest_ASWToml_SavingOptions, Validate_ChecksBackupSuffixOnlyWithBackup)
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_ValueOptions
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_ValueOptions::TTest_ASWToml_ValueOptions()
+    : inherited("ASWToml_ValueOptions_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_ValueOptions::~TTest_ASWToml_ValueOptions()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ValueOptions::CheckInvalid(ASWToml::TASWTomlValueOptions const& options,
+    std::string const& expectedText, std::string const& msg, std::source_location loc)
+{
+    ASWToml::TASWTomlResult const result = options.Validate();
+
+    CheckEquals(ASWToml::ETomlCode::InvalidOptions, result.Code, msg + ": the code should be InvalidOptions", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message should name the problem", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ValueOptions::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ValueOptions::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ValueOptions::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ValueOptions::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ValueOptions, Defaults_AreValid)
+{
+    // Arrange
+    ASWToml::TASWTomlValueOptions const options;
+
+    // Act
+    ASWToml::TASWTomlResult const result = options.Validate();
+
+    // Assert
+    CheckTrue(result.IsOk(), "the default value options should be valid: " + result.Message);
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ValueOptions, Defaults_MatchDocumentedValues)
+{
+    // Act
+    ASWToml::TASWTomlValueOptions const options;
+
+    // Assert
+    // The defaults phase 2's decisions document (decision 10)
+    CheckEquals(ASWToml::EStringStyle::Auto, options.StringStyle, "StringStyle");
+    CheckEquals(ASWToml::EIntegerBase::Auto, options.IntegerBase, "IntegerBase");
+    CheckEquals(0, static_cast<int>(ASWToml::EStringStyle::Auto), "EStringStyle::Auto should be 0");
+    CheckEquals(0, static_cast<int>(ASWToml::EIntegerBase::Auto), "EIntegerBase::Auto should be 0");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ValueOptions, ToString_EnumNames)
+{
+    CheckEquals(std::string("Auto"), std::string(ASWToml::ToString(ASWToml::EStringStyle::Auto)),
+        "EStringStyle::Auto");
+    CheckEquals(std::string("Basic"), std::string(ASWToml::ToString(ASWToml::EStringStyle::Basic)),
+        "EStringStyle::Basic");
+    CheckEquals(std::string("Literal"), std::string(ASWToml::ToString(ASWToml::EStringStyle::Literal)),
+        "EStringStyle::Literal");
+    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::EStringStyle>(99))),
+        "an unknown EStringStyle");
+    CheckEquals(std::string("Auto"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Auto)),
+        "EIntegerBase::Auto");
+    CheckEquals(std::string("Decimal"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Decimal)),
+        "EIntegerBase::Decimal");
+    CheckEquals(std::string("Hexadecimal"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Hexadecimal)),
+        "EIntegerBase::Hexadecimal");
+    CheckEquals(std::string("Octal"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Octal)),
+        "EIntegerBase::Octal");
+    CheckEquals(std::string("Binary"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Binary)),
+        "EIntegerBase::Binary");
+    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::EIntegerBase>(99))),
+        "an unknown EIntegerBase");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ValueOptions, Validate_AcceptsEveryEnumValue)
+{
+    // Arrange
+    TStringStyleVector const styles = { ASWToml::EStringStyle::Auto, ASWToml::EStringStyle::Basic,
+        ASWToml::EStringStyle::Literal };
+    TIntegerBaseVector const bases = { ASWToml::EIntegerBase::Auto, ASWToml::EIntegerBase::Decimal,
+        ASWToml::EIntegerBase::Hexadecimal, ASWToml::EIntegerBase::Octal, ASWToml::EIntegerBase::Binary };
+
+    for (ASWToml::EStringStyle const style : styles)
+    {
+        for (ASWToml::EIntegerBase const base : bases)
+        {
+            ASWToml::TASWTomlValueOptions options;
+            options.StringStyle = style;
+            options.IntegerBase = base;
+
+            // Act
+            ASWToml::TASWTomlResult const result = options.Validate();
+
+            // Assert
+            CheckTrue(result.IsOk(), std::string("StringStyle ") + ASWToml::ToString(style) + " with IntegerBase " +
+                ASWToml::ToString(base) + " should be valid: " + result.Message);
+        }
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ValueOptions, Validate_RejectsUnknownEnumValues)
+{
+    // Arrange & Act & Assert
+    ASWToml::TASWTomlValueOptions options;
+    options.StringStyle = static_cast<ASWToml::EStringStyle>(3);
+    CheckInvalid(options, "Values.StringStyle", "an unknown EStringStyle");
+
+    options.StringStyle = static_cast<ASWToml::EStringStyle>(-1);
+    CheckInvalid(options, "Values.StringStyle", "a negative EStringStyle");
+
+    options = ASWToml::TASWTomlValueOptions();
+    options.IntegerBase = static_cast<ASWToml::EIntegerBase>(5);
+    CheckInvalid(options, "Values.IntegerBase", "an unknown EIntegerBase");
+
+    options.IntegerBase = static_cast<ASWToml::EIntegerBase>(-1);
+    CheckInvalid(options, "Values.IntegerBase", "a negative EIntegerBase");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_Options
 /////////////////////////////////////////////////////////////////////////////
 
@@ -471,23 +611,34 @@ ASW_TEST(TTest_ASWToml_Options, Validate_ReportsEachGroupsProblems)
     options.Saving.Backup = true;
     options.Saving.BackupSuffix.clear();
     CheckInvalid(options, "Saving.BackupSuffix is empty", "a saving problem");
+
+    options = ASWToml::TASWTomlOptions();
+    options.Values.IntegerBase = static_cast<ASWToml::EIntegerBase>(9);
+    CheckInvalid(options, "Values.IntegerBase", "a value problem");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Options, Validate_ReportsFirstGroupsProblem)
 {
     // Arrange
-    // A problem in every group: Reading's is reported, then Writing's, then Saving's
+    // A problem in every group: Reading's is reported, then Writing's, then Saving's, then Values'
     ASWToml::TASWTomlOptions options;
     options.Reading.MaxFileSize = 0;
     options.Writing.CommentPrefix.clear();
     options.Saving.Backup = true;
     options.Saving.BackupSuffix.clear();
+    options.Values.StringStyle = static_cast<ASWToml::EStringStyle>(9);
 
     // Act & Assert
     CheckInvalid(options, "Reading.MaxFileSize", "with every group invalid");
 
     options.Reading = ASWToml::TASWTomlReadingOptions();
-    CheckInvalid(options, "Writing.CommentPrefix", "with Writing and Saving invalid");
+    CheckInvalid(options, "Writing.CommentPrefix", "with Writing, Saving and Values invalid");
+
+    options.Writing = ASWToml::TASWTomlWritingOptions();
+    CheckInvalid(options, "Saving.BackupSuffix", "with Saving and Values invalid");
+
+    options.Saving = ASWToml::TASWTomlSavingOptions();
+    CheckInvalid(options, "Values.StringStyle", "with Values invalid");
 }
 //---------------------------------------------------------------------------
 
@@ -497,4 +648,5 @@ ASW_TEST(TTest_ASWToml_Options, Validate_ReportsFirstGroupsProblem)
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Options, "Options")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_ReadingOptions, "Options")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SavingOptions, "Options")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_ValueOptions, "Options")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_WritingOptions, "Options")
