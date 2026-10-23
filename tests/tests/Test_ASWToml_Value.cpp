@@ -510,6 +510,35 @@ ASW_TEST(TTest_ASWToml_ValueModel, Constructors_SetEachType)
         TASWTomlValue("").IsString() && TASWTomlValue().IsTable(), "Is...() should match the type");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ValueModel, Assignment_IsDeep)
+{
+    // Arrange
+    TASWTomlValue original;
+    original.Set("server", TASWTomlValue())->Set("ports", TASWTomlValue::TValueVector{ 80, 443 });
+    TASWTomlValue const array = TASWTomlValue::TValueVector{ 1, TASWTomlValue::TValueVector{ 2 } };
+    TASWTomlValue const text = "text";
+    TASWTomlValue table = 1;
+    TASWTomlValue arrayCopy = "other";
+    TASWTomlValue scalar = TASWTomlValue::TValueVector{ 3 };
+    TASWTomlValue self = TASWTomlValue::TValueVector{ 4 };
+    TASWTomlValue const& selfReference = self;
+
+    // Act
+    table = original;
+    arrayCopy = array;
+    scalar = text;
+    self = selfReference;
+
+    // Assert
+    AssertTrue(table == original, "a table assigned over an integer should equal it");
+    table.Find("server")->Find("ports")->Append(8080);
+    CheckEquals(2, static_cast<int>(original.Find("server")->Find("ports")->AsArray()->size()),
+        "the original's nested array should be unchanged: the assigned table is a deep copy");
+    CheckTrue(arrayCopy == array, "an array assigned over a string should equal it");
+    CheckTrue(scalar == text, "a string assigned over an array should equal it");
+    CheckTrue(self == TASWTomlValue(TASWTomlValue::TValueVector{ 4 }), "a value assigned to itself should be kept");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_ValueModel, Copy_IsDeep)
 {
     // Arrange

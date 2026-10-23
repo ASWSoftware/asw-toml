@@ -73,6 +73,7 @@ private:
 public: // Test methods, each defined with ASW_TEST
     void Test_Array_Append();
     void Test_As_ReturnsNullForOtherTypes();
+    void Test_Assignment_IsDeep();
     void Test_Constructors_SetEachType();
     void Test_Copy_IsDeep();
     void Test_Default_IsEmptyTable();

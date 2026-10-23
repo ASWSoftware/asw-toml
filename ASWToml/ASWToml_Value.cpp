@@ -24,6 +24,7 @@ limitations under the License.
 // Module header
 #include "ASWToml_Value.h"
 //---------------------------------------------------------------------------
+#include <cstddef>
 #include <utility>
 //---------------------------------------------------------------------------
 
@@ -376,13 +377,60 @@ TASWTomlValue::TASWTomlValue(TKeyValueVector table)
 {
 }
 //---------------------------------------------------------------------------
-TASWTomlValue::TASWTomlValue(TASWTomlValue const& other) = default;
+TASWTomlValue::TASWTomlValue(TASWTomlValue const& other)
+    : m_Data(std::in_place_type<bool>, false)
+{
+    // An array or a table is copied element by element here rather than by the variant's copy, whose visitation
+    // takes several times the stack per nesting level in an unoptimized build
+    if (TValueVector const* const array = other.AsArray())
+    {
+        TValueVector& copy = m_Data.emplace<TValueVector>();
+        copy.reserve(array->size());
+
+        for (TASWTomlValue const& element : *array)
+            copy.emplace_back(element);
+    }
+    else if (TKeyValueVector const* const table = other.AsTable())
+    {
+        TKeyValueVector& copy = m_Data.emplace<TKeyValueVector>();
+        copy.reserve(table->size());
+
+        for (TASWTomlKeyValue const& entry : *table)
+            copy.push_back(entry);
+    }
+    else
+    {
+        m_Data = other.m_Data;
+    }
+}
 //---------------------------------------------------------------------------
 TASWTomlValue::TASWTomlValue(TASWTomlValue&& other) noexcept = default;
 //---------------------------------------------------------------------------
-TASWTomlValue::~TASWTomlValue() = default;
+TASWTomlValue::~TASWTomlValue()
+{
+    // An array's or a table's elements are destroyed by a local vector, so the variant's destructor, which takes
+    // several times the stack per nesting level in an unoptimized build, has none to destroy
+    if (TValueVector* const array = AsArray())
+    {
+        TValueVector const elements = std::move(*array);
+    }
+    else if (TKeyValueVector* const table = AsTable())
+    {
+        TKeyValueVector const entries = std::move(*table);
+    }
+}
 //---------------------------------------------------------------------------
-TASWTomlValue& TASWTomlValue::operator=(TASWTomlValue const& other) = default;
+TASWTomlValue& TASWTomlValue::operator=(TASWTomlValue const& other)
+{
+    // Through the copy constructor, for its stack use (see there)
+    if (this != &other)
+    {
+        TASWTomlValue copy(other);
+        m_Data = std::move(copy.m_Data);
+    }
+
+    return *this;
+}
 //---------------------------------------------------------------------------
 TASWTomlValue& TASWTomlValue::operator=(TASWTomlValue&& other) noexcept = default;
 //---------------------------------------------------------------------------
@@ -391,7 +439,24 @@ bool TASWTomlValue::operator==(TASWTomlValue const& other) const
     TKeyValueVector const* const table = AsTable();
     TKeyValueVector const* const otherTable = other.AsTable();
     if (table == nullptr || otherTable == nullptr)
-        return m_Data == other.m_Data;
+    {
+        // Arrays element by element here rather than by the variant's operator== (see the copy constructor)
+        TValueVector const* const array = AsArray();
+        TValueVector const* const otherArray = other.AsArray();
+        if (array == nullptr || otherArray == nullptr)
+            return m_Data == other.m_Data;
+
+        if (array->size() != otherArray->size())
+            return false;
+
+        for (std::size_t i = 0; i < array->size(); ++i)
+        {
+            if (!((*array)[i] == (*otherArray)[i]))
+                return false;
+        }
+
+        return true;
+    }
 
     // Tables are unordered: the same keys, each with an equal value
     if (table->size() != otherTable->size())
