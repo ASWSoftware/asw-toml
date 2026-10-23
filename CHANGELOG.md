@@ -70,5 +70,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   isn't valid or that nanoseconds from 1970 can't count (outside 1677-09-21T00:12:43.145224192 to
   2262-04-11T23:47:16.854775807); `FromDuration()`, `FromLocalTime()` and `FromSysTime()` convert
   back.
+- The reading and writing of TOML's scalar values that the parser and the edits will use
+  (`ASWToml_Scalars.cpp`, internal), as TOML 1.1.0 defines them. An error gives the line and column
+  of the character at fault.
+  - Strings in all four forms, with every escape (1.1's `\xHH` and `\e` included); a line break in
+    a multi-line string reads as `\n` whether the file has LF or CRLF. A string is written as
+    `Values.StringStyle` says, with only the escapes TOML 1.0 reads (`\u001B`, not `\e`), and a key
+    as a bare key when it can be one, else a quoted one; text that isn't valid UTF-8 isn't written
+    (`InvalidValue`).
+  - Integers in decimal, hexadecimal (`0x`), octal (`0o`) and binary (`0b`), with `_` between
+    digits; one outside the 64-bit range is `ValueOutOfRange`. Written in decimal, or in the base
+    `Values.IntegerBase` asks for (hexadecimal digits in upper case).
+  - Floats, `inf` and `nan` included; one beyond a double's range is `ValueOutOfRange`, and one
+    below the smallest double reads as 0.0. Written as the shortest text that reads back as the same
+    double, with `.0` added when it has neither a `.` nor an exponent (`1.0`, `0.1`, `1e+16`).
+  - Booleans, `true` and `false`; another word (`True`, or a string without quotes) fails with a
+    message saying so.
+  - The four date and time types, with `T`, `t` or a space between the date and the time, the
+    offset `Z`, `z`, `+HH:MM` or `-HH:MM`, the seconds optional (`:00` then), second 60 (a leap
+    second) at any time, and a fraction of a second kept to nanoseconds (more digits are cut off,
+    not rounded). A date that doesn't exist (`2023-02-29`) or a field out of its range is refused.
+    Written with a `T` and the seconds always, a fraction only when it isn't 0 (with as few digits
+    as it needs), and `Z` for offset 0, e.g. `1979-05-27T00:32:00.5-07:00`; a value that isn't
+    valid isn't written (`InvalidValue`).
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

@@ -25,6 +25,7 @@ limitations under the License.
 #include "ASWToml_Scalars.h"
 //---------------------------------------------------------------------------
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -60,8 +61,16 @@ constexpr char const* UnderscoreReason = "an underscore must be between two digi
 
 void AppendBasicString(std::string_view value, std::string& text);
 void AppendCodePoint(std::uint32_t codePoint, std::string& text);
+void AppendDate(std::chrono::year_month_day const& date, std::string& text);
+void AppendDigits(std::int64_t value, std::size_t digitCount, std::string& text);
 void AppendHex(std::uint32_t value, std::size_t digitCount, std::string& text);
+void AppendTime(TASWTomlLocalTime const& time, std::string& text);
 bool CanBeLiteral(std::string_view value) noexcept;
+char CharacterAfterDigits(std::string_view text, std::size_t offset) noexcept;
+TASWTomlResult CheckDate(std::chrono::year_month_day const& date);
+TASWTomlResult CheckTime(TASWTomlLocalTime const& time);
+std::size_t CountDigits(std::string_view text, std::size_t offset) noexcept;
+std::string_view DateTimeToken(std::string_view text, std::size_t start) noexcept;
 long long DecimalExponent(std::string_view number) noexcept;
 int DigitValue(char c, int base) noexcept;
 TASWTomlResult Error(ETomlCode code, std::string message);
@@ -71,11 +80,14 @@ std::string EscapeForMessage(std::string_view text, std::size_t backslash, std::
 char EscapeLetter(char c) noexcept;
 bool IsBareKey(std::string_view key) noexcept;
 bool IsControlCharacter(unsigned char byte) noexcept;
+bool IsDateTimeCharacter(char c) noexcept;
+bool IsLetter(char c) noexcept;
 bool IsNumberCharacter(char c) noexcept;
 std::size_t LineBreakSize(std::string_view text, std::size_t offset) noexcept;
 std::string MessageText(std::string_view text);
 bool ReadDigits(std::string_view digits, int base, std::uint64_t limit, std::uint64_t& value) noexcept;
 TASWTomlResult ReadEscape(std::string_view text, std::size_t& offset, std::string& value);
+bool ReadField(std::string_view text, std::size_t offset, std::size_t digitCount, int& field) noexcept;
 std::size_t ScanDigits(std::string_view token, std::size_t offset, int base, std::size_t& underscore) noexcept;
 
 //---------------------------------------------------------------------------
@@ -144,6 +156,34 @@ void AppendCodePoint(std::uint32_t codePoint, std::string& text)
 }
 //---------------------------------------------------------------------------
 /*
+    AppendDate
+
+    Appends the valid 'date' to 'text' as YYYY-MM-DD
+*/
+void AppendDate(std::chrono::year_month_day const& date, std::string& text)
+{
+    AppendDigits(static_cast<int>(date.year()), 4, text);
+    text += '-';
+    AppendDigits(static_cast<unsigned>(date.month()), 2, text);
+    text += '-';
+    AppendDigits(static_cast<unsigned>(date.day()), 2, text);
+}
+//---------------------------------------------------------------------------
+/*
+    AppendDigits
+
+    Appends 'value' (not negative) to 'text' in decimal, with zeros before it to make 'digitCount' digits
+*/
+void AppendDigits(std::int64_t value, std::size_t digitCount, std::string& text)
+{
+    std::string const digits = std::to_string(value);
+    if (digits.size() < digitCount)
+        text.append(digitCount - digits.size(), '0');
+
+    text += digits;
+}
+//---------------------------------------------------------------------------
+/*
     AppendHex
 
     Appends 'value' to 'text' as 'digitCount' hexadecimal digits in upper case, e.g. 001B
@@ -154,6 +194,35 @@ void AppendHex(std::uint32_t value, std::size_t digitCount, std::string& text)
 
     for (std::size_t i = digitCount; i > 0; --i)
         text += Digits[(value >> ((i - 1) * 4)) & 0xF];
+}
+//---------------------------------------------------------------------------
+/*
+    AppendTime
+
+    Appends the valid 'time' to 'text' as HH:MM:SS, followed by the fraction of a second when it isn't 0, with as few
+    digits as it needs (.5, .000001)
+*/
+void AppendTime(TASWTomlLocalTime const& time, std::string& text)
+{
+    AppendDigits(time.Hour.count(), 2, text);
+    text += ':';
+    AppendDigits(time.Minute.count(), 2, text);
+    text += ':';
+    AppendDigits(time.Second.count(), 2, text);
+
+    std::int64_t fraction = time.Fraction.count();
+    if (fraction != 0)
+    {
+        std::size_t digitCount = 9;
+        while (fraction % 10 == 0)
+        {
+            fraction /= 10;
+            --digitCount;
+        }
+
+        text += '.';
+        AppendDigits(fraction, digitCount, text);
+    }
 }
 //---------------------------------------------------------------------------
 /*
@@ -170,6 +239,90 @@ bool CanBeLiteral(std::string_view value) noexcept
     }
 
     return true;
+}
+//---------------------------------------------------------------------------
+/*
+    CharacterAfterDigits
+
+    The character after the decimal digits that start at 'offset' in 'text' ('-' after a date's year, ':' after a
+    time's hour); '\0' when no digit is there or nothing follows them
+*/
+char CharacterAfterDigits(std::string_view text, std::size_t offset) noexcept
+{
+    std::size_t const digitCount = CountDigits(text, offset);
+    if (digitCount == 0 || offset + digitCount >= text.size())
+        return '\0';
+
+    return text[offset + digitCount];
+}
+//---------------------------------------------------------------------------
+/*
+    CheckDate
+
+    Ok if 'date' can be written, else InvalidValue: it must be a real date with a year from 0 to 9999
+*/
+TASWTomlResult CheckDate(std::chrono::year_month_day const& date)
+{
+    // The rule a local date-time has for its date
+    if (!TASWTomlLocalDateTime{ date, TASWTomlLocalTime() }.IsValid())
+    {
+        return Error(ETomlCode::InvalidValue,
+            "The date can't be written: it must be a real date with a year from 0 to 9999.");
+    }
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+/*
+    CheckTime
+
+    Ok if 'time' can be written, else InvalidValue: each field must be in its range
+*/
+TASWTomlResult CheckTime(TASWTomlLocalTime const& time)
+{
+    if (!time.IsValid())
+    {
+        return Error(ETomlCode::InvalidValue, "The time can't be written: it must have an hour from 0 to 23, a minute "
+            "from 0 to 59, a second from 0 to 60 and a fraction of a second from 0 to 999999999 nanoseconds.");
+    }
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+/*
+    CountDigits
+
+    The number of decimal digits in a row from 'offset' in 'text' (0 when 'offset' is at or past its end)
+*/
+std::size_t CountDigits(std::string_view text, std::size_t offset) noexcept
+{
+    std::size_t i = offset;
+    while (i < text.size() && text[i] >= '0' && text[i] <= '9')
+        ++i;
+
+    return i - offset;
+}
+//---------------------------------------------------------------------------
+/*
+    DateTimeToken
+
+    The date or time that starts at 'start' in 'text', as a message quotes it: the run of characters a date or time
+    can hold, and when a space and a time follow it (digits and ':'), the space and the time's run too
+*/
+std::string_view DateTimeToken(std::string_view text, std::size_t start) noexcept
+{
+    std::size_t end = start;
+    while (end < text.size() && IsDateTimeCharacter(text[end]))
+        ++end;
+
+    if (end < text.size() && text[end] == ' ' && CharacterAfterDigits(text, end + 1) == ':')
+    {
+        ++end;
+        while (end < text.size() && IsDateTimeCharacter(text[end]))
+            ++end;
+    }
+
+    return text.substr(start, end - start);
 }
 //---------------------------------------------------------------------------
 /*
@@ -388,6 +541,27 @@ bool IsControlCharacter(unsigned char byte) noexcept
 }
 //---------------------------------------------------------------------------
 /*
+    IsDateTimeCharacter
+
+    Whether 'c' can be part of a date or time, or be mistaken for one of its parts: what a number can hold (see
+    IsNumberCharacter()) and ':'
+*/
+bool IsDateTimeCharacter(char c) noexcept
+{
+    return IsNumberCharacter(c) || c == ':';
+}
+//---------------------------------------------------------------------------
+/*
+    IsLetter
+
+    Whether 'c' is an ASCII letter: A-Z or a-z
+*/
+bool IsLetter(char c) noexcept
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+//---------------------------------------------------------------------------
+/*
     IsNumberCharacter
 
     Whether 'c' can be part of the run of characters ReadNumber() reads: A-Z, a-z, 0-9, '_', '.', '+' or '-'
@@ -538,6 +712,26 @@ TASWTomlResult ReadEscape(std::string_view text, std::size_t& offset, std::strin
 }
 //---------------------------------------------------------------------------
 /*
+    ReadField
+
+    Sets 'field' to the number the 'digitCount' decimal digits at 'offset' in 'text' make, and returns true; returns
+    false, leaving 'field' as it was, when the digits in a row there aren't exactly that many
+*/
+bool ReadField(std::string_view text, std::size_t offset, std::size_t digitCount, int& field) noexcept
+{
+    if (CountDigits(text, offset) != digitCount)
+        return false;
+
+    int read = 0;
+    for (char const c : text.substr(offset, digitCount))
+        read = read * 10 + (c - '0');
+
+    field = read;
+
+    return true;
+}
+//---------------------------------------------------------------------------
+/*
     ScanDigits
 
     The offset after the digits of 'base' that start at 'offset' in 'token', with each '_' between two of them:
@@ -575,6 +769,201 @@ std::size_t ScanDigits(std::string_view token, std::size_t offset, int base, std
 
 //---------------------------------------------------------------------------
 
+//---------------------------------------------------------------------------
+TASWTomlResult ReadDateTime(std::string_view text, std::size_t& position, TASWTomlValue& value)
+{
+    std::size_t const start = position;
+    char const afterDigits = CharacterAfterDigits(text, start);
+    if (afterDigits != '-' && afterDigits != ':')
+    {
+        return ErrorAt(ETomlCode::ParseFailed,
+            "A date must start with a four-digit year and '-', a time with a two-digit hour and ':'.", text, start);
+    }
+
+    std::string_view const token = DateTimeToken(text, start);
+
+    // An error at 'offset', which 'position' is set to
+    auto const fail = [&position, text, token](std::size_t offset, std::string const& reason)
+        {
+            position = offset;
+            return ErrorAt(ETomlCode::ParseFailed, "The date or time " + MessageText(token) + " isn't valid: " + reason +
+                ".", text, offset);
+        };
+
+    // Whether the character at 'offset' is one of 'characters'
+    auto const isAt = [text](std::size_t offset, std::string_view characters)
+        {
+            return offset < text.size() && characters.find(text[offset]) != std::string_view::npos;
+        };
+
+    bool const hasDate = afterDigits == '-';
+    bool hasTime = !hasDate;
+    std::chrono::year_month_day date{};
+    std::size_t i = start;
+
+    if (hasDate)
+    {
+        int year = 0;
+        int month = 0;
+        int day = 0;
+
+        if (!ReadField(text, i, 4, year))
+            return fail(i, "the year must have four digits");
+
+        i += 5;
+        if (!ReadField(text, i, 2, month))
+            return fail(i, "the month must have two digits");
+
+        if (month < 1 || month > 12)
+            return fail(i, "the month must be 01 to 12");
+
+        i += 2;
+        if (!isAt(i, "-"))
+            return fail(i, "a '-' and the day must follow the month");
+
+        ++i;
+        if (!ReadField(text, i, 2, day))
+            return fail(i, "the day must have two digits");
+
+        date = std::chrono::year_month_day(std::chrono::year(year), std::chrono::month(static_cast<unsigned>(month)),
+            std::chrono::day(static_cast<unsigned>(day)));
+        if (!date.ok())
+        {
+            std::chrono::year_month_day_last const last(date.year(), std::chrono::month_day_last(date.month()));
+
+            return fail(i, "the day must be 01 to " + std::to_string(static_cast<unsigned>(last.day())) + " in " +
+                std::string(text.substr(start, 7)));
+        }
+
+        i += 2;
+
+        // A T or t starts the time; a space does only when the time's digits and ':' follow it
+        if (isAt(i, "Tt") || (isAt(i, " ") && CharacterAfterDigits(text, i + 1) == ':'))
+        {
+            hasTime = true;
+            ++i;
+        }
+    }
+
+    TASWTomlLocalTime time;
+    bool hasOffset = false;
+    std::chrono::minutes utcOffset{ 0 };
+
+    if (hasTime)
+    {
+        int hour = 0;
+        int minute = 0;
+        int second = 0;
+
+        if (!ReadField(text, i, 2, hour))
+            return fail(i, "the hour must have two digits");
+
+        if (hour > 23)
+            return fail(i, "the hour must be 00 to 23");
+
+        i += 2;
+        if (!isAt(i, ":"))
+            return fail(i, "a ':' and the minute must follow the hour");
+
+        ++i;
+        if (!ReadField(text, i, 2, minute))
+            return fail(i, "the minute must have two digits");
+
+        if (minute > 59)
+            return fail(i, "the minute must be 00 to 59");
+
+        i += 2;
+        if (isAt(i, "."))
+            return fail(i, "a fraction of a second needs the seconds before it");
+
+        // The seconds are optional (TOML 1.1), and so is their fraction
+        if (isAt(i, ":"))
+        {
+            ++i;
+            if (!ReadField(text, i, 2, second))
+                return fail(i, "the second must have two digits");
+
+            if (second > 60)
+                return fail(i, "the second must be 00 to 60 (60 is a leap second)");
+
+            i += 2;
+            if (isAt(i, "."))
+            {
+                ++i;
+                std::size_t const digitCount = CountDigits(text, i);
+                if (digitCount == 0)
+                    return fail(i, "a digit must follow the decimal point");
+
+                // Nanoseconds: the digits after the ninth are cut off, not rounded
+                std::int64_t nanoseconds = 0;
+                for (std::size_t digit = 0; digit < 9; ++digit)
+                    nanoseconds = nanoseconds * 10 + (digit < digitCount ? text[i + digit] - '0' : 0);
+
+                time.Fraction = std::chrono::nanoseconds(nanoseconds);
+                i += digitCount;
+            }
+        }
+
+        time.Hour = std::chrono::hours(hour);
+        time.Minute = std::chrono::minutes(minute);
+        time.Second = std::chrono::seconds(second);
+
+        if (!hasDate && isAt(i, "Zz+-"))
+            return fail(i, "a time without a date can't have an offset");
+
+        if (hasDate && isAt(i, "Zz"))
+        {
+            hasOffset = true;
+            ++i;
+        }
+        else if (hasDate && isAt(i, "+-"))
+        {
+            bool const negative = text[i] == '-';
+            int offsetHour = 0;
+            int offsetMinute = 0;
+
+            ++i;
+            if (!ReadField(text, i, 2, offsetHour))
+                return fail(i, "the offset's hour must have two digits");
+
+            if (offsetHour > 23)
+                return fail(i, "the offset's hour must be 00 to 23");
+
+            i += 2;
+            if (!isAt(i, ":"))
+                return fail(i, "a ':' and the minute must follow the offset's hour");
+
+            ++i;
+            if (!ReadField(text, i, 2, offsetMinute))
+                return fail(i, "the offset's minute must have two digits");
+
+            if (offsetMinute > 59)
+                return fail(i, "the offset's minute must be 00 to 59");
+
+            int const minutes = offsetHour * 60 + offsetMinute;
+
+            i += 2;
+            hasOffset = true;
+            utcOffset = std::chrono::minutes(negative ? -minutes : minutes);
+        }
+    }
+
+    if (i < text.size() && IsDateTimeCharacter(text[i]))
+        return fail(i, "unexpected '" + std::string(1, text[i]) + "'");
+
+    if (!hasTime)
+        value = date;
+    else if (!hasDate)
+        value = time;
+    else if (hasOffset)
+        value = TASWTomlOffsetDateTime{ date, time, utcOffset };
+    else
+        value = TASWTomlLocalDateTime{ date, time };
+
+    position = i;
+
+    return TASWTomlResult();
+}
 //---------------------------------------------------------------------------
 TASWTomlResult ReadNumber(std::string_view text, std::size_t& position, TASWTomlValue& value)
 {
@@ -759,6 +1148,56 @@ TASWTomlResult ReadNumber(std::string_view text, std::size_t& position, TASWToml
     return TASWTomlResult();
 }
 //---------------------------------------------------------------------------
+TASWTomlResult ReadScalar(std::string_view text, std::size_t& position, TASWTomlValue& value)
+{
+    std::size_t const start = position;
+    char const first = start < text.size() ? text[start] : '\0';
+
+    if (first == '"' || first == '\'')
+    {
+        std::string read;
+        TASWTomlResult result = ReadString(text, position, read);
+        if (result.IsOk())
+            value = std::move(read);
+
+        return result;
+    }
+
+    char const afterDigits = CharacterAfterDigits(text, start);
+    if (afterDigits == '-' || afterDigits == ':')
+        return ReadDateTime(text, position, value);
+
+    if (IsLetter(first))
+    {
+        // A word: true, false, or inf or nan for ReadNumber()
+        std::size_t end = start;
+        while (end < text.size() && IsNumberCharacter(text[end]))
+            ++end;
+
+        std::string_view const word = text.substr(start, end - start);
+        if (word == "true" || word == "false")
+        {
+            value = word == "true";
+            position = end;
+
+            return TASWTomlResult();
+        }
+
+        if (word != "inf" && word != "nan")
+        {
+            return ErrorAt(ETomlCode::ParseFailed, "The value " + MessageText(word) + " isn't valid: a string must be "
+                "in quotes, and a boolean is true or false (in lower case).", text, start);
+        }
+    }
+    else if (!IsNumberCharacter(first))
+    {
+        return ErrorAt(ETomlCode::ParseFailed, "A value must be a string, a number, true, false, a date or a time.",
+            text, start);
+    }
+
+    return ReadNumber(text, position, value);
+}
+//---------------------------------------------------------------------------
 TASWTomlResult ReadString(std::string_view text, std::size_t& position, std::string& value)
 {
     std::size_t const start = position;
@@ -906,6 +1345,11 @@ TASWTomlResult ReadString(std::string_view text, std::size_t& position, std::str
     }
 }
 //---------------------------------------------------------------------------
+void WriteBoolean(bool value, std::string& text)
+{
+    text += value ? "true" : "false";
+}
+//---------------------------------------------------------------------------
 void WriteFloat(double value, std::string& text)
 {
     if (std::isnan(value))
@@ -968,6 +1412,79 @@ TASWTomlResult WriteKey(std::string_view key, std::string& text)
         AppendBasicString(key, text);
 
     return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult WriteLocalDate(std::chrono::year_month_day const& value, std::string& text)
+{
+    TASWTomlResult result = CheckDate(value);
+    if (!result.IsOk())
+        return result;
+
+    AppendDate(value, text);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult WriteLocalDateTime(TASWTomlLocalDateTime const& value, std::string& text)
+{
+    TASWTomlResult result = CheckDate(value.Date);
+    if (result.IsOk())
+        result = CheckTime(value.Time);
+
+    if (!result.IsOk())
+        return result;
+
+    AppendDate(value.Date, text);
+    text += 'T';
+    AppendTime(value.Time, text);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult WriteLocalTime(TASWTomlLocalTime const& value, std::string& text)
+{
+    TASWTomlResult result = CheckTime(value);
+    if (!result.IsOk())
+        return result;
+
+    AppendTime(value, text);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult WriteOffsetDateTime(TASWTomlOffsetDateTime const& value, std::string& text)
+{
+    TASWTomlResult result = CheckDate(value.Date);
+    if (result.IsOk())
+        result = CheckTime(value.Time);
+
+    if (!result.IsOk())
+        return result;
+
+    // The rule of TASWTomlOffsetDateTime::IsValid() for the offset, the only part not checked yet
+    if (!value.IsValid())
+        return Error(ETomlCode::InvalidValue, "The offset can't be written: it must be from -23:59 to +23:59.");
+
+    AppendDate(value.Date, text);
+    text += 'T';
+    AppendTime(value.Time, text);
+
+    std::int64_t const minutes = value.Offset.count();
+    if (minutes == 0)
+    {
+        text += 'Z';
+    }
+    else
+    {
+        std::int64_t const size = minutes < 0 ? -minutes : minutes;
+
+        text += minutes < 0 ? '-' : '+';
+        AppendDigits(size / 60, 2, text);
+        text += ':';
+        AppendDigits(size % 60, 2, text);
+    }
+
+    return result;
 }
 //---------------------------------------------------------------------------
 TASWTomlResult WriteString(std::string_view value, std::string& text, EStringStyle style)

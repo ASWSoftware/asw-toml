@@ -27,6 +27,7 @@ limitations under the License.
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -49,6 +50,10 @@ using namespace std::string_literals;
 using ASWToml::EIntegerBase;
 using ASWToml::EStringStyle;
 using ASWToml::ETomlCode;
+using ASWToml::ETomlType;
+using ASWToml::TASWTomlLocalDateTime;
+using ASWToml::TASWTomlLocalTime;
+using ASWToml::TASWTomlOffsetDateTime;
 using ASWToml::TASWTomlValue;
 
 using TStringStyleVector = std::vector<EStringStyle>;
@@ -58,7 +63,11 @@ using TStringVector = std::vector<std::string>;
 TStringStyleVector const AllStyles = { EStringStyle::Auto, EStringStyle::Basic, EStringStyle::Literal };
 
 std::uint64_t Bits(double value) noexcept;
+std::chrono::year_month_day Date(int year, unsigned month, unsigned day);
 std::string HexByte(unsigned char byte);
+std::string ScalarText(TASWTomlValue const& value);
+TASWTomlLocalTime Time(int hour, int minute, int second, std::int64_t nanoseconds = 0);
+ASWToml::TASWTomlResult WriteDateTime(TASWTomlValue const& value, std::string& text);
 
 //---------------------------------------------------------------------------
 /*
@@ -72,6 +81,16 @@ std::uint64_t Bits(double value) noexcept
 }
 //---------------------------------------------------------------------------
 /*
+    Date
+
+    The date 'year'-'month'-'day'
+*/
+std::chrono::year_month_day Date(int year, unsigned month, unsigned day)
+{
+    return std::chrono::year_month_day(std::chrono::year(year), std::chrono::month(month), std::chrono::day(day));
+}
+//---------------------------------------------------------------------------
+/*
     HexByte
 
     'byte' as four hexadecimal digits in upper case, as a message writes a control character: 001B
@@ -81,6 +100,72 @@ std::string HexByte(unsigned char byte)
     constexpr char Digits[] = "0123456789ABCDEF";
 
     return "00"s + Digits[byte >> 4] + Digits[byte & 0xF];
+}
+//---------------------------------------------------------------------------
+/*
+    ScalarText
+
+    The scalar 'value' as text, to compare it in a check: a string as it is, an integer in decimal, and the other
+    types as their writers write them
+*/
+std::string ScalarText(TASWTomlValue const& value)
+{
+    std::string text;
+
+    if (value.AsString() != nullptr)
+        text = *value.AsString();
+    else if (value.AsInteger() != nullptr)
+        text = std::to_string(*value.AsInteger());
+    else if (value.AsFloat() != nullptr)
+        ASWToml::Detail::WriteFloat(*value.AsFloat(), text);
+    else if (value.AsBoolean() != nullptr)
+        ASWToml::Detail::WriteBoolean(*value.AsBoolean(), text);
+    else if (!WriteDateTime(value, text).IsOk())
+        text = "(not a scalar that can be written)";
+
+    return text;
+}
+//---------------------------------------------------------------------------
+/*
+    Time
+
+    The time of day 'hour':'minute':'second' and 'nanoseconds'
+*/
+TASWTomlLocalTime Time(int hour, int minute, int second, std::int64_t nanoseconds)
+{
+    TASWTomlLocalTime time;
+    time.Hour = std::chrono::hours(hour);
+    time.Minute = std::chrono::minutes(minute);
+    time.Second = std::chrono::seconds(second);
+    time.Fraction = std::chrono::nanoseconds(nanoseconds);
+
+    return time;
+}
+//---------------------------------------------------------------------------
+/*
+    WriteDateTime
+
+    Writes the date or time 'value' to 'text' with the writer of its type; InvalidValue for a value of another type
+*/
+ASWToml::TASWTomlResult WriteDateTime(TASWTomlValue const& value, std::string& text)
+{
+    if (value.AsOffsetDateTime() != nullptr)
+        return ASWToml::Detail::WriteOffsetDateTime(*value.AsOffsetDateTime(), text);
+
+    if (value.AsLocalDateTime() != nullptr)
+        return ASWToml::Detail::WriteLocalDateTime(*value.AsLocalDateTime(), text);
+
+    if (value.AsLocalDate() != nullptr)
+        return ASWToml::Detail::WriteLocalDate(*value.AsLocalDate(), text);
+
+    if (value.AsLocalTime() != nullptr)
+        return ASWToml::Detail::WriteLocalTime(*value.AsLocalTime(), text);
+
+    ASWToml::TASWTomlResult result;
+    result.Code = ETomlCode::InvalidValue;
+    result.Message = "Not a date or time.";
+
+    return result;
 }
 //---------------------------------------------------------------------------
 
@@ -1291,10 +1376,784 @@ ASW_TEST(TTest_ASWToml_Floats, WriteFloat_ShortestText)
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_Booleans
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_Booleans::TTest_ASWToml_Booleans()
+    : inherited("ASWToml_Booleans_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_Booleans::~TTest_ASWToml_Booleans()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Booleans::CheckReadsUpTo(std::string const& text, std::size_t start, std::size_t end,
+    bool expected, std::string const& msg, std::source_location loc)
+{
+    TASWTomlValue value;
+    std::size_t position = start;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadScalar(text, position, value);
+
+    CheckTrue(result.IsOk(), msg + ": the boolean should read: " + result.Message, loc);
+    CheckTrue(value.AsBoolean() != nullptr, msg + ": the value should be a boolean", loc);
+    CheckEquals(expected, value.AsBoolean() != nullptr ? *value.AsBoolean() : !expected, msg + ": the value", loc);
+    CheckEquals(end, position, msg + ": the position should be after the boolean", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Booleans::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Booleans::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Booleans::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Booleans::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Booleans, ReadScalar_Booleans)
+{
+    // Arrange & Act & Assert
+    CheckReadsUpTo("true", 0, 4, true, "true");
+    CheckReadsUpTo("false", 0, 5, false, "false");
+    CheckReadsUpTo("a = true # comment", 4, 8, true, "true before a comment");
+    CheckReadsUpTo("[true,false]", 1, 5, true, "true before a comma");
+    CheckReadsUpTo("[true,false]", 6, 11, false, "false before a closing bracket");
+    CheckReadsUpTo("{a=false}", 3, 8, false, "false before a closing brace");
+    CheckReadsUpTo("b = false\r\n", 4, 9, false, "false before a line break");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Booleans, ReadScalar_RejectsOtherWords)
+{
+    // Arrange
+    // toml-test's invalid booleans, and other words that aren't inf or nan
+    TStringVector const words = { "True", "FALSE", "trUe", "falsE", "tru", "fals", "t", "f", "truthy", "falsey",
+        "true_", "true-1", "yes", "John", "infinity", "nan2", "T", "TZ", "T." };
+
+    for (std::string const& word : words)
+    {
+        TASWTomlValue value = "unchanged";
+        std::size_t position = 0;
+
+        // Act
+        ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadScalar(word + " # comment", position, value);
+
+        // Assert
+        CheckEquals(ETomlCode::ParseFailed, result.Code, word + " should fail");
+        CheckEquals(std::size_t(0), position, word + ": the position should be the word's start");
+        CheckEquals("The value \"" + word + "\" isn't valid: a string must be in quotes, and a boolean is true or "
+            "false (in lower case).", result.Message, word + ": the message should quote the word");
+        CheckTrue(value == TASWTomlValue("unchanged"), word + ": the value should be unchanged");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Booleans, WriteBoolean_ReadsBack)
+{
+    // Arrange
+    std::string text = "a = ";
+
+    // Act
+    ASWToml::Detail::WriteBoolean(true, text);
+
+    // Assert
+    CheckEquals("a = true"s, text, "true should be appended to the text");
+    CheckReadsUpTo(text, 4, 8, true, "true read back");
+
+    // Arrange
+    text.clear();
+
+    // Act
+    ASWToml::Detail::WriteBoolean(false, text);
+
+    // Assert
+    CheckEquals("false"s, text, "false");
+    CheckReadsUpTo(text, 0, 5, false, "false read back");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DateTimeTexts
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DateTimeTexts::TTest_ASWToml_DateTimeTexts()
+    : inherited("ASWToml_DateTimeTexts_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DateTimeTexts::~TTest_ASWToml_DateTimeTexts()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::CheckReadFails(std::string const& text, std::size_t offset,
+    std::string const& expectedText, std::string const& msg, std::source_location loc)
+{
+    TASWTomlValue value = "unchanged";
+    std::size_t position = 0;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadDateTime(text, position, value);
+
+    CheckEquals(ETomlCode::ParseFailed, result.Code, msg + ": the code", loc);
+    CheckEquals(offset, position, msg + ": the position should be the error's offset", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message should name the problem", loc);
+    CheckTrue(value == TASWTomlValue("unchanged"), msg + ": the value should be unchanged", loc);
+    CheckTrue(result.Line >= 1 && result.Column >= 1, msg + ": the line and column should be set", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::CheckReads(std::string const& text, TASWTomlValue const& expected,
+    std::string const& msg, std::source_location loc)
+{
+    CheckReadsUpTo(text, 0, text.size(), expected, msg, loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::CheckReadsUpTo(std::string const& text, std::size_t start, std::size_t end,
+    TASWTomlValue const& expected, std::string const& msg, std::source_location loc)
+{
+    TASWTomlValue value;
+    std::size_t position = start;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadDateTime(text, position, value);
+
+    CheckTrue(result.IsOk(), msg + ": the date or time should read: " + result.Message, loc);
+    CheckEquals(std::string(ASWToml::ToString(expected.GetType())), std::string(ASWToml::ToString(value.GetType())),
+        msg + ": the type", loc);
+    CheckTrue(value == expected, msg + ": the value should be " + ScalarText(expected) + ", not " + ScalarText(value),
+        loc);
+    CheckEquals(end, position, msg + ": the position should be after the date or time", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::CheckWriteFails(TASWTomlValue const& value, std::string const& expectedText,
+    std::string const& msg, std::source_location loc)
+{
+    std::string text = "unchanged";
+
+    ASWToml::TASWTomlResult const result = WriteDateTime(value, text);
+
+    CheckEquals(ETomlCode::InvalidValue, result.Code, msg + ": the code", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message should name the problem", loc);
+    CheckEquals("unchanged"s, text, msg + ": nothing should be appended", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::CheckWrites(TASWTomlValue const& value, std::string const& expected,
+    std::string const& msg, std::source_location loc)
+{
+    std::string text;
+
+    ASWToml::TASWTomlResult const result = WriteDateTime(value, text);
+
+    CheckTrue(result.IsOk(), msg + ": the value should be written: " + result.Message, loc);
+    CheckEquals(expected, text, msg + ": the text", loc);
+    CheckReads(text, value, msg + ": read back", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeTexts::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_FractionsOfASecond)
+{
+    // Arrange & Act & Assert
+    // Kept to nanoseconds; more digits are cut off, not rounded
+    CheckReads("00:00:00.5", Time(0, 0, 0, 500000000), "one digit");
+    CheckReads("10:32:00.555", Time(10, 32, 0, 555000000), "milliseconds");
+    CheckReads("00:32:00.999999", Time(0, 32, 0, 999999000), "microseconds");
+    CheckReads("00:00:00.123456789", Time(0, 0, 0, 123456789), "nanoseconds");
+    CheckReads("00:00:00.000000001", Time(0, 0, 0, 1), "one nanosecond");
+    CheckReads("00:00:00.000", Time(0, 0, 0, 0), "zeros");
+    CheckReads("00:00:00.1234567899", Time(0, 0, 0, 123456789), "a tenth digit is cut off");
+    CheckReads("00:00:00.9999999999999", Time(0, 0, 0, 999999999), "nines after the ninth digit aren't rounded up");
+    CheckReads("00:00:00.0000000009", Time(0, 0, 0, 0), "less than a nanosecond is 0");
+    CheckReads("1979-05-27T00:32:00.999999", TASWTomlLocalDateTime{ Date(1979, 5, 27), Time(0, 32, 0, 999999000) },
+        "in a local date-time");
+    CheckReads("1979-05-27T00:32:00.5-07:00", TASWTomlOffsetDateTime{ Date(1979, 5, 27), Time(0, 32, 0, 500000000),
+        std::chrono::minutes(-7 * 60) }, "in an offset date-time");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_LeapSeconds)
+{
+    // Arrange & Act & Assert
+    // Second 60 reads at any time, kept as written
+    CheckReads("23:59:60", Time(23, 59, 60), "at the end of a day");
+    CheckReads("12:00:60.5", Time(12, 0, 60, 500000000), "at any hour, with a fraction");
+    CheckReads("2016-12-31 23:59:60", TASWTomlLocalDateTime{ Date(2016, 12, 31), Time(23, 59, 60) },
+        "in a local date-time");
+    CheckReads("1990-12-31T23:59:60Z", TASWTomlOffsetDateTime{ Date(1990, 12, 31), Time(23, 59, 60),
+        std::chrono::minutes(0) }, "in UTC");
+    CheckReads("1990-12-31T15:59:60-08:00", TASWTomlOffsetDateTime{ Date(1990, 12, 31), Time(15, 59, 60),
+        std::chrono::minutes(-8 * 60) }, "at an offset (RFC 3339's example)");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_LocalDates)
+{
+    // Arrange & Act & Assert
+    CheckReads("1979-05-27", Date(1979, 5, 27), "a date");
+    CheckReads("0000-01-01", Date(0, 1, 1), "year 0");
+    CheckReads("0001-01-01", Date(1, 1, 1), "the first year");
+    CheckReads("9999-12-31", Date(9999, 12, 31), "the last date");
+    CheckReads("2000-02-29", Date(2000, 2, 29), "February 29 in 2000");
+    CheckReads("2024-02-29", Date(2024, 2, 29), "February 29 in a leap year");
+    CheckReads("2023-04-30", Date(2023, 4, 30), "the last day of April");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_LocalDateTimes)
+{
+    // Arrange
+    TASWTomlLocalDateTime const expected{ Date(1979, 5, 27), Time(7, 32, 0) };
+
+    // Act & Assert
+    CheckReads("1979-05-27T07:32:00", expected, "a T");
+    CheckReads("1979-05-27t07:32:00", expected, "a t");
+    CheckReads("1979-05-27 07:32:00", expected, "a space");
+    CheckReads("1979-05-27T07:32", expected, "without seconds");
+    CheckReads("1979-05-27 07:32", expected, "a space and no seconds");
+    CheckReads("0001-01-01 00:00:00", TASWTomlLocalDateTime{ Date(1, 1, 1), Time(0, 0, 0) }, "the first");
+    CheckReads("9999-12-31 23:59:59", TASWTomlLocalDateTime{ Date(9999, 12, 31), Time(23, 59, 59) }, "the last");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_LocalTimes)
+{
+    // Arrange & Act & Assert
+    CheckReads("07:32:00", Time(7, 32, 0), "a time");
+    CheckReads("00:00:00", Time(0, 0, 0), "midnight");
+    CheckReads("23:59:59", Time(23, 59, 59), "the last second of a day");
+    CheckReads("13:37", Time(13, 37, 0), "without seconds");
+    CheckReads("00:00", Time(0, 0, 0), "midnight without seconds");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_OffsetDateTimes)
+{
+    // Arrange
+    auto const at = [](int minutes)
+        {
+            return TASWTomlOffsetDateTime{ Date(1979, 5, 27), Time(7, 32, 0), std::chrono::minutes(minutes) };
+        };
+
+    // Act & Assert
+    CheckReads("1979-05-27T07:32:00Z", at(0), "Z");
+    CheckReads("1979-05-27t07:32:00z", at(0), "t and z");
+    CheckReads("1979-05-27 07:32:00Z", at(0), "a space");
+    CheckReads("1979-05-27T07:32:00-00:00", at(0), "-00:00 is UTC");
+    CheckReads("1979-05-27T07:32:00+00:00", at(0), "+00:00 is UTC");
+    CheckReads("1979-05-27T07:32:00-07:00", at(-7 * 60), "a negative offset");
+    CheckReads("1979-05-27T07:32:00+12:00", at(12 * 60), "a positive offset");
+    CheckReads("1979-05-27T07:32:00+05:30", at(5 * 60 + 30), "an offset with minutes");
+    CheckReads("1979-05-27T07:32:00-00:30", at(-30), "a negative offset below an hour");
+    CheckReads("1979-05-27T07:32:00+23:59", at(23 * 60 + 59), "the largest offset");
+    CheckReads("1979-05-27T07:32:00-23:59", at(-(23 * 60 + 59)), "the smallest offset");
+    CheckReads("1979-05-27 07:32Z", at(0), "without seconds");
+    CheckReads("1979-05-27 07:32-07:00", at(-7 * 60), "without seconds, with an offset");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_RejectsInvalidDates)
+{
+    // Arrange & Act & Assert
+    // A field out of range is reported at its start, a field of the wrong size where it starts
+    std::string const year = "the year must have four digits";
+    std::string const month = "the month must be 01 to 12";
+
+    CheckReadFails("2023-02-29", 8, "The date or time \"2023-02-29\" isn't valid: the day must be 01 to 28 in "
+        "2023-02.", "February 29 in a common year");
+    CheckReadFails("2100-02-29", 8, "the day must be 01 to 28 in 2100-02", "2100 isn't a leap year");
+    CheckReadFails("1988-02-30", 8, "the day must be 01 to 29 in 1988-02", "February 30 in a leap year");
+    CheckReadFails("2006-04-31", 8, "the day must be 01 to 30 in 2006-04", "April 31");
+    CheckReadFails("2006-01-32", 8, "the day must be 01 to 31 in 2006-01", "January 32");
+    CheckReadFails("2006-01-00", 8, "the day must be 01 to 31 in 2006-01", "day 0");
+    CheckReadFails("1997-09-00T09:09:09.09Z", 8, "the day must be 01 to 30 in 1997-09", "day 0 in a date-time");
+    CheckReadFails("2006-13-01", 5, month, "month 13");
+    CheckReadFails("2007-00-01", 5, month, "month 0");
+    CheckReadFails("199-09-09", 0, year, "three digits");
+    CheckReadFails("10000-01-01", 0, year, "five digits");
+    CheckReadFails("199709-09", 0, year, "no '-' after the year");
+    CheckReadFails("1-2", 0, year, "one digit");
+    CheckReadFails("1987-7-05", 5, "the month must have two digits", "a one-digit month");
+    CheckReadFails("1987-07-5", 8, "the day must have two digits", "a one-digit day");
+    CheckReadFails("1987-07-0517:45:00", 8, "the day must have two digits", "no T between the date and the time");
+    CheckReadFails("1997-09", 7, "a '-' and the day must follow the month", "no day");
+    CheckReadFails("1997-09-", 8, "the day must have two digits", "no day after the '-'");
+    CheckReadFails("2006-01-30T", 11, "the hour must have two digits", "a T without a time");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_RejectsInvalidOffsets)
+{
+    // Arrange & Act & Assert
+    std::string const noOffset = "a time without a date can't have an offset";
+
+    CheckReadFails("1985-06-18 17:04:07+25:00", 20, "the offset's hour must be 00 to 23", "hour 25");
+    CheckReadFails("1985-06-18 17:04:07-24:00", 20, "the offset's hour must be 00 to 23", "hour 24");
+    CheckReadFails("1985-06-18 17:04:07+12:60", 23, "the offset's minute must be 00 to 59", "minute 60");
+    CheckReadFails("1997-09-09T09:09:09.09+09:9", 26, "the offset's minute must have two digits", "a one-digit minute");
+    CheckReadFails("1997-09-09T09:09:09.09+", 23, "the offset's hour must have two digits", "a sign alone");
+    CheckReadFails("1997-09-09T09:09:09.09-0909", 23, "the offset's hour must have two digits", "no ':'");
+    CheckReadFails("1997-09-09T09:09:09.09+09", 25, "a ':' and the minute must follow the offset's hour", "no minute");
+    CheckReadFails("07:32:00Z", 8, noOffset, "Z after a time");
+    CheckReadFails("07:32:00+01:00", 8, noOffset, "+01:00 after a time");
+    CheckReadFails("07:32:00-01:00", 8, noOffset, "-01:00 after a time");
+    CheckReadFails("07:32z", 5, noOffset, "z after a time without seconds");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_RejectsInvalidTimes)
+{
+    // Arrange & Act & Assert
+    std::string const hourDigits = "the hour must have two digits";
+    std::string const noDigit = "a digit must follow the decimal point";
+
+    CheckReadFails("24:00:00", 0, "The date or time \"24:00:00\" isn't valid: the hour must be 00 to 23.", "hour 24");
+    CheckReadFails("00:60:00", 3, "the minute must be 00 to 59", "minute 60");
+    CheckReadFails("00:00:61", 6, "the second must be 00 to 60 (60 is a leap second)", "second 61");
+    CheckReadFails("2006-01-01T24:00:00", 11, "the hour must be 00 to 23", "hour 24 in a date-time");
+    CheckReadFails("1:32:00", 0, hourDigits, "a one-digit hour");
+    CheckReadFails("123:00:00", 0, hourDigits, "a three-digit hour");
+    CheckReadFails("2023-10-01T1:32:00Z", 11, hourDigits, "a one-digit hour after a T");
+    CheckReadFails("1979-05-27 7:32:00", 11, hourDigits, "a one-digit hour after a space");
+    CheckReadFails("01:2:00", 3, "the minute must have two digits", "a one-digit minute");
+    CheckReadFails("07:", 3, "the minute must have two digits", "no minute");
+    CheckReadFails("01:32:0", 6, "the second must have two digits", "a one-digit second");
+    CheckReadFails("01:32:000", 6, "the second must have two digits", "a three-digit second");
+    CheckReadFails("07:32:", 6, "the second must have two digits", "no second after the ':'");
+    CheckReadFails("1997-09-09T09", 13, "a ':' and the minute must follow the hour", "no minute after a T");
+    CheckReadFails("1997-09-09T09-30", 13, "a ':' and the minute must follow the hour", "a '-' after the hour");
+    CheckReadFails("12:13:14.", 9, noDigit, "a trailing dot");
+    CheckReadFails("12:13:14..", 9, noDigit, "two dots");
+    CheckReadFails("2016-09-09T09:09:09.Z", 20, noDigit, "a dot before Z");
+    CheckReadFails("07:32.5", 5, "a fraction of a second needs the seconds before it", "a fraction without seconds");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_RejectsTextThatIsNotADateOrTime)
+{
+    // Arrange
+    TStringVector const texts = { "", "x", "07", "1979", "1e5", "-1979-05-27", "+07:00", " 07:32:00", "T07:32:00" };
+
+    for (std::string const& text : texts)
+    {
+        // Act & Assert
+        CheckReadFails(text, 0, "A date must start with a four-digit year and '-', a time with a two-digit hour and "
+            "':'.", "\"" + text + "\"");
+    }
+
+    // Arrange
+    TASWTomlValue value = "unchanged";
+    std::size_t position = 20;
+
+    // Act
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadDateTime("1979-05-27", position, value);
+
+    // Assert
+    CheckEquals(ETomlCode::ParseFailed, result.Code, "a position past the end should fail");
+    CheckEquals(std::size_t(20), position, "a position past the end should stay");
+    CheckTrue(value == TASWTomlValue("unchanged"), "a position past the end should leave the value");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_RejectsTrailingCharacters)
+{
+    // Arrange & Act & Assert
+    // A character a date or time can hold, right after one
+    CheckReadFails("2020-01-01x", 10, "The date or time \"2020-01-01x\" isn't valid: unexpected 'x'.", "an x");
+    CheckReadFails("1979-05-27_", 10, "unexpected '_'", "an underscore");
+    CheckReadFails("1979-05-27T07:32:00Zx", 20, "unexpected 'x'", "an x after Z");
+    CheckReadFails("1979-05-27T07:32:00Z5", 20, "unexpected '5'", "a digit after Z");
+    CheckReadFails("07:32:00:00", 8, "unexpected ':'", "a fourth field");
+    CheckReadFails("1979-05-27T07:32:00+01:00:00", 25, "unexpected ':'", "seconds in the offset");
+    CheckReadFails("1979-05-27T07:32:00-07:00-", 25, "unexpected '-'", "a '-' after the offset");
+    CheckReadFails("1979-05-27 07:32:00.5.5", 21, "The date or time \"1979-05-27 07:32:00.5.5\" isn't valid: "
+        "unexpected '.'.", "a second fraction, quoted with the date");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_ReportsLineAndColumn)
+{
+    // Arrange
+    // The day 29 of 2023-02-29 is on line 2, column 13
+    std::string const text = "a = 1\nb = 2023-02-29\n";
+    TASWTomlValue value;
+    std::size_t position = 10;
+
+    // Act
+    ASWToml::TASWTomlResult result = ASWToml::Detail::ReadDateTime(text, position, value);
+
+    // Assert
+    CheckEquals(ETomlCode::ParseFailed, result.Code, "February 29 in 2023 should fail");
+    CheckEquals(std::size_t(18), position, "the position should be the day's");
+    CheckEquals(std::size_t(2), result.Line, "the day's line");
+    CheckEquals(std::size_t(13), result.Column, "the day's column");
+
+    // Arrange
+    std::string const offset = "a = 1\r\nb = 07:32:00Z";
+    position = 11;
+
+    // Act
+    result = ASWToml::Detail::ReadDateTime(offset, position, value);
+
+    // Assert
+    CheckEquals(ETomlCode::ParseFailed, result.Code, "an offset after a time should fail");
+    CheckEquals(std::size_t(19), position, "the position should be the Z's");
+    CheckEquals(std::size_t(2), result.Line, "the Z's line");
+    CheckEquals(std::size_t(13), result.Column, "the Z's column");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, ReadDateTime_StopsAtTheEndOfItsToken)
+{
+    // Arrange
+    std::chrono::year_month_day const date = Date(1979, 5, 27);
+
+    // Act & Assert
+    // What follows the date or time is the parser's to check
+    CheckReadsUpTo("d = 1979-05-27 # comment", 4, 14, date, "a space and a comment after a date");
+    CheckReadsUpTo("d = 1979-05-27 x", 4, 14, date, "a space and a letter after a date");
+    CheckReadsUpTo("d = 1979-05-27 07", 4, 14, date, "a space and digits without ':'");
+    CheckReadsUpTo("d = 1979-05-27\t07:32:00", 4, 14, date, "a tab isn't a separator");
+    CheckReadsUpTo("d = 1979-05-27  07:32:00", 4, 14, date, "nor are two spaces");
+    CheckReadsUpTo("[1979-05-27,07:32:00]", 1, 11, date, "a comma");
+    CheckReadsUpTo("[1979-05-27,07:32:00]", 12, 20, Time(7, 32, 0), "a closing bracket");
+    CheckReadsUpTo("{t=1979-05-27T07:32:00Z}", 3, 23, TASWTomlOffsetDateTime{ date, Time(7, 32, 0),
+        std::chrono::minutes(0) }, "a closing brace");
+    CheckReadsUpTo("t = 07:32:00\r\n", 4, 12, Time(7, 32, 0), "a line break");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, WriteDateTimes_AppendToText)
+{
+    // Arrange
+    std::string text = "a = ";
+
+    // Act
+    ASWToml::TASWTomlResult result = ASWToml::Detail::WriteLocalDate(Date(1979, 5, 27), text);
+
+    // Assert
+    CheckTrue(result.IsOk(), "the date should be written: " + result.Message);
+    CheckEquals("a = 1979-05-27"s, text, "the date should be appended to the text");
+
+    // Arrange
+    text = "b = ";
+
+    // Act
+    result = ASWToml::Detail::WriteLocalTime(Time(7, 32, 0), text);
+
+    // Assert
+    CheckTrue(result.IsOk(), "the time should be written: " + result.Message);
+    CheckEquals("b = 07:32:00"s, text, "the time should be appended to the text");
+
+    // Arrange
+    text = "c = ";
+
+    // Act
+    result = ASWToml::Detail::WriteLocalDateTime(TASWTomlLocalDateTime(), text);
+
+    // Assert
+    CheckTrue(result.IsOk(), "the local date-time should be written: " + result.Message);
+    CheckEquals("c = 1970-01-01T00:00:00"s, text, "the local date-time should be appended to the text");
+
+    // Arrange
+    text = "d = ";
+
+    // Act
+    result = ASWToml::Detail::WriteOffsetDateTime(TASWTomlOffsetDateTime(), text);
+
+    // Assert
+    CheckTrue(result.IsOk(), "the offset date-time should be written: " + result.Message);
+    CheckEquals("d = 1970-01-01T00:00:00Z"s, text, "the offset date-time should be appended to the text");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, WriteDateTimes_RejectInvalidValues)
+{
+    // Arrange
+    std::string const date = "The date can't be written: it must be a real date with a year from 0 to 9999.";
+    std::string const time = "The time can't be written: it must have an hour from 0 to 23, a minute from 0 to 59, "
+        "a second from 0 to 60 and a fraction of a second from 0 to 999999999 nanoseconds.";
+    std::string const offset = "The offset can't be written: it must be from -23:59 to +23:59.";
+    std::chrono::year_month_day const goodDate = Date(2023, 1, 1);
+
+    // Act & Assert
+    CheckWriteFails(Date(2023, 2, 29), date, "February 29 in a common year");
+    CheckWriteFails(Date(2023, 13, 1), date, "month 13");
+    CheckWriteFails(Date(10000, 1, 1), date, "year 10000");
+    CheckWriteFails(Date(-1, 12, 31), date, "year -1");
+    CheckWriteFails(std::chrono::year_month_day{}, date, "a value-initialized date");
+    CheckWriteFails(Time(24, 0, 0), time, "hour 24");
+    CheckWriteFails(Time(-1, 0, 0), time, "hour -1");
+    CheckWriteFails(Time(0, 60, 0), time, "minute 60");
+    CheckWriteFails(Time(0, 0, 61), time, "second 61");
+    CheckWriteFails(Time(0, 0, 0, 1000000000), time, "a fraction of one second");
+    CheckWriteFails(Time(0, 0, 0, -1), time, "a negative fraction");
+    CheckWriteFails(TASWTomlLocalDateTime{ Date(2023, 2, 29), Time(0, 0, 0) }, date, "a local date-time's date");
+    CheckWriteFails(TASWTomlLocalDateTime{ goodDate, Time(0, 0, 61) }, time, "a local date-time's time");
+    CheckWriteFails(TASWTomlOffsetDateTime{ Date(2023, 2, 29), Time(0, 0, 0), std::chrono::minutes(0) }, date,
+        "an offset date-time's date");
+    CheckWriteFails(TASWTomlOffsetDateTime{ goodDate, Time(24, 0, 0), std::chrono::minutes(0) }, time,
+        "an offset date-time's time");
+    CheckWriteFails(TASWTomlOffsetDateTime{ goodDate, Time(0, 0, 0), std::chrono::minutes(24 * 60) }, offset,
+        "an offset of 24 hours");
+    CheckWriteFails(TASWTomlOffsetDateTime{ goodDate, Time(0, 0, 0), std::chrono::minutes(-24 * 60) }, offset,
+        "an offset of -24 hours");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, WriteLocalDate_Dates)
+{
+    // Arrange & Act & Assert
+    CheckWrites(Date(1979, 5, 27), "1979-05-27", "a date");
+    CheckWrites(Date(0, 1, 1), "0000-01-01", "year 0");
+    CheckWrites(Date(1, 1, 1), "0001-01-01", "the first year");
+    CheckWrites(Date(999, 12, 31), "0999-12-31", "a year of three digits, with a zero before it");
+    CheckWrites(Date(9999, 12, 31), "9999-12-31", "the last date");
+    CheckWrites(Date(2024, 2, 29), "2024-02-29", "a leap day");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, WriteLocalDateTime_DateTimes)
+{
+    // Arrange & Act & Assert
+    // Always with a T and the seconds
+    CheckWrites(TASWTomlLocalDateTime{ Date(1979, 5, 27), Time(7, 32, 0) }, "1979-05-27T07:32:00", "a date-time");
+    CheckWrites(TASWTomlLocalDateTime{ Date(1979, 5, 27), Time(0, 32, 0, 999999000) }, "1979-05-27T00:32:00.999999",
+        "with a fraction");
+    CheckWrites(TASWTomlLocalDateTime{ Date(2016, 12, 31), Time(23, 59, 60) }, "2016-12-31T23:59:60",
+        "a leap second");
+    CheckWrites(TASWTomlLocalDateTime(), "1970-01-01T00:00:00", "the default");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, WriteLocalTime_Times)
+{
+    // Arrange & Act & Assert
+    // The seconds always; a fraction only when it isn't 0, with as few digits as it needs
+    CheckWrites(Time(7, 32, 0), "07:32:00", "a time");
+    CheckWrites(Time(0, 0, 0), "00:00:00", "midnight");
+    CheckWrites(Time(23, 59, 59), "23:59:59", "the last second of a day");
+    CheckWrites(Time(23, 59, 60), "23:59:60", "a leap second");
+    CheckWrites(Time(15, 59, 60), "15:59:60", "a leap second at another hour");
+    CheckWrites(Time(0, 0, 0, 500000000), "00:00:00.5", "half a second");
+    CheckWrites(Time(0, 0, 0, 120000000), "00:00:00.12", "two digits");
+    CheckWrites(Time(0, 0, 0, 123000000), "00:00:00.123", "milliseconds");
+    CheckWrites(Time(0, 0, 0, 100000), "00:00:00.0001", "zeros before a digit");
+    CheckWrites(Time(0, 0, 0, 1000), "00:00:00.000001", "a microsecond");
+    CheckWrites(Time(0, 0, 0, 1), "00:00:00.000000001", "a nanosecond");
+    CheckWrites(Time(0, 0, 0, 999999999), "00:00:00.999999999", "the largest fraction");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeTexts, WriteOffsetDateTime_Offsets)
+{
+    // Arrange
+    auto const at = [](int minutes, std::int64_t nanoseconds = 0)
+        {
+            return TASWTomlOffsetDateTime{ Date(1979, 5, 27), Time(0, 32, 0, nanoseconds),
+                std::chrono::minutes(minutes) };
+        };
+
+    // Act & Assert
+    // Z for offset 0, else +HH:MM or -HH:MM
+    CheckWrites(at(0), "1979-05-27T00:32:00Z", "UTC");
+    CheckWrites(at(-7 * 60), "1979-05-27T00:32:00-07:00", "a negative offset");
+    CheckWrites(at(5 * 60 + 30), "1979-05-27T00:32:00+05:30", "a positive offset with minutes");
+    CheckWrites(at(-30), "1979-05-27T00:32:00-00:30", "a negative offset below an hour");
+    CheckWrites(at(23 * 60 + 59), "1979-05-27T00:32:00+23:59", "the largest offset");
+    CheckWrites(at(-(23 * 60 + 59)), "1979-05-27T00:32:00-23:59", "the smallest offset");
+    CheckWrites(at(-7 * 60, 999999000), "1979-05-27T00:32:00.999999-07:00", "a fraction and an offset");
+    CheckWrites(TASWTomlOffsetDateTime(), "1970-01-01T00:00:00Z", "the default");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_ScalarKinds
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_ScalarKinds::TTest_ASWToml_ScalarKinds()
+    : inherited("ASWToml_ScalarKinds_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_ScalarKinds::~TTest_ASWToml_ScalarKinds()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarKinds::CheckReadFails(std::string const& text, ETomlCode code, std::size_t offset,
+    std::string const& expectedText, std::string const& msg, std::source_location loc)
+{
+    TASWTomlValue value = "unchanged";
+    std::size_t position = 0;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadScalar(text, position, value);
+
+    CheckEquals(code, result.Code, msg + ": the code", loc);
+    CheckEquals(offset, position, msg + ": the position should be the error's offset", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message should name the problem", loc);
+    CheckTrue(value == TASWTomlValue("unchanged"), msg + ": the value should be unchanged", loc);
+    CheckTrue(result.Line >= 1 && result.Column >= 1, msg + ": the line and column should be set", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarKinds::CheckReadsUpTo(std::string const& text, std::size_t start, std::size_t end,
+    ETomlType type, std::string const& expected, std::string const& msg, std::source_location loc)
+{
+    TASWTomlValue value;
+    std::size_t position = start;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadScalar(text, position, value);
+
+    CheckTrue(result.IsOk(), msg + ": the value should read: " + result.Message, loc);
+    CheckEquals(std::string(ASWToml::ToString(type)), std::string(ASWToml::ToString(value.GetType())),
+        msg + ": the type", loc);
+    CheckEquals(expected, ScalarText(value), msg + ": the value", loc);
+    CheckEquals(end, position, msg + ": the position should be after the value", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarKinds::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarKinds::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarKinds::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarKinds::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ScalarKinds, ReadScalar_ChoosesTheKind)
+{
+    // Arrange & Act & Assert
+    CheckReadsUpTo("\"a\"", 0, 3, ETomlType::String, "a", "a basic string");
+    CheckReadsUpTo("'C:\\x'", 0, 6, ETomlType::String, "C:\\x", "a literal string");
+    CheckReadsUpTo("\"\"\"a\nb\"\"\"", 0, 9, ETomlType::String, "a\nb", "a multi-line string");
+    CheckReadsUpTo("'''a'''", 0, 7, ETomlType::String, "a", "a multi-line literal string");
+    CheckReadsUpTo("42", 0, 2, ETomlType::Integer, "42", "an integer");
+    CheckReadsUpTo("0", 0, 1, ETomlType::Integer, "0", "zero");
+    CheckReadsUpTo("-17", 0, 3, ETomlType::Integer, "-17", "a negative integer");
+    CheckReadsUpTo("+99", 0, 3, ETomlType::Integer, "99", "a plus sign");
+    CheckReadsUpTo("1_000", 0, 5, ETomlType::Integer, "1000", "an underscore");
+    CheckReadsUpTo("0x1F", 0, 4, ETomlType::Integer, "31", "hexadecimal");
+    CheckReadsUpTo("0o17", 0, 4, ETomlType::Integer, "15", "octal");
+    CheckReadsUpTo("0b101", 0, 5, ETomlType::Integer, "5", "binary");
+    CheckReadsUpTo("3.14", 0, 4, ETomlType::Float, "3.14", "a float");
+    CheckReadsUpTo("-0.0", 0, 4, ETomlType::Float, "-0.0", "minus zero");
+    CheckReadsUpTo("+1.5", 0, 4, ETomlType::Float, "1.5", "a float with a plus sign");
+    CheckReadsUpTo("1e3", 0, 3, ETomlType::Float, "1000.0", "an exponent");
+    CheckReadsUpTo("inf", 0, 3, ETomlType::Float, "inf", "inf");
+    CheckReadsUpTo("+inf", 0, 4, ETomlType::Float, "inf", "+inf");
+    CheckReadsUpTo("-inf", 0, 4, ETomlType::Float, "-inf", "-inf");
+    CheckReadsUpTo("nan", 0, 3, ETomlType::Float, "nan", "nan");
+    CheckReadsUpTo("+nan", 0, 4, ETomlType::Float, "nan", "+nan");
+    CheckReadsUpTo("-nan", 0, 4, ETomlType::Float, "-nan", "-nan");
+    CheckReadsUpTo("true", 0, 4, ETomlType::Boolean, "true", "true");
+    CheckReadsUpTo("false", 0, 5, ETomlType::Boolean, "false", "false");
+    CheckReadsUpTo("1979-05-27", 0, 10, ETomlType::LocalDate, "1979-05-27", "a local date");
+    CheckReadsUpTo("07:32:00", 0, 8, ETomlType::LocalTime, "07:32:00", "a local time");
+    CheckReadsUpTo("07:32", 0, 5, ETomlType::LocalTime, "07:32:00", "a local time without seconds");
+    CheckReadsUpTo("1979-05-27T07:32:00", 0, 19, ETomlType::LocalDateTime, "1979-05-27T07:32:00",
+        "a local date-time");
+    CheckReadsUpTo("1979-05-27 07:32:00-07:00", 0, 25, ETomlType::OffsetDateTime, "1979-05-27T07:32:00-07:00",
+        "an offset date-time");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ScalarKinds, ReadScalar_FailsAsTheKindsReader)
+{
+    // Arrange & Act & Assert
+    // Each kind's reader reports the error, at its offset
+    std::string const year = "the year must have four digits";
+
+    CheckReadFails("\"abc", ETomlCode::ParseFailed, 0, "The string has no closing \".", "an unclosed string");
+    CheckReadFails("'a\x01'", ETomlCode::ParseFailed, 2, "control character U+0001", "a control character");
+    CheckReadFails("\"\xC3\"", ETomlCode::InvalidUtf8, 1, "aren't valid UTF-8", "invalid UTF-8 in a string");
+    CheckReadFails("1__2", ETomlCode::ParseFailed, 1, "an underscore must be between two digits", "an integer");
+    CheckReadFails("_1", ETomlCode::ParseFailed, 0, "an underscore must be between two digits", "an underscore first");
+    CheckReadFails(".5", ETomlCode::ParseFailed, 0, "a digit, inf or nan must come first", "a float without 0");
+    CheckReadFails("+infinity", ETomlCode::ParseFailed, 1, "a digit, inf or nan must come first", "a sign and a word");
+    CheckReadFails("9223372036854775808", ETomlCode::ValueOutOfRange, 0, "is outside the 64-bit range",
+        "an integer out of range");
+    CheckReadFails("1e400", ETomlCode::ValueOutOfRange, 0, "is outside the range of a double", "a float out of range");
+    CheckReadFails("2023-02-29", ETomlCode::ParseFailed, 8, "the day must be 01 to 28 in 2023-02", "a date");
+    CheckReadFails("24:00:00", ETomlCode::ParseFailed, 0, "the hour must be 00 to 23", "a time");
+    CheckReadFails("1:32:00", ETomlCode::ParseFailed, 0, "the hour must have two digits", "digits and ':' as a time");
+    CheckReadFails("1-2", ETomlCode::ParseFailed, 0, year, "digits and '-' as a date");
+    CheckReadFails("10000-01-01", ETomlCode::ParseFailed, 0, year, "a year of five digits");
+    CheckReadFails("True", ETomlCode::ParseFailed, 0, "The value \"True\" isn't valid: a string must be in quotes, "
+        "and a boolean is true or false (in lower case).", "a word");
+    CheckReadFails("infinity", ETomlCode::ParseFailed, 0, "The value \"infinity\" isn't valid", "a word like inf");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ScalarKinds, ReadScalar_RejectsTextThatIsNotAScalar)
+{
+    // Arrange
+    // Arrays and inline tables are the parser's to read
+    TStringVector const texts = { "", " 1", "\t1", "#", "[1]", "{a=1}", "=", "@", ")", "\r\n" };
+
+    for (std::string const& text : texts)
+    {
+        // Act & Assert
+        CheckReadFails(text, ETomlCode::ParseFailed, 0, "A value must be a string, a number, true, false, a date or a "
+            "time.", "\"" + text + "\"");
+    }
+
+    // Arrange
+    TASWTomlValue value = "unchanged";
+    std::size_t position = 9;
+
+    // Act
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadScalar("true", position, value);
+
+    // Assert
+    CheckEquals(ETomlCode::ParseFailed, result.Code, "a position past the end should fail");
+    CheckEquals(std::size_t(9), position, "a position past the end should stay");
+    CheckTrue(value == TASWTomlValue("unchanged"), "a position past the end should leave the value");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ScalarKinds, ReadScalar_StartsAndStopsAtItsToken)
+{
+    // Arrange
+    std::string const line = "a = [\"x\", 1, 2.5, true, 1979-05-27, 07:32:00, 'y'] # c";
+
+    // Act & Assert
+    CheckReadsUpTo(line, 5, 8, ETomlType::String, "x", "a string");
+    CheckReadsUpTo(line, 10, 11, ETomlType::Integer, "1", "an integer");
+    CheckReadsUpTo(line, 13, 16, ETomlType::Float, "2.5", "a float");
+    CheckReadsUpTo(line, 18, 22, ETomlType::Boolean, "true", "a boolean");
+    CheckReadsUpTo(line, 24, 34, ETomlType::LocalDate, "1979-05-27", "a date");
+    CheckReadsUpTo(line, 36, 44, ETomlType::LocalTime, "07:32:00", "a time");
+    CheckReadsUpTo(line, 46, 49, ETomlType::String, "y", "a literal string");
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Booleans, "Scalars")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DateTimeTexts, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Floats, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Integers, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Keys, "Scalars")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_ScalarKinds, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Strings, "Scalars")
