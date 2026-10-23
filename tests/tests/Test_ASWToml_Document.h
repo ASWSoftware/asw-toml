@@ -30,7 +30,9 @@ limitations under the License.
 //---------------------------------------------------------------------------
 #include "ASWToml_Document.h"
 #include "ASWToml_Options.h"
+#include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
+#include "ASWToml_Value.h"
 //---------------------------------------------------------------------------
 
 namespace ASWUnitTests
@@ -140,12 +142,92 @@ public: // Test methods, each defined with ASW_TEST
     void Test_LineBreaks_RejectLoneCarriageReturns();
     void Test_Nesting_CountsArraysAndInlineTables();
     void Test_Nesting_CountsTablesOfKeysAndHeaders();
+    void Test_Nesting_CountsTheArraysOfTablesAHeaderIsIn();
     void Test_Nesting_WorksAtTheLimit();
     void Test_Values_Errors();
 
 public:
     TTest_ASWToml_DocumentErrors();
     ~TTest_ASWToml_DocumentErrors() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentLookups
+//
+// TASWTomlDocument::GetRoot() and Find(): the document's values, and the value at a path
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentLookups : public TAutoTestGroup<TTest_ASWToml_DocumentLookups>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentLookups> inherited;
+
+private:
+    // Checks that 'document' has no value at 'path'
+    void CheckNotFound(ASWToml::TASWTomlDocument const& document, ASWToml::TASWTomlPath const& path,
+        std::string const& msg, std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Copies_HaveTheirOwnValues();
+    void Test_Default_RootIsAnEmptyTable();
+    void Test_Find_ArrayElementsByIndex();
+    void Test_Find_KeysAndTables();
+    void Test_Find_NullWhenThereIsNoSuchValue();
+    void Test_GetRoot_HoldsEveryKindOfValue();
+    void Test_GetRoot_KeysInTheOrderFirstDefined();
+    void Test_Parse_ReplacesTheValues();
+
+public:
+    TTest_ASWToml_DocumentLookups();
+    ~TTest_ASWToml_DocumentLookups() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentTables
+//
+// TOML's table rules: the tables headers, dotted keys and inline tables define, and DuplicateKey for each way to
+// define a key or table twice
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentTables : public TAutoTestGroup<TTest_ASWToml_DocumentTables>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentTables> inherited;
+
+private:
+    // Checks that 'text' fails with DuplicateKey at 'line' and 'column', with the message 'expectedMessage'
+    void CheckDuplicate(std::string const& text, std::size_t line, std::size_t column,
+        std::string const& expectedMessage, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that 'text' parses, to the values 'expected'
+    void CheckRoot(std::string const& text, ASWToml::TASWTomlValue const& expected, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_ArraysOfTables_AddAnElementEach();
+    void Test_ArraysOfTables_Errors();
+    void Test_DottedKeys_DefineTables();
+    void Test_DottedKeys_Errors();
+    void Test_Errors_PlaceCountsEveryPiece();
+    void Test_Headers_DefineTables();
+    void Test_Headers_Errors();
+    void Test_InlineTables_AreClosed();
+    void Test_Keys_DefinedOnce();
+
+public:
+    TTest_ASWToml_DocumentTables();
+    ~TTest_ASWToml_DocumentTables() override;
 
     void SetUp_Group() override;
     void SetUp_Test(ITestCase& testCase) override;

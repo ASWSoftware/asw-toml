@@ -106,15 +106,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   path as messages show it, each key bare when it can be, else a basic string, so it reads back as
   the same path.
 - `TASWTomlDocument` (`ASWToml_Document.h`), a TOML text read into a model that keeps every byte of
-  it: comments, blank lines, spacing, how each key is quoted, how each value is written, the
-  layout of arrays and inline tables, and each line's own line break. `Parse(text, options)` reads
-  TOML 1.1 (UTF-8, with or without a byte order mark) and fails on the first error, changing
-  nothing: `InvalidOptions`, `UnsupportedEncoding` (a UTF-16 or UTF-32 byte order mark),
-  `InvalidUtf8` (wherever it is in the text), `ParseFailed`, `ValueOutOfRange` or `NestingTooDeep`,
-  with the line and column of the error. `ToText()` writes the text back byte for byte with the
-  default options; `Writing.Bom` adds or removes the byte order mark, and `Writing.LineEnding`
-  writes every line break as LF, CRLF or the platform's, in comments and multi-line strings too.
-  `HasBom()`, `GetLineBreak()` (the text's most common line break, the platform's when it has
-  none) and `GetOptions()` tell what was read. A document is copyable; it isn't thread-safe.
+  it: comments, blank lines, spacing, how each key is quoted, how each value is written, the layout
+  of arrays and inline tables, and each line's own line break. `Parse(text, options)` reads TOML 1.1
+  (UTF-8, with or without a byte order mark) and fails on the first error, changing nothing:
+  `InvalidOptions`, `UnsupportedEncoding` (a UTF-16 or UTF-32 byte order mark), `InvalidUtf8`
+  (wherever it is in the text), `ParseFailed`, `ValueOutOfRange`, `NestingTooDeep` or
+  `DuplicateKey`, with the line and column of the error. `DuplicateKey` reports a break of TOML's
+  table rules: a key or table defined twice, a header for a table that a header or dotted keys
+  defined, dotted keys that add to a table a header defined, a key or table added to an inline table
+  or an array value, and `[[x]]` for an `x` that isn't an array of tables; its message gives the
+  path and the line of the first definition, e.g. `The table server is already defined on line 3.`
+  `GetRoot()` gives the whole document as a `TASWTomlValue` table (each table's keys in the order
+  they are first defined, however the table is written: by a header, by dotted keys or inline), and
+  `Find(path)` the value at a `TASWTomlPath` (e.g. `products[1].name` or `ports[0]`), or `nullptr`
+  when there is none. `ToText()` writes the text back byte for byte with the default options;
+  `Writing.Bom` adds or removes the byte order mark, and `Writing.LineEnding` writes every line
+  break as LF, CRLF or the platform's, in comments and multi-line strings too. `HasBom()`,
+  `GetLineBreak()` (the text's most common line break, the platform's when it has none) and
+  `GetOptions()` tell what was read. A document is copyable; it isn't thread-safe.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

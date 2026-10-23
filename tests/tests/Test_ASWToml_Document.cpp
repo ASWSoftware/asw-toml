@@ -26,6 +26,7 @@ limitations under the License.
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -50,6 +51,7 @@ using ASWToml::ELineBreak;
 using ASWToml::ETomlCode;
 using ASWToml::TASWTomlDocument;
 using ASWToml::TASWTomlOptions;
+using ASWToml::TASWTomlValue;
 using ASWToml::Detail::EEntryKind;
 using ASWToml::Detail::EValueKind;
 using ASWToml::Detail::TDocBlock;
@@ -59,6 +61,10 @@ using ASWToml::Detail::TDocModel;
 using ASWToml::Detail::TDocValue;
 
 using TStringVector = std::vector<std::string>;
+
+// An array and a table, to write the values a document should have
+using TArray = TASWTomlValue::TValueVector;
+using TTable = TASWTomlValue::TKeyValueVector;
 
 // The UTF-8 byte order mark
 std::string const Bom = "\xEF\xBB\xBF";
@@ -115,11 +121,37 @@ TStringVector const ValidTexts = {
     "a = 1\nb = 2\r\nc = 3",
     "a = \"\xC3\xA9\" # \xE2\x82\xAC\n",
     "x = 1\n[t]\nx = 2\n",
+    "[x.y.z.w]\n[x]\n",
+    "a.b.c = 1\n[a.b.d]\n",
+    "[[a]]\n[a.b]\n[[a]]\n[a.b]\n",
+    "[a.b.c]\n[a]\nb.d = 1\n",
+    "[fruit]\napple.color = 1\n[fruit.apple.texture]\n",
 };
+
+// A text with values of every kind, for the lookups
+std::string const LookupText =
+    "title = \"x\"\n"
+    "a.b.c = 1\n"
+    "ports = [80, 443, 8080]\n"
+    "m = [[1, 2], [3]]\n"
+    "[server]\n"
+    "host = \"h\"\n"
+    "\"port no\" = 80\n"
+    "[server.http]\n"
+    "on = true\n"
+    "[t]\n"
+    "\"a.b\" = 2\n"
+    "[[products]]\n"
+    "name = \"p0\"\n"
+    "[[products]]\n"
+    "name = \"p1\"\n"
+    "tags = [{ k = 1 }]\n";
 
 ASWToml::TASWTomlOptions DepthOptions(std::size_t maxDepth);
 std::string Escaped(std::string const& text);
+std::string KeyList(TASWTomlValue const& value);
 std::string NestedArrays(std::size_t depth);
+std::string NestedArraysOfTables(std::size_t count);
 std::string NestedInlineTables(std::size_t depth);
 
 //---------------------------------------------------------------------------
@@ -164,6 +196,24 @@ std::string Escaped(std::string const& text)
 }
 //---------------------------------------------------------------------------
 /*
+    KeyList
+
+    The keys of the table 'value' in order, separated by spaces; empty when it isn't a table
+*/
+std::string KeyList(TASWTomlValue const& value)
+{
+    std::string list;
+
+    if (TTable const* const table = value.AsTable())
+    {
+        for (ASWToml::TASWTomlKeyValue const& keyValue : *table)
+            list += (list.empty() ? "" : " ") + keyValue.Key;
+    }
+
+    return list;
+}
+//---------------------------------------------------------------------------
+/*
     NestedArrays
 
     a = [[...[1]...]] with 'depth' arrays
@@ -171,6 +221,26 @@ std::string Escaped(std::string const& text)
 std::string NestedArrays(std::size_t depth)
 {
     return "a = " + std::string(depth, '[') + "1" + std::string(depth, ']') + "\n";
+}
+//---------------------------------------------------------------------------
+/*
+    NestedArraysOfTables
+
+    [[a]], [[a.a]] and so on, 'count' headers, each an array of tables in the last element of the one before; the
+    last element is 2 * 'count' deep
+*/
+std::string NestedArraysOfTables(std::size_t count)
+{
+    std::string text;
+    std::string key = "a";
+
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        text += "[[" + key + "]]\n";
+        key += ".a";
+    }
+
+    return text;
 }
 //---------------------------------------------------------------------------
 /*
@@ -617,6 +687,8 @@ ASW_TEST(TTest_ASWToml_DocumentParse, Parse_FailureChangesNothing)
         { "b = 2 3", ETomlCode::ParseFailed },
         { "b = 99999999999999999999", ETomlCode::ValueOutOfRange },
         { NestedArrays(101), ETomlCode::NestingTooDeep },
+        { "b = 2\nb = 3", ETomlCode::DuplicateKey },
+        { NestedArraysOfTables(51), ETomlCode::NestingTooDeep },
     };
 
     for (TCase const& item : cases)
@@ -627,6 +699,7 @@ ASW_TEST(TTest_ASWToml_DocumentParse, Parse_FailureChangesNothing)
         // Assert
         CheckEquals(item.Code, result.Code, Escaped(item.Text) + ": the code");
         CheckEquals(text, document.ToText(), Escaped(item.Text) + ": the text should be kept");
+        CheckTrue(document.GetRoot() == TASWTomlValue(TTable{ { "a", 1 } }), Escaped(item.Text) + ": the values too");
         CheckTrue(document.HasBom(), Escaped(item.Text) + ": the byte order mark should be kept");
         CheckEquals(ELineBreak::CRLF, document.GetLineBreak(), Escaped(item.Text) + ": the line break should be kept");
         CheckEquals("#"s, document.GetOptions().Writing.CommentPrefix, Escaped(item.Text) + ": the options too");
@@ -962,6 +1035,23 @@ ASW_TEST(TTest_ASWToml_DocumentErrors, Nesting_CountsTablesOfKeysAndHeaders)
         "a dotted key in an inline table");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentErrors, Nesting_CountsTheArraysOfTablesAHeaderIsIn)
+{
+    // Arrange & Act & Assert
+    // [a.b] after [[a]] is inside the array a and its last element, deeper than its two parts say
+    CheckNestingOk("[[a]]\n[a.b]\nc = 1", 3, "the array a, its element and the table b");
+    CheckTooDeep("[[a]]\n[a.b.c]", 3, 2, 6,
+        "The table \"c\" is nested 4 deep, deeper than Reading.MaxNestingDepth (3) allows.",
+        "a header in an element of an array of tables");
+    CheckTooDeep("[[a]]\n[[a.b]]", 3, 2, 5, "The table \"b\" is nested 4 deep",
+        "an array of tables in an element of another");
+    CheckTooDeep("[[a]]\n[a.b]\nc = [1]", 3, 3, 5, "The array is nested 4 deep", "an array value under it");
+    CheckTooDeep("[[a]]\n[a.b]\nc = {}", 3, 3, 5, "The inline table is nested 4 deep", "an inline table under it");
+    CheckTooDeep("[[a]]\n[a.b]\nc.d = 1", 3, 3, 1, "The table \"c\" is nested 4 deep", "a dotted key under it");
+    CheckTooDeep("[[a]]\n[[a.b]]\n[a.b.c.d]", 4, 3, 6, "The table \"c\" is nested 5 deep",
+        "a part before the last of a header in two arrays of tables");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentErrors, Nesting_WorksAtTheLimit)
 {
     // Arrange
@@ -971,6 +1061,7 @@ ASW_TEST(TTest_ASWToml_DocumentErrors, Nesting_WorksAtTheLimit)
     TASWTomlOptions const options = DepthOptions(limit);
     std::string const arrays = NestedArrays(limit);
     std::string const tables = NestedInlineTables(limit);
+    std::string const arraysOfTables = NestedArraysOfTables(limit / 2);
 
     std::string header = "[a";
     for (std::size_t i = 1; i < limit; ++i)
@@ -978,7 +1069,7 @@ ASW_TEST(TTest_ASWToml_DocumentErrors, Nesting_WorksAtTheLimit)
 
     header += "]\n";
 
-    for (std::string const& text : { arrays, tables, header })
+    for (std::string const& text : { arrays, tables, header, arraysOfTables })
     {
         // Act
         TASWTomlDocument* document = new TASWTomlDocument;
@@ -991,12 +1082,15 @@ ASW_TEST(TTest_ASWToml_DocumentErrors, Nesting_WorksAtTheLimit)
         // Assert
         CheckTrue(result.IsOk(), "a text " + std::to_string(limit) + " deep should parse: " + result.Message);
         CheckEquals(text, assigned.ToText(), "it should be written back");
+        CheckTrue(assigned.GetRoot() == copy.GetRoot(), "its values should be copied and compared");
     }
 
     // Arrange & Act & Assert
     CheckTooDeep(NestedArrays(limit + 1), limit, 1, 5 + limit, "The array is nested 129 deep", "one array more");
     CheckTooDeep("[" + header.substr(1, header.size() - 3) + ".b]", limit, 1, 2 + 2 * limit,
         "The table \"b\" is nested 129 deep", "one table more");
+    CheckTooDeep(NestedArraysOfTables(limit / 2 + 1), limit, limit / 2 + 1, 3 + limit,
+        "The table \"a\" is nested 130 deep", "one array of tables more");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentErrors, Values_Errors)
@@ -1015,6 +1109,558 @@ ASW_TEST(TTest_ASWToml_DocumentErrors, Values_Errors)
     CheckFails("a = 99999999999999999999", ETomlCode::ValueOutOfRange, 1, 5, "99999999999999999999",
         "an integer beyond 64 bits");
     CheckFails("a = 2023-02-29", ETomlCode::ParseFailed, 1, 13, "the day must be 01 to 28", "a day that doesn't exist");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentLookups
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentLookups::TTest_ASWToml_DocumentLookups()
+    : inherited("ASWToml_DocumentLookups_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentLookups::~TTest_ASWToml_DocumentLookups()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentLookups::CheckNotFound(TASWTomlDocument const& document, ASWToml::TASWTomlPath const& path,
+    std::string const& msg, std::source_location loc)
+{
+    CheckTrue(document.Find(path) == nullptr, msg + ": there should be no value at " + path.ToString(), loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentLookups::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentLookups::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentLookups::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentLookups::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, Copies_HaveTheirOwnValues)
+{
+    // Arrange
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("a = 1\n[t]\nb = [2]\n").IsOk(), "the text should parse");
+
+    // Act
+    TASWTomlDocument const copied(document);
+    TASWTomlDocument assigned;
+    assigned = document;
+    TASWTomlDocument const moved(std::move(assigned));
+    CheckTrue(document.Parse("a = 2").IsOk(), "another text should parse");
+
+    // Assert
+    TASWTomlValue const expected = TTable{ { "a", 1 }, { "t", TTable{ { "b", TArray{ 2 } } } } };
+    CheckTrue(copied.GetRoot() == expected, "a copy has the values");
+    CheckTrue(moved.GetRoot() == expected, "a copy assigned and moved has them too");
+    TASWTomlValue const* const element = moved.Find("t.b[0]");
+    CheckTrue(element != nullptr && *element == TASWTomlValue(2), "a lookup in the moved copy");
+    CheckTrue(document.GetRoot() == TASWTomlValue(TTable{ { "a", 2 } }), "the original has the new text's values");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, Default_RootIsAnEmptyTable)
+{
+    // Act
+    TASWTomlDocument const document;
+
+    // Assert
+    CheckTrue(document.GetRoot().IsTable(), "the root is a table");
+    CheckTrue(document.GetRoot().AsTable()->empty(), "with no keys");
+    CheckTrue(document.Find("") == &document.GetRoot(), "the root path finds the root");
+    CheckNotFound(document, "a", "a key");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, Find_ArrayElementsByIndex)
+{
+    // Arrange
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(LookupText).IsOk(), "the text should parse");
+
+    struct TCase
+    {
+        ASWToml::TASWTomlPath Path;
+        TASWTomlValue Expected;
+    };
+
+    std::vector<TCase> const cases = {
+        { "ports[0]", 80 },
+        { "ports[2]", 8080 },
+        { "m[1]", TArray{ 3 } },
+        { "m[0][1]", 2 },
+        { "products[0].name", "p0" },
+        { { "products", 1, "name" }, "p1" },
+        { "products[1].tags[0].k", 1 },
+        { "products[0]", TTable{ { "name", "p0" } } },
+    };
+
+    for (TCase const& item : cases)
+    {
+        // Act
+        TASWTomlValue const* const value = document.Find(item.Path);
+
+        // Assert
+        CheckTrue(value != nullptr, item.Path.ToString() + " should be found");
+        CheckTrue(value != nullptr && *value == item.Expected, item.Path.ToString() + ": the value");
+    }
+
+    // Act
+    TASWTomlValue const* const products = document.Find("products");
+
+    // Assert
+    CheckTrue(products != nullptr && products->IsArray() && products->AsArray()->size() == 2,
+        "an array of tables is an array of its elements");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, Find_KeysAndTables)
+{
+    // Arrange
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(LookupText).IsOk(), "the text should parse");
+
+    struct TCase
+    {
+        ASWToml::TASWTomlPath Path;
+        TASWTomlValue Expected;
+    };
+
+    std::vector<TCase> const cases = {
+        { "title", "x" },
+        { "a.b.c", 1 },
+        { "a . b", TTable{ { "c", 1 } } },
+        { "server.\"port no\"", 80 },
+        { { "server", "port no" }, 80 },
+        { "server.http.on", true },
+        { "server.http", TTable{ { "on", true } } },
+        { "t.\"a.b\"", 2 },
+        { { "t", "a.b" }, 2 },
+    };
+
+    for (TCase const& item : cases)
+    {
+        // Act
+        TASWTomlValue const* const value = document.Find(item.Path);
+
+        // Assert
+        CheckTrue(value != nullptr, item.Path.ToString() + " should be found");
+        CheckTrue(value != nullptr && *value == item.Expected, item.Path.ToString() + ": the value");
+    }
+
+    // Act & Assert
+    CheckTrue(document.Find("") == &document.GetRoot(), "the root path finds the root");
+    CheckTrue(document.Find(ASWToml::TASWTomlPath()) == &document.GetRoot(), "so does a default path");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, Find_NullWhenThereIsNoSuchValue)
+{
+    // Arrange
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(LookupText).IsOk(), "the text should parse");
+
+    // Act & Assert
+    CheckNotFound(document, "missing", "a key the root doesn't have");
+    CheckNotFound(document, "server.missing", "a key a table doesn't have");
+    CheckNotFound(document, "a.b.c.d", "a key of a value that isn't a table");
+    CheckNotFound(document, "Title", "a key in another case");
+    CheckNotFound(document, "ports[3]", "an index past the end");
+    CheckNotFound(document, "products[2]", "an index past the last element of an array of tables");
+    CheckNotFound(document, "products.name", "an array of tables without an index: no implicit last element");
+    CheckNotFound(document, "ports.x", "a key of an array");
+    CheckNotFound(document, "title[0]", "an index of a string");
+    CheckNotFound(document, "server[0]", "an index of a table");
+    CheckNotFound(document, "t.a.b", "the dotted key a.b isn't the quoted key \"a.b\"");
+
+    ASWToml::TASWTomlPath const invalid = "a..b";
+    ASWToml::TASWTomlPath const negative = { "ports", -1 };
+    CheckFalse(invalid.IsValid() || negative.IsValid(), "the paths aren't valid");
+    CheckNotFound(document, invalid, "a text that isn't a valid path");
+    CheckNotFound(document, negative, "a negative index");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, GetRoot_HoldsEveryKindOfValue)
+{
+    // Arrange
+    TASWTomlDocument document;
+    std::string const text =
+        "s = \"a\\tb\"\n"
+        "ml = \"\"\"\r\nx\r\ny\"\"\"\n"
+        "i = 0xFF\n"
+        "f = 1.5\n"
+        "b = true\n"
+        "odt = 1979-05-27T07:32:00-07:00\n"
+        "ldt = 1979-05-27T07:32:00.5\n"
+        "ld = 1979-05-27\n"
+        "lt = 07:32\n"
+        "arr = [1, \"two\", [3], { x = 4 }]\n"
+        "it = { x = 1, y.z = 2 }\n"
+        "[t]\n"
+        "k = 'v'\n"
+        "[[aot]]\n"
+        "n = 1\n"
+        "[[aot]]\n";
+
+    std::chrono::year_month_day const date{ std::chrono::year{ 1979 }, std::chrono::May, std::chrono::day{ 27 } };
+    ASWToml::TASWTomlLocalTime const time{ std::chrono::hours{ 7 }, std::chrono::minutes{ 32 } };
+    ASWToml::TASWTomlLocalTime const halfSecond{ std::chrono::hours{ 7 }, std::chrono::minutes{ 32 },
+        std::chrono::seconds{ 0 }, std::chrono::milliseconds{ 500 } };
+
+    TASWTomlValue const expected = TTable{
+        { "s", "a\tb" },
+        { "ml", "x\ny" },
+        { "i", 255 },
+        { "f", 1.5 },
+        { "b", true },
+        { "odt", ASWToml::TASWTomlOffsetDateTime{ date, time, std::chrono::minutes{ -7 * 60 } } },
+        { "ldt", ASWToml::TASWTomlLocalDateTime{ date, halfSecond } },
+        { "ld", date },
+        { "lt", time },
+        { "arr", TArray{ 1, "two", TArray{ 3 }, TTable{ { "x", 4 } } } },
+        { "it", TTable{ { "x", 1 }, { "y", TTable{ { "z", 2 } } } } },
+        { "t", TTable{ { "k", "v" } } },
+        { "aot", TArray{ TTable{ { "n", 1 } }, TTable() } },
+    };
+
+    // Act
+    ASWToml::TASWTomlResult const result = document.Parse(text);
+
+    // Assert
+    CheckTrue(result.IsOk(), "the text should parse: " + result.Message);
+    CheckEquals(ASWToml::ETomlType::Table, document.GetRoot().GetType(), "the root is a table");
+    CheckTrue(document.GetRoot() == expected, "every value");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, GetRoot_KeysInTheOrderFirstDefined)
+{
+    // Arrange
+    TASWTomlDocument document;
+
+    // Act
+    // b is first made by [b.c], then defined by [b]
+    ASWToml::TASWTomlResult const result = document.Parse(
+        "z = 1\n[b.c]\n[a]\nx = 1\n[b]\ny = 2\nw.v = 3\n[i]\nt = { q = 1, p.r = 2, o = 3 }\n");
+
+    // Assert
+    CheckTrue(result.IsOk(), "the text should parse: " + result.Message);
+    CheckEquals("z b a i"s, KeyList(document.GetRoot()), "the root's keys");
+    CheckEquals("c y w"s, KeyList(*document.Find("b")), "a table made by a longer header first");
+    CheckEquals("q p o"s, KeyList(*document.Find("i.t")), "an inline table");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, Parse_ReplacesTheValues)
+{
+    // Arrange
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("a = 1").IsOk(), "the first text should parse");
+
+    // Act
+    ASWToml::TASWTomlResult const second = document.Parse("b = 2");
+
+    // Assert
+    CheckTrue(second.IsOk(), "the second text should parse: " + second.Message);
+    CheckNotFound(document, "a", "the first text's key");
+    CheckTrue(document.GetRoot() == TASWTomlValue(TTable{ { "b", 2 } }), "the second text's values");
+
+    // Act
+    ASWToml::TASWTomlResult const failed = document.Parse("c = 3\nc = 4");
+
+    // Assert
+    CheckEquals(ETomlCode::DuplicateKey, failed.Code, "a key defined twice");
+    CheckNotFound(document, "c", "the failed text's key");
+    CheckTrue(document.GetRoot() == TASWTomlValue(TTable{ { "b", 2 } }), "the values are kept on a failure");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentTables
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentTables::TTest_ASWToml_DocumentTables()
+    : inherited("ASWToml_DocumentTables_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentTables::~TTest_ASWToml_DocumentTables()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentTables::CheckDuplicate(std::string const& text, std::size_t line, std::size_t column,
+    std::string const& expectedMessage, std::string const& msg, std::source_location loc)
+{
+    TASWTomlDocument document;
+
+    ASWToml::TASWTomlResult const result = document.Parse(text);
+
+    std::string const name = msg + " (\"" + Escaped(text) + "\")";
+    CheckEquals(ETomlCode::DuplicateKey, result.Code, name + ": the code (" + result.Message + ")", loc);
+    CheckEquals(line, result.Line, name + ": the line", loc);
+    CheckEquals(column, result.Column, name + ": the column", loc);
+    CheckEquals(expectedMessage, result.Message, name + ": the message", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentTables::CheckRoot(std::string const& text, TASWTomlValue const& expected,
+    std::string const& msg, std::source_location loc)
+{
+    TASWTomlDocument document;
+
+    ASWToml::TASWTomlResult const result = document.Parse(text);
+
+    std::string const name = msg + " (\"" + Escaped(text) + "\")";
+    CheckTrue(result.IsOk(), name + " should parse: " + result.Message, loc);
+    CheckTrue(document.GetRoot() == expected, name + ": the values", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentTables::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentTables::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentTables::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentTables::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, ArraysOfTables_AddAnElementEach)
+{
+    // Arrange
+    // The spec's example: a sub-table and a nested array of tables go into the array's last element
+    std::string const fruits =
+        "[[fruits]]\n"
+        "name = \"apple\"\n"
+        "[fruits.physical]\n"
+        "color = \"red\"\n"
+        "[[fruits.varieties]]\n"
+        "name = \"red delicious\"\n"
+        "[[fruits.varieties]]\n"
+        "name = \"granny smith\"\n"
+        "[[fruits]]\n"
+        "name = \"banana\"\n"
+        "[[fruits.varieties]]\n"
+        "name = \"plantain\"\n";
+
+    TASWTomlValue const apple = TTable{
+        { "name", "apple" },
+        { "physical", TTable{ { "color", "red" } } },
+        { "varieties", TArray{ TTable{ { "name", "red delicious" } }, TTable{ { "name", "granny smith" } } } },
+    };
+    TASWTomlValue const banana = TTable{
+        { "name", "banana" },
+        { "varieties", TArray{ TTable{ { "name", "plantain" } } } },
+    };
+
+    // Act & Assert
+    CheckRoot(fruits, TTable{ { "fruits", TArray{ apple, banana } } }, "the spec's fruits");
+    CheckRoot("[[p]]\nn = 1\n[[p]]\n[[p]]\nn = 3\n",
+        TTable{ { "p", TArray{ TTable{ { "n", 1 } }, TTable(), TTable{ { "n", 3 } } } } }, "an empty element");
+    CheckRoot("[[a]]\n[a.b]\nx = 1\n[[a]]\n[a.b]\nx = 2\n",
+        TTable{ { "a", TArray{ TTable{ { "b", TTable{ { "x", 1 } } } }, TTable{ { "b", TTable{ { "x", 2 } } } } } } },
+        "each element has its own sub-tables");
+    CheckRoot("[[a.b]]\nx = 1\n[a]\ny = 2\n",
+        TTable{ { "a", TTable{ { "b", TArray{ TTable{ { "x", 1 } } } }, { "y", 2 } } } },
+        "the table [[a.b]] makes can be defined afterwards");
+    CheckRoot("[[t.a]]\n[[t.a.b]]\nx = 1\n",
+        TTable{ { "t", TTable{ { "a", TArray{ TTable{ { "b", TArray{ TTable{ { "x", 1 } } } } } } } } } },
+        "an array of tables in an element");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, ArraysOfTables_Errors)
+{
+    // Arrange & Act & Assert
+    CheckDuplicate("[[a]]\n[a]", 2, 2, "The array of tables a is already defined on line 1.", "a table after it");
+    CheckDuplicate("[a]\n[[a]]", 2, 3, "The table a is already defined on line 1.", "after a table");
+    CheckDuplicate("[a.b]\n[[a]]", 2, 3, "The table a is already defined on line 1.",
+        "after a table a longer header made");
+    CheckDuplicate("a = []\n[[a]]", 2, 3, "The key a is already defined on line 1.", "after an array value");
+    CheckDuplicate("a = [{}]\n[[a]]", 2, 3, "The key a is already defined on line 1.",
+        "after an array value of inline tables");
+    CheckDuplicate("a = 1\n[[a]]", 2, 3, "The key a is already defined on line 1.", "after a key");
+    CheckDuplicate("[[a.b]]\n[a]\nb.y = 2", 3, 1, "The array of tables a.b is already defined on line 1.",
+        "dotted keys into it");
+    CheckDuplicate("[[a]]\n[a.b]\n[[a.b]]", 3, 3, "The table a[0].b is already defined on line 2.",
+        "a table of an element, then an array of tables of the same name");
+    CheckDuplicate("[[a]]\n[[a.b]]\n[a.b]", 3, 2, "The array of tables a[0].b is already defined on line 2.",
+        "an array of tables in an element, then a table of the same name");
+    CheckDuplicate("[[a]]\n[[a]]\nx = 1\nx = 2", 4, 1, "The key a[1].x is already defined on line 3.",
+        "a key twice in the second element");
+    CheckDuplicate("[a]\nb = [{ c = 1 }]\n[a.b.d]", 3, 2, "The key a.b is already defined on line 2.",
+        "a header into an array value");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, DottedKeys_DefineTables)
+{
+    // Arrange & Act & Assert
+    CheckRoot("a.b.c = 1\na.b.d = 2\na.e = 3\n",
+        TTable{ { "a", TTable{ { "b", TTable{ { "c", 1 }, { "d", 2 } } }, { "e", 3 } } } },
+        "more dotted keys add to the tables");
+    CheckRoot("[t]\na.b = 1\na.c = 2\n", TTable{ { "t", TTable{ { "a", TTable{ { "b", 1 }, { "c", 2 } } } } } },
+        "under a header");
+    CheckRoot("a.b = 1\n[a.c]\nd = 2\n", TTable{ { "a", TTable{ { "b", 1 }, { "c", TTable{ { "d", 2 } } } } } },
+        "a header defines a sub-table of a table dotted keys defined");
+    CheckRoot("[a.b.c]\nz = 1\n[a]\nb.d = 2\n",
+        TTable{ { "a", TTable{ { "b", TTable{ { "c", TTable{ { "z", 1 } } }, { "d", 2 } } } } } },
+        "dotted keys define a table only a longer header made");
+    CheckRoot("t = { a.b = 1, a.c = 2 }\n", TTable{ { "t", TTable{ { "a", TTable{ { "b", 1 }, { "c", 2 } } } } } },
+        "in an inline table");
+    CheckRoot("3.14159 = \"pi\"\n", TTable{ { "3", TTable{ { "14159", "pi" } } } },
+        "a dotted key that looks like a float");
+    CheckRoot("\"a.b\".c = 1\n", TTable{ { "a.b", TTable{ { "c", 1 } } } }, "a quoted key with a dot");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, DottedKeys_Errors)
+{
+    // Arrange & Act & Assert
+    CheckDuplicate("a = 1\na.b = 2", 2, 1, "The key a is already defined on line 1.", "into a key's value");
+    CheckDuplicate("a.b = 1\na.b.c = 2", 2, 1, "The key a.b is already defined on line 1.", "into a dotted key's value");
+    CheckDuplicate("a.b.c = 1\na.b = 2", 2, 1, "The table a.b is already defined on line 1.",
+        "a key for a table dotted keys made");
+    CheckDuplicate("[a.b.c]\nz = 9\n[a]\nb.c.t = 1", 4, 1, "The table a.b.c is already defined on line 1.",
+        "into a table a header defined");
+    CheckDuplicate("[a.b.c.d]\n[a]\nb.c.d.k = 1", 3, 1, "The table a.b.c.d is already defined on line 1.",
+        "into a table a header defined, through tables it made");
+    CheckDuplicate("[a.b]\n[a]\nb = 1", 3, 1, "The table a.b is already defined on line 1.",
+        "a key for a table a header defined");
+    CheckDuplicate("[a.b.c]\n[a]\nb = 1", 3, 1, "The table a.b is already defined on line 1.",
+        "a key for a table a longer header made");
+    CheckDuplicate("[a.b.c]\n[a]\nb.d = 1\nb = 2", 4, 1, "The table a.b is already defined on line 3.",
+        "the line of the dotted key that defined it");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, Errors_PlaceCountsEveryPiece)
+{
+    // Arrange & Act & Assert
+    // Every kind of piece comes before the second definition, so a miscounted one would move its place
+    std::string const text = Bom +
+        "# c\r\n"
+        "s = \"\"\"a\r\nb\"\"\" # c\r\n"
+        "[ t ] # c\n"
+        "arr = [\n  1, # one\n  [2,],\n]\n"
+        "it = {\n  x = 1, # c\n  y.z = 2,\n}\n"
+        "lit = '''\nx'''\n"
+        "[[p]]\n"
+        "  k = 'v' # c\n"
+        "\t[  t . it ]\n";
+    CheckDuplicate(text, 17, 5, "The key t.it is already defined on line 9.", "after every kind of piece");
+
+    CheckDuplicate("[a]\r\nx = [\r\n  1,\r\n]\r\ny = 1 # c\r\n  x = 2\r\n", 6, 3,
+        "The key a.x is already defined on line 2.", "CRLF, and a key after a multi-line array");
+    CheckDuplicate("q = { \"\xC3\xA9\" = 1, \"\xC3\xA9\" = 2 }", 1, 16,
+        "The key q.\"\xC3\xA9\" is already defined on line 1.", "a column counts characters");
+    CheckDuplicate("a = { b = [1,\n2], c = 3,\nc = 4 }", 3, 1, "The key a.c is already defined on line 2.",
+        "an inline table over lines");
+    CheckDuplicate("a = { b = 1 , b = 2 }", 1, 15, "The key a.b is already defined on line 1.",
+        "blanks before a comma in an inline table");
+    CheckDuplicate("a = [ 1 , { b = 1, b = 2 } ]", 1, 20, "The key a[1].b is already defined on line 1.",
+        "blanks before a comma in an array");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, Headers_DefineTables)
+{
+    // Arrange
+    TASWTomlValue const xyzw = TTable{ { "y", TTable{ { "z", TTable{ { "w", TTable() } } } } }, { "k", 1 } };
+    TASWTomlValue const apple = TTable{
+        { "color", "red" },
+        { "taste", TTable{ { "sweet", true } } },
+        { "texture", TTable{ { "smooth", true } } },
+    };
+
+    // Act & Assert
+    CheckRoot("[x.y.z.w]\n[x]\nk = 1\n", TTable{ { "x", xyzw } }, "a super-table defined afterwards");
+    CheckRoot("[a]\n[a.b]\n[a.c]\n", TTable{ { "a", TTable{ { "b", TTable() }, { "c", TTable() } } } }, "sub-tables");
+    CheckRoot("[ a . \"b c\" . 'd' ]\n", TTable{ { "a", TTable{ { "b c", TTable{ { "d", TTable() } } } } } },
+        "quoted parts and blanks");
+    CheckRoot("[\"a.b\"]\nx = 1\n", TTable{ { "a.b", TTable{ { "x", 1 } } } }, "a quoted part with a dot");
+    CheckRoot("[fruit]\napple.color = \"red\"\napple.taste.sweet = true\n[fruit.apple.texture]\nsmooth = true\n",
+        TTable{ { "fruit", TTable{ { "apple", apple } } } }, "the spec's sub-table of a table dotted keys defined");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, Headers_Errors)
+{
+    // Arrange & Act & Assert
+    CheckDuplicate("[a]\n[a]", 2, 2, "The table a is already defined on line 1.", "a table twice");
+    CheckDuplicate("[a]\nx = 1\n\n [ a ]", 4, 4, "The table a is already defined on line 1.",
+        "reported at the first key part");
+    CheckDuplicate("[a]\n[\"a\"]", 2, 2, "The table a is already defined on line 1.", "a bare and a quoted key");
+    CheckDuplicate("[a.b]\n[a]\n[a]", 3, 2, "The table a is already defined on line 2.",
+        "a super-table twice: a longer header doesn't define it");
+    CheckDuplicate("[a]\nb = 1\n[a.b]", 3, 2, "The key a.b is already defined on line 2.", "a table for a key");
+    CheckDuplicate("a = 1\n[a.b]", 2, 2, "The key a is already defined on line 1.", "a sub-table of a key");
+    CheckDuplicate("a.b = 1\n[a]", 2, 2, "The table a is already defined on line 1.",
+        "a table dotted keys defined");
+    CheckDuplicate("[fruit]\napple.color = 1\n[fruit.apple]", 3, 2,
+        "The table fruit.apple is already defined on line 2.", "the spec's table dotted keys defined");
+    CheckDuplicate("[t1]\nt2.t3.v = 0\n[t1.t2.t3]", 3, 2, "The table t1.t2.t3 is already defined on line 2.",
+        "a table dotted keys made in another table");
+    CheckDuplicate("[a.b.c]\n[a]\nb.d = 1\n[a.b]", 4, 2, "The table a.b is already defined on line 3.",
+        "a table a longer header made, then dotted keys defined");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, InlineTables_AreClosed)
+{
+    // Arrange & Act & Assert
+    CheckDuplicate("a = { b = 1 }\na.c = 2", 2, 1, "The key a is already defined on line 1.", "dotted keys into one");
+    CheckDuplicate("a = { b = 1 }\n[a]", 2, 2, "The key a is already defined on line 1.", "a header for one");
+    CheckDuplicate("a = { b = 1 }\n[a.c]", 2, 2, "The key a is already defined on line 1.", "a header into one");
+    CheckDuplicate("a = {}\n[[a]]", 2, 3, "The key a is already defined on line 1.", "an array of tables for one");
+    CheckDuplicate("a.b = 1\na = {}", 2, 1, "The table a is already defined on line 1.",
+        "one for a table dotted keys defined");
+    CheckDuplicate("[product]\ntype.name = \"Nail\"\ntype = { edible = false }", 3, 1,
+        "The table product.type is already defined on line 2.", "the spec's example");
+
+    // Inside one, as in a table
+    CheckDuplicate("a = { b = 1, b = 2 }", 1, 14, "The key a.b is already defined on line 1.", "a key twice");
+    CheckDuplicate("a = { b.c = 1, b = 2 }", 1, 16, "The table a.b is already defined on line 1.",
+        "a key for a table dotted keys made");
+    CheckDuplicate("a = { b = {}, b.c = 1 }", 1, 15, "The key a.b is already defined on line 1.",
+        "dotted keys into an inline table in it");
+    CheckDuplicate("a = [{ b = 1, b = 2 }]", 1, 15, "The key a[0].b is already defined on line 1.",
+        "in an array: the path has the index");
+    CheckDuplicate("a = [{}, { b = 1, b = 2 }]", 1, 19, "The key a[1].b is already defined on line 1.",
+        "in the second element");
+    CheckDuplicate("a = {\n  b = 1,\n  b = 2,\n}", 3, 3, "The key a.b is already defined on line 2.",
+        "on separate lines");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentTables, Keys_DefinedOnce)
+{
+    // Arrange & Act & Assert
+    CheckDuplicate("a = 1\na = 2", 2, 1, "The key a is already defined on line 1.", "a key twice");
+    CheckDuplicate("a = 1\n\"a\" = 2", 2, 1, "The key a is already defined on line 1.", "bare and basic string");
+    CheckDuplicate("'a' = 1\n\"\\u0061\" = 2", 2, 1, "The key a is already defined on line 1.",
+        "literal string and an escape");
+    CheckDuplicate("\"a b\" = 1\n'a b' = 2", 2, 1, "The key \"a b\" is already defined on line 1.",
+        "a key that can't be bare is quoted in the message");
+    CheckDuplicate("\"\" = 1\n'' = 2", 2, 1, "The key \"\" is already defined on line 1.", "the empty key");
+    CheckDuplicate("[t]\na = 1\n  a = 2", 3, 3, "The key t.a is already defined on line 2.", "under a header");
+
+    CheckRoot("a = 1\n[t]\na = 2\n", TTable{ { "a", 1 }, { "t", TTable{ { "a", 2 } } } }, "the same key in two tables");
+    CheckRoot("A = 1\na = 2\n", TTable{ { "A", 1 }, { "a", 2 } }, "keys are case-sensitive");
 }
 //---------------------------------------------------------------------------
 
@@ -1164,6 +1810,8 @@ ASW_TEST(TTest_ASWToml_DocumentToText, RoundTrip_ByteForByte)
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentErrors, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentLookups, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentModel, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentParse, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentTables, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentToText, "Document")

@@ -36,6 +36,7 @@ limitations under the License.
 #include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Options.h"
+#include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
 #include "ASWToml_Value.h"
 //---------------------------------------------------------------------------
@@ -246,17 +247,25 @@ struct TDocModel
 // A TOML text, parsed into a model that keeps every byte of it: the tables in file order, each with its comments,
 // blank lines, keys and values as written (quoting, spacing, the form of each number and string, the layout of arrays
 // and inline tables, and each line's own line break). With the default options, ToText() writes a parsed text back
-// byte for byte. It keeps the options it was parsed with. Not thread-safe; copyable and movable.
+// byte for byte. Its values can be read by path (Find()) or as one table (GetRoot()). It keeps the options it was
+// parsed with. Not thread-safe; copyable and movable.
 /////////////////////////////////////////////////////////////////////////////
 class TASWTomlDocument
 {
 private:
     Detail::TDocModel m_Model;
     TASWTomlOptions m_Options; // Valid (TASWTomlOptions::Validate() accepts them)
+    TASWTomlValue m_Root; // The values of m_Model, as GetRoot() describes
 
 public:
     // An empty document with the default options: no keys, tables or byte order mark, so ToText() is empty
     TASWTomlDocument();
+
+    // The value at 'path': a table, an array, an element of an array (of an array of tables, e.g. products[1], or of
+    // an array value, e.g. ports[0]) or the value of a key; the root table for the root path. nullptr when there is no
+    // such value or the path isn't valid. An index needs an array: products.name is nullptr when products is an array
+    // of tables. The pointer is valid until the document is parsed again, changed or destroyed.
+    TASWTomlValue const* Find(TASWTomlPath const& path) const noexcept;
 
     // The line break new lines get with ELineEnding::Auto: the most common one of the text that was read (the one
     // found first in a tie), or the platform's (CRLF on Windows, LF elsewhere) when it had none
@@ -264,6 +273,11 @@ public:
 
     // The options the document was parsed with; the default ones for a new document
     TASWTomlOptions const& GetOptions() const noexcept;
+
+    // The whole document as a table (ETomlType::Table): each table with its keys in the order they are first defined
+    // in the text, however the table was written (by a header, by dotted keys, as an inline table, or only as part of
+    // a longer header), and each array of tables as an array of tables. An empty table for a new document.
+    TASWTomlValue const& GetRoot() const noexcept;
 
     // Whether the text that was read started with a UTF-8 byte order mark
     bool HasBom() const noexcept;
@@ -273,10 +287,16 @@ public:
     // and then nothing changes: InvalidOptions (see TASWTomlOptions::Validate()), UnsupportedEncoding (a UTF-16 or
     // UTF-32 byte order mark), InvalidUtf8 (at the first byte that isn't valid UTF-8, wherever it is), ParseFailed
     // (text that isn't TOML, e.g. a carriage return without a line feed), ValueOutOfRange (an integer outside the
-    // 64-bit range, or a float outside a double's), or NestingTooDeep (tables, arrays and inline tables inside one
-    // another deeper than Reading.MaxNestingDepth). An error in the text has its Line and Column (both 1-based, the
-    // column in characters, a byte order mark not counted). Reading.MaxFileSize limits only the files a load reads.
-    // Throws only std::bad_alloc, and then nothing changes either.
+    // 64-bit range, or a float outside a double's), NestingTooDeep (tables, arrays and inline tables inside one another
+    // deeper than Reading.MaxNestingDepth), or DuplicateKey (a key or table defined twice, which includes a header for
+    // a table that dotted keys or another header defined, dotted keys that add to a table a header defined, a key or
+    // table added to an inline table or an array value, and [[x]] for an x that isn't an array of tables). The whole
+    // text is read before the tables are checked, so DuplicateKey (and NestingTooDeep for a table under an array of
+    // tables) is reported only when the text has no other error. An error in the text has its Line and Column (both
+    // 1-based, the column in characters, a byte order mark not counted); DuplicateKey's are those of the second
+    // definition's first key part, and its message gives the path and the line of the first, e.g. The table server is
+    // already defined on line 3. Reading.MaxFileSize limits only the files a load reads. Throws only std::bad_alloc,
+    // and then nothing changes either.
     TASWTomlResult Parse(std::string_view text, TASWTomlOptions const& options = TASWTomlOptions());
 
     // The document as text, as its writing options say: a UTF-8 byte order mark (with EBomMode::Auto, when the text

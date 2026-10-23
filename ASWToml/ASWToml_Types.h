@@ -61,7 +61,7 @@ enum class ETomlCode : int
     InvalidUtf8 = 10, // The text isn't valid UTF-8
     ParseFailed = 11, // The text isn't valid TOML
     DuplicateKey = 12, // A key or table is defined twice, or a table is defined again as another kind of value
-    NestingTooDeep = 13, // Arrays and inline tables are nested deeper than the reading options' MaxNestingDepth
+    NestingTooDeep = 13, // Tables and arrays are nested deeper than the reading options' MaxNestingDepth
 
     // Errors of saving
     CreateFolderFailed = 14, // The file's folder doesn't exist and couldn't be created
