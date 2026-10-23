@@ -9,8 +9,10 @@ ASWToml is in development toward 1.0.0; the `develop` branch carries `1.0.0-dev.
 it has the project structure, the version (`ASWToml_Version.h`), the CMake target and package, the
 unit-test projects and CI, and the foundations the rest builds on: the shared result and message
 types (`ASWToml_Types.h`), the options (`ASWToml_Options.h`) and the file layer with its UTF-8 path
-conversions (`ASWToml_File.h`). Reading and writing TOML comes next. [CHANGELOG.md](CHANGELOG.md)
-lists what each change adds. The interface may change in any way until 1.0.0.
+conversions (`ASWToml_File.h`). It also has the TOML values: `TASWTomlValue` and the date and time
+types (`ASWToml_Value.h`), and the reading and writing of TOML's strings, numbers, booleans, dates
+and times. Reading and writing whole TOML documents comes next. [CHANGELOG.md](CHANGELOG.md) lists
+what each change adds. The interface may change in any way until 1.0.0.
 
 ## Design
 

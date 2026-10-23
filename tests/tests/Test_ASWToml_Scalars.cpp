@@ -32,10 +32,12 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <random>
 #include <string>
 #include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Scalars.h"
+#include "ASWToml_Utils.h"
 #include "ASWToml_Value.h"
 //---------------------------------------------------------------------------
 
@@ -62,12 +64,31 @@ using TStringVector = std::vector<std::string>;
 // Every EStringStyle
 TStringStyleVector const AllStyles = { EStringStyle::Auto, EStringStyle::Basic, EStringStyle::Literal };
 
+// The fuzz tests: the seed of the first random text or value, and how many of each
+constexpr std::uint32_t FuzzFirstSeed = 20261023;
+constexpr std::size_t FuzzTextCount = 20000;
+constexpr std::size_t FuzzValueCount = 20000;
+
 std::uint64_t Bits(double value) noexcept;
+bool CanBeWritten(TASWTomlValue const& value);
 std::chrono::year_month_day Date(int year, unsigned month, unsigned day);
+std::string Escaped(std::string const& text);
 std::string HexByte(unsigned char byte);
+std::string MutatedText(std::mt19937& generator);
+std::chrono::year_month_day RandomDate(std::mt19937& generator);
+double RandomFloat(std::mt19937& generator);
+std::int64_t RandomInteger(std::mt19937& generator);
+ASWToml::TASWTomlValueOptions RandomOptions(std::mt19937& generator);
+TASWTomlValue RandomScalar(std::mt19937& generator);
+std::string RandomString(std::mt19937& generator);
+std::string RandomText(std::mt19937& generator);
+TASWTomlLocalTime RandomTime(std::mt19937& generator);
+bool SameScalar(TASWTomlValue const& left, TASWTomlValue const& right);
 std::string ScalarText(TASWTomlValue const& value);
 TASWTomlLocalTime Time(int hour, int minute, int second, std::int64_t nanoseconds = 0);
 ASWToml::TASWTomlResult WriteDateTime(TASWTomlValue const& value, std::string& text);
+ASWToml::TASWTomlResult WriteScalar(TASWTomlValue const& value, std::string& text,
+    ASWToml::TASWTomlValueOptions const& options);
 
 //---------------------------------------------------------------------------
 /*
@@ -81,6 +102,32 @@ std::uint64_t Bits(double value) noexcept
 }
 //---------------------------------------------------------------------------
 /*
+    CanBeWritten
+
+    Whether the scalar 'value' can be written as TOML: every one but a string that isn't valid UTF-8, and a date or
+    time that isn't valid
+*/
+bool CanBeWritten(TASWTomlValue const& value)
+{
+    if (value.AsString() != nullptr)
+        return ASWToml::Detail::IsValidUtf8(*value.AsString());
+
+    if (value.AsOffsetDateTime() != nullptr)
+        return value.AsOffsetDateTime()->IsValid();
+
+    if (value.AsLocalDateTime() != nullptr)
+        return value.AsLocalDateTime()->IsValid();
+
+    if (value.AsLocalDate() != nullptr)
+        return TASWTomlLocalDateTime{ *value.AsLocalDate(), TASWTomlLocalTime() }.IsValid();
+
+    if (value.AsLocalTime() != nullptr)
+        return value.AsLocalTime()->IsValid();
+
+    return true;
+}
+//---------------------------------------------------------------------------
+/*
     Date
 
     The date 'year'-'month'-'day'
@@ -88,6 +135,30 @@ std::uint64_t Bits(double value) noexcept
 std::chrono::year_month_day Date(int year, unsigned month, unsigned day)
 {
     return std::chrono::year_month_day(std::chrono::year(year), std::chrono::month(month), std::chrono::day(day));
+}
+//---------------------------------------------------------------------------
+/*
+    Escaped
+
+    'text' for a message: printable ASCII as it is, a backslash as \\, and every other byte as \xHH
+*/
+std::string Escaped(std::string const& text)
+{
+    constexpr char Digits[] = "0123456789ABCDEF";
+    std::string escaped;
+
+    for (char const c : text)
+    {
+        unsigned char const byte = static_cast<unsigned char>(c);
+        if (byte == '\\')
+            escaped += "\\\\";
+        else if (byte >= 0x20 && byte < 0x7F)
+            escaped += c;
+        else
+            escaped += "\\x"s + Digits[byte >> 4] + Digits[byte & 0xF];
+    }
+
+    return escaped;
 }
 //---------------------------------------------------------------------------
 /*
@@ -100,6 +171,281 @@ std::string HexByte(unsigned char byte)
     constexpr char Digits[] = "0123456789ABCDEF";
 
     return "00"s + Digits[byte >> 4] + Digits[byte & 0xF];
+}
+//---------------------------------------------------------------------------
+/*
+    MutatedText
+
+    A valid scalar of a random kind with one to three random edits: a byte replaced, inserted or deleted, or the text
+    cut off
+*/
+std::string MutatedText(std::mt19937& generator)
+{
+    std::string const valid[] = {
+        "\"a\\tb\\u00E9\\U0001F600\\x41\\e\"", "'C:\\Users\\me'", "\"\"\"\nline\\\n   more\r\nend\"\"\"",
+        "'''a\r\n'b''c'''", "0x7FFFFFFFFFFFFFFF", "-9223372036854775808", "0o755", "0b1010", "1_000_000",
+        "3.14e-10", "-0.0", "+inf", "-nan", "5e-324", "1.7976931348623157e308", "true", "false",
+        "1979-05-27T07:32:00.999999-07:00", "1979-05-27 07:32Z", "1979-05-27t07:32:00", "2024-02-29", "23:59:60.5",
+        "07:32",
+    };
+    char const bytes[] = {
+        '0', '1', '9', '-', '+', ':', '.', '_', 'e', 'x', 'T', 'Z', ' ', '\t', '"', '\'', '\\', '\n', '\r', '#',
+        '\x7F', '\xC3', '\xFF', '\0',
+    };
+
+    std::string text = valid[generator() % (sizeof(valid) / sizeof(valid[0]))];
+    std::size_t const editCount = 1 + generator() % 3;
+
+    for (std::size_t i = 0; i < editCount; ++i)
+    {
+        std::uint32_t const edit = static_cast<std::uint32_t>(generator() % 4);
+        std::size_t const offset = generator() % (text.size() + 1);
+        char const byte = bytes[generator() % sizeof(bytes)];
+
+        if (edit == 0 && offset < text.size())
+            text[offset] = byte;
+        else if (edit == 1)
+            text.insert(offset, 1, byte);
+        else if (edit == 2 && offset < text.size())
+            text.erase(offset, 1);
+        else
+            text.resize(offset);
+    }
+
+    return text;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomDate
+
+    A random date: most of them real dates from year 0 to 9999, one in eight with fields that may be outside their
+    ranges (a year from -10 to 10009, a month from 0 to 14, a day from 0 to 33)
+*/
+std::chrono::year_month_day RandomDate(std::mt19937& generator)
+{
+    bool const wild = generator() % 8 == 0;
+    int const year = wild ? static_cast<int>(generator() % 10020) - 10 : static_cast<int>(generator() % 10000);
+    unsigned const month = static_cast<unsigned>(wild ? generator() % 15 : 1 + generator() % 12);
+    unsigned const day = static_cast<unsigned>(wild ? generator() % 34 : 1 + generator() % 28);
+
+    return Date(year, month, day);
+}
+//---------------------------------------------------------------------------
+/*
+    RandomFloat
+
+    A random double: a quarter of them 0, -0, the infinities, NaN, the smallest subnormal or the largest magnitudes,
+    the others any bits (so NaNs of either sign and subnormals too)
+*/
+double RandomFloat(std::mt19937& generator)
+{
+    if (generator() % 4 == 0)
+    {
+        double const specials[] = {
+            0.0, -0.0, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
+            std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::denorm_min(),
+            std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest(),
+        };
+
+        return specials[generator() % 8];
+    }
+
+    // Two calls, in this order, so a seed gives the same value everywhere
+    std::uint64_t bits = generator();
+    bits = (bits << 32) | generator();
+
+    return std::bit_cast<double>(bits);
+}
+//---------------------------------------------------------------------------
+/*
+    RandomInteger
+
+    A random 64-bit integer: a quarter of them the limits, 0, 1 or -1, the others any bits
+*/
+std::int64_t RandomInteger(std::mt19937& generator)
+{
+    if (generator() % 4 == 0)
+    {
+        std::int64_t const specials[] = {
+            std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max(), 0, 1, -1,
+        };
+
+        return specials[generator() % 5];
+    }
+
+    // Two calls, in this order, so a seed gives the same value everywhere
+    std::uint64_t bits = generator();
+    bits = (bits << 32) | generator();
+
+    return std::bit_cast<std::int64_t>(bits);
+}
+//---------------------------------------------------------------------------
+/*
+    RandomOptions
+
+    Value options with a random string style and integer base
+*/
+ASWToml::TASWTomlValueOptions RandomOptions(std::mt19937& generator)
+{
+    ASWToml::TASWTomlValueOptions options;
+    options.StringStyle = static_cast<EStringStyle>(generator() % 3);
+    options.IntegerBase = static_cast<EIntegerBase>(generator() % 5);
+
+    return options;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomScalar
+
+    A random scalar of a random type: a string, an integer, a float, a boolean, or a date or time (see RandomString(),
+    RandomInteger(), RandomFloat(), RandomDate() and RandomTime()), with an offset from -23:59 to +23:59, or one in
+    eight beyond it
+*/
+TASWTomlValue RandomScalar(std::mt19937& generator)
+{
+    switch (generator() % 8)
+    {
+        case 0:
+            return RandomString(generator);
+
+        case 1:
+            return RandomInteger(generator);
+
+        case 2:
+            return RandomFloat(generator);
+
+        case 3:
+            return generator() % 2 == 0;
+
+        case 4:
+        {
+            TASWTomlOffsetDateTime dateTime;
+            dateTime.Date = RandomDate(generator);
+            dateTime.Time = RandomTime(generator);
+
+            std::uint32_t const form = static_cast<std::uint32_t>(generator() % 8);
+            if (form == 0)
+                dateTime.Offset = std::chrono::minutes(24 * 60 + static_cast<int>(generator() % 100));
+            else if (form == 1)
+                dateTime.Offset = std::chrono::minutes(0);
+            else
+                dateTime.Offset = std::chrono::minutes(static_cast<int>(generator() % (2 * 1439 + 1)) - 1439);
+
+            return dateTime;
+        }
+
+        case 5:
+        {
+            TASWTomlLocalDateTime dateTime;
+            dateTime.Date = RandomDate(generator);
+            dateTime.Time = RandomTime(generator);
+
+            return dateTime;
+        }
+
+        case 6:
+            return RandomDate(generator);
+    }
+
+    return RandomTime(generator);
+}
+//---------------------------------------------------------------------------
+/*
+    RandomString
+
+    A random string of up to 8 pieces: letters, blanks, line breaks, quotes, backslashes, control characters and
+    UTF-8 characters; one in sixteen also gets bytes that aren't valid UTF-8
+*/
+std::string RandomString(std::mt19937& generator)
+{
+    std::string const pieces[] = {
+        "a", "Z", " ", "\t", "\n", "\r", "\r\n", "\"", "'", "''", "\"\"\"", "'''", "\\", "C:\\", "#", "\x1B", "\x7F",
+        std::string(1, '\0'), "\xC3\xA9", "\xE2\x82\xAC", "\xF0\x9F\x98\x80",
+    };
+    std::string const invalid[] = { "\xFF", "\xC3", "\xED\xA0\x80", "\xC0\xAF" };
+
+    std::string text;
+    std::size_t const count = generator() % 9;
+
+    for (std::size_t i = 0; i < count; ++i)
+        text += pieces[generator() % (sizeof(pieces) / sizeof(pieces[0]))];
+
+    if (generator() % 16 == 0)
+    {
+        std::size_t const offset = generator() % (text.size() + 1);
+        text.insert(offset, invalid[generator() % 4]);
+    }
+
+    return text;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomText
+
+    A random text of up to 10 pieces of TOML scalars and what may follow them, valid or not
+*/
+std::string RandomText(std::mt19937& generator)
+{
+    std::string const pieces[] = {
+        "0", "1", "7", "00", "12", "1979", "-", "+", "_", ".", ":", "e", "E", "x", "o", "b", "T", "t", "Z", "z", " ",
+        "\t", "inf", "nan", "true", "false", "\"", "'", "\"\"\"", "'''", "\\", "\\u", "\\U", "\\x", "\\e", "D800",
+        "\n", "\r\n", "\r", "#", ",", "]", "\xC3\xA9", "\xFF", "\xED\xA0\x80", std::string(1, '\0'), "1979-05-27",
+        "07:32:00", "99999999999999999999", "1e400",
+    };
+
+    std::string text;
+    std::size_t const count = generator() % 11;
+
+    for (std::size_t i = 0; i < count; ++i)
+        text += pieces[generator() % (sizeof(pieces) / sizeof(pieces[0]))];
+
+    return text;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomTime
+
+    A random time of day: most of them valid, with a fraction of 0, whole milliseconds, any nanoseconds, or a few
+    nanoseconds; one in eight with fields that may be outside their ranges (an hour up to 25, a minute up to 61, a
+    second up to 62, a fraction of one second)
+*/
+TASWTomlLocalTime RandomTime(std::mt19937& generator)
+{
+    bool const wild = generator() % 8 == 0;
+    int const hour = static_cast<int>(generator() % (wild ? 26 : 24));
+    int const minute = static_cast<int>(generator() % (wild ? 62 : 60));
+    int const second = static_cast<int>(generator() % (wild ? 63 : 61));
+
+    std::int64_t fraction = 0;
+    std::uint32_t const form = static_cast<std::uint32_t>(generator() % 4);
+    if (form == 1)
+        fraction = static_cast<std::int64_t>(generator() % 1000) * 1000000;
+    else if (form == 2)
+        fraction = static_cast<std::int64_t>(generator() % 1000000000);
+    else if (form == 3)
+        fraction = wild ? 1000000000 : static_cast<std::int64_t>(generator() % 1000);
+
+    return Time(hour, minute, second, fraction);
+}
+//---------------------------------------------------------------------------
+/*
+    SameScalar
+
+    Whether 'left' and 'right' are the same value: floats with the same bits, or both NaN with the same sign (a NaN's
+    other bits aren't written); the other types as operator== compares them
+*/
+bool SameScalar(TASWTomlValue const& left, TASWTomlValue const& right)
+{
+    double const* const leftFloat = left.AsFloat();
+    double const* const rightFloat = right.AsFloat();
+
+    if (leftFloat == nullptr || rightFloat == nullptr)
+        return left == right;
+
+    if (std::isnan(*leftFloat) && std::isnan(*rightFloat))
+        return std::signbit(*leftFloat) == std::signbit(*rightFloat);
+
+    return Bits(*leftFloat) == Bits(*rightFloat);
 }
 //---------------------------------------------------------------------------
 /*
@@ -166,6 +512,30 @@ ASWToml::TASWTomlResult WriteDateTime(TASWTomlValue const& value, std::string& t
     result.Message = "Not a date or time.";
 
     return result;
+}
+//---------------------------------------------------------------------------
+/*
+    WriteScalar
+
+    Writes the scalar 'value' to 'text' with the writer of its type, as 'options' ask; InvalidValue for an array or a
+    table
+*/
+ASWToml::TASWTomlResult WriteScalar(TASWTomlValue const& value, std::string& text,
+    ASWToml::TASWTomlValueOptions const& options)
+{
+    if (value.AsString() != nullptr)
+        return ASWToml::Detail::WriteString(*value.AsString(), text, options.StringStyle);
+
+    if (value.AsInteger() != nullptr)
+        ASWToml::Detail::WriteInteger(*value.AsInteger(), text, options.IntegerBase);
+    else if (value.AsFloat() != nullptr)
+        ASWToml::Detail::WriteFloat(*value.AsFloat(), text);
+    else if (value.AsBoolean() != nullptr)
+        ASWToml::Detail::WriteBoolean(*value.AsBoolean(), text);
+    else
+        return WriteDateTime(value, text);
+
+    return ASWToml::TASWTomlResult();
 }
 //---------------------------------------------------------------------------
 
@@ -1980,6 +2350,191 @@ ASW_TEST(TTest_ASWToml_DateTimeTexts, WriteOffsetDateTime_Offsets)
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_ScalarFuzz
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_ScalarFuzz::TTest_ASWToml_ScalarFuzz()
+    : inherited("ASWToml_ScalarFuzz_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_ScalarFuzz::~TTest_ASWToml_ScalarFuzz()
+{
+}
+//---------------------------------------------------------------------------
+bool TTest_ASWToml_ScalarFuzz::CheckReadOrFail(std::string const& text, std::size_t start,
+    ASWToml::TASWTomlValueOptions const& options, std::string const& name, std::source_location loc)
+{
+    TASWTomlValue value = "unchanged";
+    std::size_t position = start;
+
+    ASWToml::TASWTomlResult const read = ASWToml::Detail::ReadScalar(text, position, value);
+    if (!read.IsOk())
+    {
+        bool const known = read.Code == ETomlCode::ParseFailed || read.Code == ETomlCode::InvalidUtf8 ||
+            read.Code == ETomlCode::ValueOutOfRange;
+        bool const inText = position == start || (position > start && position <= text.size());
+
+        if (!known || read.Message.empty() || read.Line == 0 || read.Column == 0 || !inText ||
+            !(value == TASWTomlValue("unchanged")))
+        {
+            CheckTrue(false, name + ": a text that doesn't read should fail with ParseFailed, InvalidUtf8 or "
+                "ValueOutOfRange, a message, a line and a column, and leave the value as it was and the position in "
+                "the text (" + ASWToml::ToString(read.Code) + " at " + std::to_string(position) + ": " + read.Message +
+                ")", loc);
+        }
+
+        return false;
+    }
+
+    std::string written;
+    std::string again;
+    TASWTomlValue readBack;
+    std::size_t end = 0;
+
+    ASWToml::TASWTomlResult const write = WriteScalar(value, written, options);
+    ASWToml::TASWTomlResult const reread = ASWToml::Detail::ReadScalar(written, end, readBack);
+    ASWToml::TASWTomlResult const rewrite = WriteScalar(readBack, again, options);
+
+    if (position <= start || position > text.size() || !write.IsOk() || !reread.IsOk() || !rewrite.IsOk() ||
+        end != written.size() || !SameScalar(value, readBack) || again != written)
+    {
+        CheckTrue(false, name + ": the value read (up to offset " + std::to_string(position) + ") should be written as "
+            "a text (\"" + Escaped(written) + "\") that reads back as the same value and is written the same again" +
+            write.Message + reread.Message + rewrite.Message, loc);
+    }
+
+    return true;
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarFuzz::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarFuzz::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarFuzz::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ScalarFuzz::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ScalarFuzz, MutatedTexts_ReadOrFailCleanly)
+{
+    // Arrange
+    std::size_t accepted = 0;
+
+    for (std::size_t i = 0; i < FuzzTextCount; ++i)
+    {
+        std::uint32_t const seed = FuzzFirstSeed + static_cast<std::uint32_t>(i);
+        std::mt19937 generator(seed);
+        ASWToml::TASWTomlValueOptions const options = RandomOptions(generator);
+        std::string const text = MutatedText(generator);
+
+        // Act & Assert
+        if (CheckReadOrFail(text, 0, options, "seed " + std::to_string(seed) + ", \"" + Escaped(text) + "\""))
+            ++accepted;
+    }
+
+    // Assert
+    CheckTrue(accepted > 0, "some mutated texts should read");
+    CheckTrue(accepted < FuzzTextCount, "some mutated texts should fail");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ScalarFuzz, RandomTexts_ReadOrFailCleanly)
+{
+    // Arrange
+    std::size_t accepted = 0;
+
+    for (std::size_t i = 0; i < FuzzTextCount; ++i)
+    {
+        std::uint32_t const seed = FuzzFirstSeed + static_cast<std::uint32_t>(i);
+        std::mt19937 generator(seed);
+        ASWToml::TASWTomlValueOptions const options = RandomOptions(generator);
+        std::string const text = RandomText(generator);
+
+        // From any offset, or one past the end
+        std::size_t const start = generator() % (text.size() + 2);
+        std::string const name = "seed " + std::to_string(seed) + ", \"" + Escaped(text) + "\" from " +
+            std::to_string(start);
+
+        // Act & Assert
+        if (CheckReadOrFail(text, start, options, name))
+            ++accepted;
+    }
+
+    // Assert
+    CheckTrue(accepted > 0, "some random texts should read");
+    CheckTrue(accepted < FuzzTextCount, "some random texts should fail");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ScalarFuzz, RandomValues_ReadBack)
+{
+    // Arrange
+    // What may come before and after a value in a document
+    TStringVector const prefixes = { "", "a = ", "[1, ", "{ x = 1, y = " };
+    TStringVector const suffixes = { "", " # comment", ",", "]", " }", "\n", "\r\n", " " };
+    std::size_t writtenCount = 0;
+
+    for (std::size_t i = 0; i < FuzzValueCount; ++i)
+    {
+        std::uint32_t const seed = FuzzFirstSeed + static_cast<std::uint32_t>(i);
+        std::mt19937 generator(seed);
+        ASWToml::TASWTomlValueOptions const options = RandomOptions(generator);
+        TASWTomlValue const value = RandomScalar(generator);
+        std::string const& prefix = prefixes[generator() % prefixes.size()];
+        std::string const& suffix = suffixes[generator() % suffixes.size()];
+        std::string const name = "seed " + std::to_string(seed) + ", " + ASWToml::ToString(value.GetType());
+        std::string text = prefix;
+
+        // Act
+        ASWToml::TASWTomlResult const write = WriteScalar(value, text, options);
+
+        // Assert
+        bool const canBeWritten = CanBeWritten(value);
+        if (!write.IsOk())
+        {
+            if (canBeWritten || write.Code != ETomlCode::InvalidValue || write.Message.empty() || text != prefix)
+            {
+                CheckTrue(false, name + ": only a value that isn't valid should fail, with InvalidValue and a "
+                    "message, appending nothing (" + write.Message + ")");
+            }
+
+            continue;
+        }
+
+        ++writtenCount;
+        std::size_t const end = text.size();
+        text += suffix;
+
+        TASWTomlValue readBack;
+        std::size_t position = prefix.size();
+        ASWToml::TASWTomlResult const read = ASWToml::Detail::ReadScalar(text, position, readBack);
+
+        if (!canBeWritten || !read.IsOk() || position != end || !SameScalar(value, readBack))
+        {
+            CheckTrue(false, name + ": the text \"" + Escaped(text) + "\" should read back as the same value, up to "
+                "the suffix (" + read.Message + ")");
+        }
+    }
+
+    // Assert
+    CheckTrue(writtenCount > FuzzValueCount / 2, "most random values should be written");
+    CheckTrue(writtenCount < FuzzValueCount, "some random values should be invalid");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_ScalarKinds
 /////////////////////////////////////////////////////////////////////////////
 
@@ -2155,5 +2710,6 @@ ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DateTimeTexts, "Sca
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Floats, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Integers, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Keys, "Scalars")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_ScalarFuzz, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_ScalarKinds, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Strings, "Scalars")

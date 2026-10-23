@@ -313,6 +313,39 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_ScalarFuzz
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_ScalarFuzz : public TAutoTestGroup<TTest_ASWToml_ScalarFuzz>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_ScalarFuzz> inherited;
+
+private:
+    // Checks what ReadScalar() does with 'text' from 'start' (a random or mutated text, 'name' in a message): either
+    // it reads a value that ends after 'start' and within the text, and that is written (as 'options' ask) as a text
+    // that reads back as the same value and is written the same again; or it fails with ParseFailed, InvalidUtf8 or
+    // ValueOutOfRange, a message, a line and a column, leaving the value as it was and the position within the text.
+    // Returns whether it read a value.
+    bool CheckReadOrFail(std::string const& text, std::size_t start, ASWToml::TASWTomlValueOptions const& options,
+        std::string const& name, std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_MutatedTexts_ReadOrFailCleanly();
+    void Test_RandomTexts_ReadOrFailCleanly();
+    void Test_RandomValues_ReadBack();
+
+public:
+    TTest_ASWToml_ScalarFuzz();
+    ~TTest_ASWToml_ScalarFuzz() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_ScalarKinds
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_ScalarKinds : public TAutoTestGroup<TTest_ASWToml_ScalarKinds>
