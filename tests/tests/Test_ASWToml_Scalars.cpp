@@ -26,11 +26,16 @@ limitations under the License.
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
+#include <bit>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Scalars.h"
+#include "ASWToml_Value.h"
 //---------------------------------------------------------------------------
 
 namespace ASWUnitTests
@@ -41,8 +46,10 @@ namespace
 
 using namespace std::string_literals;
 
+using ASWToml::EIntegerBase;
 using ASWToml::EStringStyle;
 using ASWToml::ETomlCode;
+using ASWToml::TASWTomlValue;
 
 using TStringStyleVector = std::vector<EStringStyle>;
 using TStringVector = std::vector<std::string>;
@@ -50,8 +57,19 @@ using TStringVector = std::vector<std::string>;
 // Every EStringStyle
 TStringStyleVector const AllStyles = { EStringStyle::Auto, EStringStyle::Basic, EStringStyle::Literal };
 
+std::uint64_t Bits(double value) noexcept;
 std::string HexByte(unsigned char byte);
 
+//---------------------------------------------------------------------------
+/*
+    Bits
+
+    The bits of 'value', so two doubles compare exactly: -0.0 isn't 0.0, and a NaN equals a NaN with the same bits
+*/
+std::uint64_t Bits(double value) noexcept
+{
+    return std::bit_cast<std::uint64_t>(value);
+}
 //---------------------------------------------------------------------------
 /*
     HexByte
@@ -702,8 +720,581 @@ ASW_TEST(TTest_ASWToml_Keys, WriteKey_RejectsInvalidUtf8)
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_Integers
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_Integers::TTest_ASWToml_Integers()
+    : inherited("ASWToml_Integers_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_Integers::~TTest_ASWToml_Integers()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Integers::CheckReadFails(std::string const& text, ETomlCode code, std::size_t offset,
+    std::string const& expectedText, std::string const& msg, std::source_location loc)
+{
+    TASWTomlValue value = "unchanged";
+    std::size_t position = 0;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadNumber(text, position, value);
+
+    CheckEquals(code, result.Code, msg + ": the code", loc);
+    CheckEquals(offset, position, msg + ": the position should be the error's offset", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message should name the problem", loc);
+    CheckTrue(value == TASWTomlValue("unchanged"), msg + ": the value should be unchanged", loc);
+    CheckTrue(result.Line >= 1 && result.Column >= 1, msg + ": the line and column should be set", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Integers::CheckReads(std::string const& text, std::int64_t expected, std::string const& msg,
+    std::source_location loc)
+{
+    CheckReadsUpTo(text, 0, text.size(), expected, msg, loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Integers::CheckReadsUpTo(std::string const& text, std::size_t start, std::size_t end,
+    std::int64_t expected, std::string const& msg, std::source_location loc)
+{
+    TASWTomlValue value;
+    std::size_t position = start;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadNumber(text, position, value);
+
+    CheckTrue(result.IsOk(), msg + ": the number should read: " + result.Message, loc);
+    CheckTrue(value.AsInteger() != nullptr, msg + ": the value should be an integer", loc);
+    CheckEquals(expected, value.AsInteger() != nullptr ? *value.AsInteger() : -1, msg + ": the value", loc);
+    CheckEquals(end, position, msg + ": the position should be after the number", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Integers::CheckWrites(std::int64_t value, EIntegerBase base, std::string const& expected,
+    std::string const& msg, std::source_location loc)
+{
+    std::string text;
+    ASWToml::Detail::WriteInteger(value, text, base);
+
+    CheckEquals(expected, text, msg + ": the text", loc);
+    CheckReads(text, value, msg + ": read back", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Integers::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Integers::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Integers::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Integers::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, ReadNumber_DecimalIntegers)
+{
+    // Arrange & Act & Assert
+    CheckReads("0", 0, "zero");
+    CheckReads("+0", 0, "plus zero");
+    CheckReads("-0", 0, "minus zero is zero");
+    CheckReads("42", 42, "a number");
+    CheckReads("+99", 99, "a plus sign");
+    CheckReads("-17", -17, "a minus sign");
+    CheckReads("1_000", 1000, "an underscore");
+    CheckReads("5_349_221", 5349221, "underscores");
+    CheckReads("1_2_3_4_5", 12345, "an underscore between every digit");
+    CheckReads("9223372036854775807", std::numeric_limits<std::int64_t>::max(), "the largest 64-bit integer");
+    CheckReads("9_223_372_036_854_775_807", std::numeric_limits<std::int64_t>::max(), "the largest, with underscores");
+    CheckReads("-9223372036854775808", std::numeric_limits<std::int64_t>::min(), "the smallest 64-bit integer");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, ReadNumber_PrefixedIntegers)
+{
+    // Arrange & Act & Assert
+    CheckReads("0xDEADBEEF", 0xDEADBEEF, "hexadecimal in upper case");
+    CheckReads("0xdeadbeef", 0xDEADBEEF, "hexadecimal in lower case");
+    CheckReads("0xdead_beef", 0xDEADBEEF, "hexadecimal with an underscore");
+    CheckReads("0x00987", 0x987, "hexadecimal with leading zeros");
+    CheckReads("0x0", 0, "hexadecimal zero");
+    CheckReads("0x7FFFFFFFFFFFFFFF", std::numeric_limits<std::int64_t>::max(), "the largest in hexadecimal");
+    CheckReads("0x00000000000000000000001", 1, "more leading zeros than 64 bits");
+    CheckReads("0o01234567", 01234567, "octal");
+    CheckReads("0o755", 0755, "octal permissions");
+    CheckReads("0o7_6_5", 0765, "octal with underscores");
+    CheckReads("0o777777777777777777777", std::numeric_limits<std::int64_t>::max(), "the largest in octal");
+    CheckReads("0b11010110", 0xD6, "binary");
+    CheckReads("0b1_0_1", 5, "binary with underscores");
+    CheckReads("0b0", 0, "binary zero");
+    CheckReads("0b" + std::string(63, '1'), std::numeric_limits<std::int64_t>::max(), "the largest in binary");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, ReadNumber_QuotesLongNumbersInMessages)
+{
+    // Arrange
+    // 50 digits and a letter: the message quotes the first 40 characters
+    std::string const text = std::string(50, '1') + "x";
+
+    // Act & Assert
+    CheckReadFails(text, ETomlCode::ParseFailed, 50, "The number \"" + std::string(40, '1') + "\"... isn't valid: "
+        "unexpected 'x'.", "a long number");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, ReadNumber_RejectsInvalidIntegers)
+{
+    // Arrange & Act & Assert
+    // toml-test's invalid integers, each at the character that breaks the grammar
+    std::string const underscore = "an underscore must be between two digits";
+    std::string const sign = "a hexadecimal, octal or binary integer can't have a sign";
+    std::string const leadingZero = "a decimal number can't start with 0 followed by more digits";
+    std::string const digitFirst = "a digit, inf or nan must come first";
+
+    CheckReadFails("0B0", ETomlCode::ParseFailed, 1, "unexpected 'B'", "a capital B");
+    CheckReadFails("0X1", ETomlCode::ParseFailed, 1, "unexpected 'X'", "a capital X");
+    CheckReadFails("0O0", ETomlCode::ParseFailed, 1, "unexpected 'O'", "a capital O");
+    CheckReadFails("--99", ETomlCode::ParseFailed, 1, digitFirst, "two minus signs");
+    CheckReadFails("++99", ETomlCode::ParseFailed, 1, digitFirst, "two plus signs");
+    CheckReadFails("1__23", ETomlCode::ParseFailed, 1, underscore, "two underscores");
+    CheckReadFails("0b", ETomlCode::ParseFailed, 2, "a binary digit must follow 0b", "0b alone");
+    CheckReadFails("0x", ETomlCode::ParseFailed, 2, "a hexadecimal digit must follow 0x", "0x alone");
+    CheckReadFails("0o", ETomlCode::ParseFailed, 2, "an octal digit must follow 0o", "0o alone");
+    CheckReadFails("0b0012", ETomlCode::ParseFailed, 5, "'2' isn't a binary digit", "2 in binary");
+    CheckReadFails("0xaafz", ETomlCode::ParseFailed, 5, "'z' isn't a hexadecimal digit", "z in hexadecimal");
+    CheckReadFails("0xgabba00f1", ETomlCode::ParseFailed, 2, "a hexadecimal digit must follow 0x", "g after 0x");
+    CheckReadFails("0x-1", ETomlCode::ParseFailed, 2, "a hexadecimal digit must follow 0x", "a sign after 0x");
+    CheckReadFails("0o778", ETomlCode::ParseFailed, 4, "'8' isn't an octal digit", "8 in octal");
+    CheckReadFails("_123", ETomlCode::ParseFailed, 0, underscore, "a leading underscore");
+    CheckReadFails("_0b1", ETomlCode::ParseFailed, 0, underscore, "a leading underscore before 0b");
+    CheckReadFails("_0x1", ETomlCode::ParseFailed, 0, underscore, "a leading underscore before 0x");
+    CheckReadFails("_0o1", ETomlCode::ParseFailed, 0, underscore, "a leading underscore before 0o");
+    CheckReadFails("01", ETomlCode::ParseFailed, 1, leadingZero, "a leading zero");
+    CheckReadFails("00", ETomlCode::ParseFailed, 1, leadingZero, "two zeros");
+    CheckReadFails("0_0", ETomlCode::ParseFailed, 1, leadingZero, "zeros with an underscore");
+    CheckReadFails("-01", ETomlCode::ParseFailed, 2, leadingZero, "a leading zero after a minus sign");
+    CheckReadFails("+01", ETomlCode::ParseFailed, 2, leadingZero, "a leading zero after a plus sign");
+    CheckReadFails("+0_1", ETomlCode::ParseFailed, 2, leadingZero, "a leading zero and an underscore");
+    CheckReadFails("-0b11010110", ETomlCode::ParseFailed, 0, sign, "negative binary");
+    CheckReadFails("-0xff", ETomlCode::ParseFailed, 0, sign, "negative hexadecimal");
+    CheckReadFails("-0o755", ETomlCode::ParseFailed, 0, sign, "negative octal");
+    CheckReadFails("+0b11010110", ETomlCode::ParseFailed, 0, sign, "positive binary");
+    CheckReadFails("+0xff", ETomlCode::ParseFailed, 0, sign, "positive hexadecimal");
+    CheckReadFails("+0o755", ETomlCode::ParseFailed, 0, sign, "positive octal");
+    CheckReadFails("123_", ETomlCode::ParseFailed, 3, underscore, "a trailing underscore");
+    CheckReadFails("0b1_", ETomlCode::ParseFailed, 3, underscore, "a trailing underscore in binary");
+    CheckReadFails("0x1_", ETomlCode::ParseFailed, 3, underscore, "a trailing underscore in hexadecimal");
+    CheckReadFails("0o1_", ETomlCode::ParseFailed, 3, underscore, "a trailing underscore in octal");
+    CheckReadFails("0b_1", ETomlCode::ParseFailed, 2, underscore, "an underscore after 0b");
+    CheckReadFails("0x_1", ETomlCode::ParseFailed, 2, underscore, "an underscore after 0x");
+    CheckReadFails("0o_1", ETomlCode::ParseFailed, 2, underscore, "an underscore after 0o");
+    CheckReadFails("42abc", ETomlCode::ParseFailed, 2, "unexpected 'a'", "letters after the digits");
+    CheckReadFails("1-2", ETomlCode::ParseFailed, 1, "unexpected '-'", "a minus sign after a digit");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, ReadNumber_RejectsOutOfRangeIntegers)
+{
+    // Arrange & Act & Assert
+    // Reported at the start of the number
+    std::string const outside = "is outside the 64-bit range, -9223372036854775808 to 9223372036854775807.";
+    std::string const larger = "is larger than the largest 64-bit integer, 0x7FFFFFFFFFFFFFFF.";
+
+    CheckReadFails("9223372036854775808", ETomlCode::ValueOutOfRange, 0, "The integer \"9223372036854775808\" " +
+        outside, "one more than the largest");
+    CheckReadFails("-9223372036854775809", ETomlCode::ValueOutOfRange, 0, outside, "one less than the smallest");
+    CheckReadFails("99999999999999999999999", ETomlCode::ValueOutOfRange, 0, outside, "far more than the largest");
+    CheckReadFails("0x8000000000000000", ETomlCode::ValueOutOfRange, 0, larger, "2^63 in hexadecimal");
+    CheckReadFails("0xFFFFFFFFFFFFFFFF", ETomlCode::ValueOutOfRange, 0, larger, "2^64 - 1 in hexadecimal");
+    CheckReadFails("0o1000000000000000000000", ETomlCode::ValueOutOfRange, 0, larger, "2^63 in octal");
+    CheckReadFails("0b1" + std::string(63, '0'), ETomlCode::ValueOutOfRange, 0, larger, "2^63 in binary");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, ReadNumber_RejectsTextThatIsNotANumber)
+{
+    // Arrange
+    TStringVector const texts = { "", "#", " 1", "\"1\"", "[1]" };
+
+    for (std::string const& text : texts)
+    {
+        // Act & Assert
+        CheckReadFails(text, ETomlCode::ParseFailed, 0, "A number must start with a digit, '+', '-', inf or nan.",
+            "\"" + text + "\"");
+    }
+
+    // Arrange
+    TASWTomlValue value = "unchanged";
+    std::size_t position = 9;
+
+    // Act
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadNumber("1", position, value);
+
+    // Assert
+    CheckEquals(ETomlCode::ParseFailed, result.Code, "a position past the end should fail");
+    CheckEquals(std::size_t(9), position, "a position past the end should stay");
+    CheckTrue(value == TASWTomlValue("unchanged"), "a position past the end should leave the value");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, ReadNumber_ReportsLineAndColumn)
+{
+    // Arrange
+    std::string const text = "a = 1\nb = 1__2";
+    TASWTomlValue value;
+    std::size_t position = 10;
+
+    // Act
+    ASWToml::TASWTomlResult result = ASWToml::Detail::ReadNumber(text, position, value);
+
+    // Assert
+    CheckEquals(ETomlCode::ParseFailed, result.Code, "1__2 should fail");
+    CheckEquals(std::size_t(11), position, "the position should be the first underscore's");
+    CheckEquals(std::size_t(2), result.Line, "the underscore's line");
+    CheckEquals(std::size_t(6), result.Column, "the underscore's column");
+
+    // Arrange
+    // A number out of range is reported where it starts
+    std::string const outOfRange = "a = 1\r\nb = 99999999999999999999";
+    position = 11;
+
+    // Act
+    result = ASWToml::Detail::ReadNumber(outOfRange, position, value);
+
+    // Assert
+    CheckEquals(ETomlCode::ValueOutOfRange, result.Code, "the number should be out of range");
+    CheckEquals(std::size_t(11), position, "the position should be unchanged");
+    CheckEquals(std::size_t(2), result.Line, "the number's line");
+    CheckEquals(std::size_t(5), result.Column, "the number's column");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, ReadNumber_StopsAtTheEndOfItsRun)
+{
+    // Arrange & Act & Assert
+    // What follows the number is the parser's to check, e.g. " the ultimate answer?" (toml-test's text-after-integer)
+    CheckReadsUpTo("answer = 42 the ultimate answer?", 9, 11, 42, "a space after the number");
+    CheckReadsUpTo("[1,2]", 1, 2, 1, "a comma");
+    CheckReadsUpTo("x=-7}", 2, 4, -7, "a closing brace");
+    CheckReadsUpTo("3#c", 0, 1, 3, "a comment");
+    CheckReadsUpTo("a = 0x1F]\n", 4, 8, 31, "a closing bracket");
+    CheckReadsUpTo("a = 1\r\n", 4, 5, 1, "a line break");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, WriteInteger_AppendsToText)
+{
+    // Arrange
+    std::string text = "a = ";
+
+    // Act
+    ASWToml::Detail::WriteInteger(-5, text, EIntegerBase::Auto);
+
+    // Assert
+    CheckEquals("a = -5"s, text, "the integer should be appended to the text");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Integers, WriteInteger_Bases)
+{
+    // Arrange
+    std::int64_t const largest = std::numeric_limits<std::int64_t>::max();
+    std::int64_t const smallest = std::numeric_limits<std::int64_t>::min();
+
+    // Act & Assert
+    CheckWrites(0, EIntegerBase::Auto, "0", "zero");
+    CheckWrites(255, EIntegerBase::Auto, "255", "Auto is decimal");
+    CheckWrites(255, EIntegerBase::Decimal, "255", "decimal");
+    CheckWrites(255, EIntegerBase::Hexadecimal, "0xFF", "hexadecimal, in upper case");
+    CheckWrites(0xABCDEF, EIntegerBase::Hexadecimal, "0xABCDEF", "every hexadecimal letter in upper case");
+    CheckWrites(255, EIntegerBase::Octal, "0o377", "octal");
+    CheckWrites(255, EIntegerBase::Binary, "0b11111111", "binary");
+    CheckWrites(0, EIntegerBase::Hexadecimal, "0x0", "zero in hexadecimal");
+    CheckWrites(0, EIntegerBase::Binary, "0b0", "zero in binary");
+    CheckWrites(largest, EIntegerBase::Decimal, "9223372036854775807", "the largest in decimal");
+    CheckWrites(largest, EIntegerBase::Hexadecimal, "0x7FFFFFFFFFFFFFFF", "the largest in hexadecimal");
+    CheckWrites(largest, EIntegerBase::Octal, "0o777777777777777777777", "the largest in octal");
+    CheckWrites(largest, EIntegerBase::Binary, "0b" + std::string(63, '1'), "the largest in binary");
+    CheckWrites(smallest, EIntegerBase::Hexadecimal, "-9223372036854775808", "the smallest, always decimal");
+    CheckWrites(-1, EIntegerBase::Binary, "-1", "a negative number in binary is decimal");
+    CheckWrites(-255, EIntegerBase::Octal, "-255", "a negative number in octal is decimal");
+    CheckWrites(255, static_cast<EIntegerBase>(9), "255", "a base that isn't an EIntegerBase is decimal");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_Floats
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_Floats::TTest_ASWToml_Floats()
+    : inherited("ASWToml_Floats_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_Floats::~TTest_ASWToml_Floats()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Floats::CheckReadFails(std::string const& text, ETomlCode code, std::size_t offset,
+    std::string const& expectedText, std::string const& msg, std::source_location loc)
+{
+    TASWTomlValue value = "unchanged";
+    std::size_t position = 0;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadNumber(text, position, value);
+
+    CheckEquals(code, result.Code, msg + ": the code", loc);
+    CheckEquals(offset, position, msg + ": the position should be the error's offset", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message should name the problem", loc);
+    CheckTrue(value == TASWTomlValue("unchanged"), msg + ": the value should be unchanged", loc);
+    CheckTrue(result.Line >= 1 && result.Column >= 1, msg + ": the line and column should be set", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Floats::CheckReads(std::string const& text, double expected, std::string const& msg,
+    std::source_location loc)
+{
+    TASWTomlValue value;
+    std::size_t position = 0;
+
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadNumber(text, position, value);
+
+    CheckTrue(result.IsOk(), msg + ": the number should read: " + result.Message, loc);
+    CheckTrue(value.AsFloat() != nullptr, msg + ": the value should be a float", loc);
+    CheckEquals(Bits(expected), value.AsFloat() != nullptr ? Bits(*value.AsFloat()) : 0,
+        msg + ": the value's bits", loc);
+    CheckEquals(text.size(), position, msg + ": the position should be after the number", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Floats::CheckWrites(double value, std::string const& expected, std::string const& msg,
+    std::source_location loc)
+{
+    std::string text;
+    ASWToml::Detail::WriteFloat(value, text);
+
+    CheckEquals(expected, text, msg + ": the text", loc);
+    CheckReads(text, value, msg + ": read back", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Floats::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Floats::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Floats::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_Floats::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Floats, ReadNumber_Floats)
+{
+    // Arrange & Act & Assert
+    CheckReads("+1.0", 1.0, "a plus sign");
+    CheckReads("3.1415", 3.1415, "a fraction");
+    CheckReads("-0.01", -0.01, "a minus sign");
+    CheckReads("5e+22", 5e+22, "an exponent with a plus sign");
+    CheckReads("1e06", 1e06, "an exponent with a leading zero");
+    CheckReads("-2E-2", -2E-2, "a capital E");
+    CheckReads("6.626e-34", 6.626e-34, "a fraction and an exponent");
+    CheckReads("3e2", 3e2, "an exponent without a fraction");
+    CheckReads("3E+2", 3E+2, "a capital E and a plus sign");
+    CheckReads("3e0", 3.0, "a zero exponent");
+    CheckReads("9_224_617.445_991_228_313", 9224617.445991228313, "underscores in both parts");
+    CheckReads("1_000.0_1e1_0", 1000.01e10, "underscores in every part");
+    CheckReads("9_007_199_254_740_991.0", 9007199254740991.0, "the largest safe integer");
+    CheckReads("0.0", 0.0, "zero");
+    CheckReads("+0.0", 0.0, "plus zero");
+    CheckReads("-0.0", -0.0, "minus zero keeps its sign");
+    CheckReads("0e0", 0.0, "zero with an exponent");
+    CheckReads("1.7976931348623157e308", std::numeric_limits<double>::max(), "the largest double");
+    CheckReads("4.9e-324", std::numeric_limits<double>::denorm_min(), "the smallest double");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Floats, ReadNumber_InfAndNan)
+{
+    // Arrange
+    double const infinity = std::numeric_limits<double>::infinity();
+    double const nan = std::numeric_limits<double>::quiet_NaN();
+
+    // Act & Assert
+    CheckReads("inf", infinity, "inf");
+    CheckReads("+inf", infinity, "+inf");
+    CheckReads("-inf", -infinity, "-inf");
+    CheckReads("nan", nan, "nan");
+    CheckReads("+nan", nan, "+nan");
+    CheckReads("-nan", std::copysign(nan, -1.0), "-nan keeps its sign bit");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Floats, ReadNumber_RejectsInvalidFloats)
+{
+    // Arrange & Act & Assert
+    // toml-test's invalid floats, each at the character that breaks the grammar
+    std::string const underscore = "an underscore must be between two digits";
+    std::string const leadingZero = "a decimal number can't start with 0 followed by more digits";
+    std::string const digitFirst = "a digit, inf or nan must come first";
+    std::string const fraction = "a digit must follow the decimal point";
+    std::string const exponent = "the exponent needs digits";
+
+    CheckReadFails("0..1", ETomlCode::ParseFailed, 2, fraction, "two dots");
+    CheckReadFails("0.1.2", ETomlCode::ParseFailed, 3, "unexpected '.'", "a second fraction");
+    CheckReadFails("1e2.3", ETomlCode::ParseFailed, 3, "unexpected '.'", "a fraction after the exponent");
+    CheckReadFails("1.e2", ETomlCode::ParseFailed, 2, fraction, "no digit between the dot and the exponent");
+    CheckReadFails("3.e+20", ETomlCode::ParseFailed, 2, fraction, "no digit before a signed exponent");
+    CheckReadFails("1ee2", ETomlCode::ParseFailed, 2, exponent, "two e's");
+    CheckReadFails("1e2e3", ETomlCode::ParseFailed, 3, "unexpected 'e'", "two exponents");
+    CheckReadFails("1e__23", ETomlCode::ParseFailed, 2, underscore, "two underscores in the exponent");
+    CheckReadFails("1e_23", ETomlCode::ParseFailed, 2, underscore, "an underscore starting the exponent");
+    CheckReadFails("1e23_", ETomlCode::ParseFailed, 4, underscore, "an underscore ending the exponent");
+    CheckReadFails("1_e2", ETomlCode::ParseFailed, 1, underscore, "an underscore before the e");
+    CheckReadFails("1.2_e2", ETomlCode::ParseFailed, 3, underscore, "an underscore after the fraction");
+    CheckReadFails("Inf", ETomlCode::ParseFailed, 0, digitFirst, "Inf in capitals");
+    CheckReadFails("in", ETomlCode::ParseFailed, 0, digitFirst, "in");
+    CheckReadFails("+in", ETomlCode::ParseFailed, 1, digitFirst, "+in");
+    CheckReadFails("-in", ETomlCode::ParseFailed, 1, digitFirst, "-in");
+    CheckReadFails("in_f", ETomlCode::ParseFailed, 0, digitFirst, "in_f");
+    CheckReadFails("infinity", ETomlCode::ParseFailed, 0, digitFirst, "infinity");
+    CheckReadFails("NaN", ETomlCode::ParseFailed, 0, digitFirst, "NaN in capitals");
+    CheckReadFails("na", ETomlCode::ParseFailed, 0, digitFirst, "na");
+    CheckReadFails("+na", ETomlCode::ParseFailed, 1, digitFirst, "+na");
+    CheckReadFails("-na", ETomlCode::ParseFailed, 1, digitFirst, "-na");
+    CheckReadFails("na_n", ETomlCode::ParseFailed, 0, digitFirst, "na_n");
+    CheckReadFails(".12345", ETomlCode::ParseFailed, 0, digitFirst, "a leading dot");
+    CheckReadFails("-.12345", ETomlCode::ParseFailed, 1, digitFirst, "a leading dot after a minus sign");
+    CheckReadFails("+.12345", ETomlCode::ParseFailed, 1, digitFirst, "a leading dot after a plus sign");
+    CheckReadFails("_1.2", ETomlCode::ParseFailed, 0, underscore, "a leading underscore");
+    CheckReadFails("03.14", ETomlCode::ParseFailed, 1, leadingZero, "a leading zero");
+    CheckReadFails("-03.14", ETomlCode::ParseFailed, 2, leadingZero, "a leading zero after a minus sign");
+    CheckReadFails("+03.14", ETomlCode::ParseFailed, 2, leadingZero, "a leading zero after a plus sign");
+    CheckReadFails("1.", ETomlCode::ParseFailed, 2, fraction, "a trailing dot");
+    CheckReadFails("-1.", ETomlCode::ParseFailed, 3, fraction, "a trailing dot after a minus sign");
+    CheckReadFails("+1.", ETomlCode::ParseFailed, 3, fraction, "a trailing dot after a plus sign");
+    CheckReadFails("0.0E", ETomlCode::ParseFailed, 4, exponent, "a trailing E");
+    CheckReadFails("0.e", ETomlCode::ParseFailed, 2, fraction, "a dot and a trailing e");
+    CheckReadFails("0.0e-", ETomlCode::ParseFailed, 5, exponent, "a trailing e-");
+    CheckReadFails("0.0e+", ETomlCode::ParseFailed, 5, exponent, "a trailing e+");
+    CheckReadFails("1.2_", ETomlCode::ParseFailed, 3, underscore, "a trailing underscore");
+    CheckReadFails("1._2", ETomlCode::ParseFailed, 2, underscore, "an underscore after the dot");
+    CheckReadFails("1_.2", ETomlCode::ParseFailed, 1, underscore, "an underscore before the dot");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Floats, ReadNumber_RejectsOutOfRangeFloats)
+{
+    // Arrange & Act & Assert
+    // Reported at the start of the number; never read as inf
+    std::string const outside = "is outside the range of a double, about plus or minus 1.8e308.";
+
+    CheckReadFails("1e400", ETomlCode::ValueOutOfRange, 0, "The float \"1e400\" " + outside, "1e400");
+    CheckReadFails("-1e400", ETomlCode::ValueOutOfRange, 0, outside, "-1e400");
+    CheckReadFails("1.7976931348623159e308", ETomlCode::ValueOutOfRange, 0, outside, "just above the largest double");
+    CheckReadFails("1e99999999999999999999", ETomlCode::ValueOutOfRange, 0, outside, "a huge exponent");
+    CheckReadFails("1" + std::string(400, '0') + ".0", ETomlCode::ValueOutOfRange, 0, outside, "401 digits");
+    CheckReadFails("0.000001e315", ETomlCode::ValueOutOfRange, 0, outside, "1e309 written with a fraction");
+    CheckReadFails("1" + std::string(400, '0') + ".0e-50", ETomlCode::ValueOutOfRange, 0, outside,
+        "1e350 written with a negative exponent");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Floats, ReadNumber_UnderflowReadsAsZero)
+{
+    // Arrange & Act & Assert
+    // A number below the smallest double rounds to 0.0, keeping its sign
+    CheckReads("1e-400", 0.0, "1e-400");
+    CheckReads("-1e-400", -0.0, "-1e-400 reads as -0.0");
+    CheckReads("2.4703282292062327e-324", 0.0, "just below half the smallest double");
+    CheckReads("2.4703282292062328e-324", std::numeric_limits<double>::denorm_min(),
+        "just above half the smallest double rounds up");
+    CheckReads("1e-99999999999999999999", 0.0, "a huge negative exponent");
+    CheckReads("0." + std::string(400, '0') + "1", 0.0, "400 zeros after the dot");
+    CheckReads("100000e-330", 0.0, "1e-325 written with digits before the dot");
+    CheckReads("-0." + std::string(400, '0') + "1e50", -0.0, "-1e-351 written with a positive exponent");
+    CheckReads("0e99999999999999999999", 0.0, "zero with a huge exponent");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Floats, WriteFloat_InfAndNan)
+{
+    // Arrange
+    double const infinity = std::numeric_limits<double>::infinity();
+    double const nan = std::numeric_limits<double>::quiet_NaN();
+
+    // Act & Assert
+    CheckWrites(infinity, "inf", "inf");
+    CheckWrites(-infinity, "-inf", "-inf");
+    CheckWrites(nan, "nan", "nan");
+    CheckWrites(std::copysign(nan, -1.0), "-nan", "a NaN with its sign bit set");
+
+    // Arrange
+    std::string text = "a = ";
+
+    // Act
+    ASWToml::Detail::WriteFloat(2.5, text);
+
+    // Assert
+    CheckEquals("a = 2.5"s, text, "the float should be appended to the text");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Floats, WriteFloat_ReadsBackEveryExponent)
+{
+    // Arrange
+    // Every power of 2 a double has, subnormals included, and a value with more bits next to each
+    for (int exponent = -1074; exponent <= 1023; ++exponent)
+    {
+        double const power = std::ldexp(1.0, exponent);
+        double const values[] = { power, -power, 1.1 * power, std::nextafter(power, 0.0) };
+
+        for (double const value : values)
+        {
+            std::string text;
+            TASWTomlValue read;
+            std::size_t position = 0;
+
+            // Act
+            ASWToml::Detail::WriteFloat(value, text);
+            ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadNumber(text, position, read);
+
+            // Assert
+            CheckTrue(result.IsOk() && read.AsFloat() != nullptr && Bits(*read.AsFloat()) == Bits(value),
+                text + " should read back as the double it was written from: " + result.Message);
+        }
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Floats, WriteFloat_ShortestText)
+{
+    // Arrange & Act & Assert
+    // std::to_chars' shortest text, with ".0" when it has neither a dot nor an exponent
+    CheckWrites(1.0, "1.0", "one");
+    CheckWrites(0.0, "0.0", "zero");
+    CheckWrites(-0.0, "-0.0", "minus zero");
+    CheckWrites(100.0, "100.0", "a hundred");
+    CheckWrites(0.1, "0.1", "a tenth");
+    CheckWrites(0.1 + 0.2, "0.30000000000000004", "a sum that isn't 0.3");
+    CheckWrites(3.141592653589793, "3.141592653589793", "pi");
+    CheckWrites(-1.5e-10, "-1.5e-10", "a small negative number");
+    CheckWrites(1e15, "1e+15", "1e15, shorter with an exponent");
+    CheckWrites(1e16, "1e+16", "1e16");
+    CheckWrites(1e-7, "1e-07", "1e-7, with a two-digit exponent");
+    CheckWrites(123456789012345680.0, "123456789012345680.0", "a large number without an exponent");
+    CheckWrites(9007199254740991.0, "9007199254740991.0", "the largest safe integer");
+    CheckWrites(std::numeric_limits<double>::max(), "1.7976931348623157e+308", "the largest double");
+    CheckWrites(std::numeric_limits<double>::min(), "2.2250738585072014e-308", "the smallest normal double");
+    CheckWrites(std::numeric_limits<double>::denorm_min(), "5e-324", "the smallest double");
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Floats, "Scalars")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Integers, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Keys, "Scalars")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_Strings, "Scalars")

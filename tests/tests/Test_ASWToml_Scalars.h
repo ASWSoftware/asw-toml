@@ -23,6 +23,7 @@ limitations under the License.
 #define Test_ASWToml_ScalarsH
 //---------------------------------------------------------------------------
 #include <cstddef>
+#include <cstdint>
 #include <source_location>
 #include <string>
 //---------------------------------------------------------------------------
@@ -115,6 +116,100 @@ public: // Test methods, each defined with ASW_TEST
 public:
     TTest_ASWToml_Keys();
     ~TTest_ASWToml_Keys() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_Integers
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_Integers : public TAutoTestGroup<TTest_ASWToml_Integers>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_Integers> inherited;
+
+private:
+    // Checks that ReadNumber() fails on 'text' (read from offset 0) with 'code' at 'offset', with a message that
+    // contains 'expectedText', and leaves the value as it was
+    void CheckReadFails(std::string const& text, ASWToml::ETomlCode code, std::size_t offset,
+        std::string const& expectedText, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that ReadNumber() reads all of 'text' (from offset 0) as the integer 'expected'
+    void CheckReads(std::string const& text, std::int64_t expected, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that ReadNumber() reads 'text' from 'start' as the integer 'expected', stopping at 'end'
+    void CheckReadsUpTo(std::string const& text, std::size_t start, std::size_t end, std::int64_t expected,
+        std::string const& msg, std::source_location loc = std::source_location::current());
+
+    // Checks that WriteInteger() writes 'value' in 'base' as 'expected', and that it reads back as 'value'
+    void CheckWrites(std::int64_t value, ASWToml::EIntegerBase base, std::string const& expected,
+        std::string const& msg, std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_ReadNumber_DecimalIntegers();
+    void Test_ReadNumber_PrefixedIntegers();
+    void Test_ReadNumber_QuotesLongNumbersInMessages();
+    void Test_ReadNumber_RejectsInvalidIntegers();
+    void Test_ReadNumber_RejectsOutOfRangeIntegers();
+    void Test_ReadNumber_RejectsTextThatIsNotANumber();
+    void Test_ReadNumber_ReportsLineAndColumn();
+    void Test_ReadNumber_StopsAtTheEndOfItsRun();
+    void Test_WriteInteger_AppendsToText();
+    void Test_WriteInteger_Bases();
+
+public:
+    TTest_ASWToml_Integers();
+    ~TTest_ASWToml_Integers() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_Floats
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_Floats : public TAutoTestGroup<TTest_ASWToml_Floats>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_Floats> inherited;
+
+private:
+    // Checks that ReadNumber() fails on 'text' (read from offset 0) with 'code' at 'offset', with a message that
+    // contains 'expectedText', and leaves the value as it was
+    void CheckReadFails(std::string const& text, ASWToml::ETomlCode code, std::size_t offset,
+        std::string const& expectedText, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that ReadNumber() reads all of 'text' (from offset 0) as a float with the bits of 'expected'
+    void CheckReads(std::string const& text, double expected, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that WriteFloat() writes 'value' as 'expected', and that it reads back with the same bits
+    void CheckWrites(double value, std::string const& expected, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_ReadNumber_Floats();
+    void Test_ReadNumber_InfAndNan();
+    void Test_ReadNumber_RejectsInvalidFloats();
+    void Test_ReadNumber_RejectsOutOfRangeFloats();
+    void Test_ReadNumber_UnderflowReadsAsZero();
+    void Test_WriteFloat_InfAndNan();
+    void Test_WriteFloat_ReadsBackEveryExponent();
+    void Test_WriteFloat_ShortestText();
+
+public:
+    TTest_ASWToml_Floats();
+    ~TTest_ASWToml_Floats() override;
 
     void SetUp_Group() override;
     void SetUp_Test(ITestCase& testCase) override;

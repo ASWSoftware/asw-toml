@@ -4,8 +4,8 @@ Author: Anthony S. West - ASW Software
 
 A TOML file reader/writer library.
 
-Internal: reading and writing the TOML text of scalar values (strings and
-keys so far), which the parser and the edits use. A reader starts at a
+Internal: reading and writing the TOML text of scalar values (strings, keys,
+integers and floats so far), which the parser and the edits use. A reader starts at a
 position in a larger text and stops at the end of its token, so an error
 gives the exact place; a writer appends to a std::string.
 
@@ -33,11 +33,13 @@ limitations under the License.
 #define ASWToml_ScalarsH
 //---------------------------------------------------------------------------
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 //---------------------------------------------------------------------------
 #include "ASWToml_Options.h"
 #include "ASWToml_Types.h"
+#include "ASWToml_Value.h"
 //---------------------------------------------------------------------------
 
 namespace ASWToml
@@ -48,6 +50,20 @@ namespace ASWToml
 //---------------------------------------------------------------------------
 namespace Detail
 {
+
+// Reads the number that starts at 'position' in 'text': the longest run of the characters a number can have (A-Z,
+// a-z, 0-9, '_', '.', '+' and '-'), which must be a TOML integer (decimal, or hexadecimal, octal or binary after 0x,
+// 0o or 0b, with no sign) or float (with a fraction, an exponent or both, or inf or nan, each with an optional sign),
+// with '_' only between digits. What follows the run is the caller's to check.
+// On success, sets 'value' to the integer (std::int64_t) or float (double) and 'position' to the offset after the
+// run. A float smaller than the smallest double reads as 0.0 (or -0.0), as it rounds to it; -nan reads as a NaN with
+// its sign bit set. On failure, leaves 'value' as it was and returns, with the Line and Column of 'position' in 'text':
+// - ParseFailed, with 'position' set to the offset of the first character that doesn't fit the grammar, e.g. the
+//   second 0 of 00, or the end of 1.
+// - ValueOutOfRange, with 'position' unchanged, for an integer outside the 64-bit range or a float outside a double's
+//   (about plus or minus 1.8e308).
+// Throws only std::bad_alloc.
+TASWTomlResult ReadNumber(std::string_view text, std::size_t& position, TASWTomlValue& value);
 
 // Reads the string whose opening quote is at 'position' in 'text': a basic string ("..."), a multi-line basic string
 // ("""..."""), a literal string ('...') or a multi-line literal string ('''...'''), with every escape of TOML 1.1
@@ -60,6 +76,16 @@ namespace Detail
 // without a line feed, or a string without its closing delimiter (reported at the opening one). Throws only
 // std::bad_alloc.
 TASWTomlResult ReadString(std::string_view text, std::size_t& position, std::string& value);
+
+// Appends 'value' to 'text' as a TOML float: the shortest text that reads back as the same double (std::to_chars),
+// with ".0" added when it has neither a '.' nor an exponent, e.g. 1.0, 0.1, -0.0, 1e+16 or 5e-324; inf, -inf, nan,
+// or -nan for a NaN with its sign bit set. Throws only std::bad_alloc.
+void WriteFloat(double value, std::string& text);
+
+// Appends 'value' to 'text' as a TOML integer in the base 'base' asks for: 0x with upper-case digits, 0o or 0b, e.g.
+// 0xFF; decimal for Auto, Decimal, a value that isn't an EIntegerBase, or a negative number (TOML's other bases have
+// no sign). Throws only std::bad_alloc.
+void WriteInteger(std::int64_t value, std::string& text, EIntegerBase base);
 
 // Appends 'key' to 'text' as one part of a key: a bare key when it can be (not empty, and only A-Z, a-z, 0-9, '-' and
 // '_'), else a basic string as WriteString() writes it, e.g. port, "host name", "a.b" or "". Fails with InvalidValue,
