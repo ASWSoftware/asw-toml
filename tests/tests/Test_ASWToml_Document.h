@@ -393,6 +393,96 @@ public:
     void TearDown_Test(ITestCase& testCase) override;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentSetValue
+//
+// TASWTomlDocument::SetValue(): values changed in place, and new keys and tables in their places and forms
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentSetValue : public TAutoTestGroup<TTest_ASWToml_DocumentSetValue>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentSetValue> inherited;
+
+private:
+    // Checks that SetValue() of 'path' to 'value' in a document of 'text' fails with 'code' and a message that holds
+    // 'expectedText', and changes nothing
+    void CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path, ASWToml::TASWTomlValue const& value,
+        ASWToml::ETomlCode code, std::string const& expectedText, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that SetValue() of 'path' to 'value' (with 'options' for the document) in a document of 'text' succeeds,
+    // gives the text 'expected' and the value at 'path', sets the modified flag, and that the text reads as the
+    // document's values
+    void CheckSets(std::string const& text, ASWToml::TASWTomlPath const& path, ASWToml::TASWTomlValue const& value,
+        std::string const& expected, std::string const& msg,
+        ASWToml::TASWTomlOptions const& options = ASWToml::TASWTomlOptions(),
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_ExistingScalars_KeepTheirForm();
+    void Test_ExistingValues_ArraysAndTablesOnOneLine();
+    void Test_IdenticalValue_ChangesNothing();
+    void Test_LineBreaks_TheDocumentsOwn();
+    void Test_NewKeys_AsDottedKeys();
+    void Test_NewKeys_InHeaderTablesAndElements();
+    void Test_NewKeys_InInlineTables();
+    void Test_NewKeys_InTheRoot();
+    void Test_NewTables_AsHeaders();
+    void Test_NewTables_BlankLinesAsTheOptionsSay();
+    void Test_RejectsWhatCantBeSet();
+    void Test_ValueOptions_PerCall();
+
+public:
+    TTest_ASWToml_DocumentSetValue();
+    ~TTest_ASWToml_DocumentSetValue() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentAppend
+//
+// TASWTomlDocument::Append(): a new element of an array value or of an array of tables
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentAppend : public TAutoTestGroup<TTest_ASWToml_DocumentAppend>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentAppend> inherited;
+
+private:
+    // Checks that Append() of 'value' to 'path' in a document of 'text' succeeds, gives the text 'expected' and the
+    // value at the array's end, sets the modified flag, and that the text reads as the document's values
+    void CheckAppends(std::string const& text, ASWToml::TASWTomlPath const& path, ASWToml::TASWTomlValue const& value,
+        std::string const& expected, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that Append() of 'value' to 'path' in a document of 'text' fails with 'code' and a message that holds
+    // 'expectedText', and changes nothing
+    void CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path, ASWToml::TASWTomlValue const& value,
+        ASWToml::ETomlCode code, std::string const& expectedText, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_ArraysOfTables_NewElementAfterTheLast();
+    void Test_ArrayValues_InTheirLayout();
+    void Test_MissingKeys_GetAnArray();
+    void Test_RejectsWhatCantBeAppended();
+
+public:
+    TTest_ASWToml_DocumentAppend();
+    ~TTest_ASWToml_DocumentAppend() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------

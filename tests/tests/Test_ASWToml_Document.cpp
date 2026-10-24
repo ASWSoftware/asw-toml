@@ -3519,9 +3519,524 @@ ASW_TEST(TTest_ASWToml_DocumentToText, RoundTrip_ByteForByte)
 }
 //---------------------------------------------------------------------------
 
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentSetValue
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentSetValue::TTest_ASWToml_DocumentSetValue()
+    : inherited("ASWToml_DocumentSetValue_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentSetValue::~TTest_ASWToml_DocumentSetValue()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentSetValue::CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path,
+    TASWTomlValue const& value, ETomlCode code, std::string const& expectedText, std::string const& msg,
+    std::source_location loc)
+{
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), msg + ": the text should parse", loc);
+
+    ASWToml::TASWTomlResult const result = document.SetValue(path, value);
+
+    CheckEquals(code, result.Code, msg + ": the code", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message", loc);
+    CheckEquals(std::size_t(0), result.Line, msg + ": not about a place in the text", loc);
+    CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
+    CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentSetValue::CheckSets(std::string const& text, ASWToml::TASWTomlPath const& path,
+    TASWTomlValue const& value, std::string const& expected, std::string const& msg, TASWTomlOptions const& options,
+    std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text, options);
+    CheckTrue(parsed.IsOk(), msg + ": the text should parse: " + parsed.Message, loc);
+
+    ASWToml::TASWTomlResult const result = document.SetValue(path, value);
+
+    CheckTrue(result.IsOk(), msg + ": the value should be set: " + result.Message, loc);
+    CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
+    TASWTomlValue const* const set = document.Find(path);
+    CheckTrue(set != nullptr && ASWToml::Detail::IdenticalValues(*set, value), msg + ": the value at the path", loc);
+    CheckTrue(document.IsModified(), msg + ": the document is modified", loc);
+
+    TASWTomlDocument reread;
+    CheckTrue(reread.Parse(document.ToText(), options).IsOk() &&
+        ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()),
+        msg + ": the text should read as the document's values", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentSetValue::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentSetValue::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentSetValue::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentSetValue::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, ExistingScalars_KeepTheirForm)
+{
+    // Arrange & Act & Assert
+    CheckSets("port = 0xff # mask\n", "port", 4095, "port = 0xFFF # mask\n", "hexadecimal stays hexadecimal");
+    CheckSets("a  =   1   # c\n", "a", 2, "a  =   2   # c\n", "the blanks around '=' and the comment stay");
+    CheckSets("path = 'C:\\x'\n", "path", "C:\\y", "path = 'C:\\y'\n", "a literal string stays literal");
+    CheckSets("s = 'x'\n", "s", "it's", "s = \"it's\"\n", "a literal string that can't hold the text is basic");
+    CheckSets("s = \"x\"\n", "s", "C:\\y", "s = \"C:\\\\y\"\n", "a basic string stays basic");
+    CheckSets("text = \"\"\"\nold\"\"\"\n", "text", "a\nb", "text = \"\"\"\na\nb\"\"\"\n", "a multi-line basic string");
+    CheckSets("text = '''old'''\n", "text", "C:\\x\ny", "text = '''C:\\x\ny'''\n", "a multi-line literal string");
+    CheckSets("n = 0o17\n", "n", -1, "n = -1\n", "a negative number is decimal");
+    CheckSets("a = 1\n", "a", "one", "a = \"one\"\n", "a value of another type");
+    CheckSets("a = 1979-05-27 # d\n", "a", true, "a = true # d\n", "a date to a boolean");
+    CheckSets("[t]\nx = 1.5\n", "t.x", 2.0, "[t]\nx = 2.0\n", "a key of a header table");
+    CheckSets("p = { x = 0x1, y = 2 }\n", "p.x", 255, "p = { x = 0xFF, y = 2 }\n", "a key of an inline table");
+    CheckSets("a = [1, 'x', 3]\n", "a[1]", "y", "a = [1, 'y', 3]\n", "an element of an array");
+    CheckSets("[[s]]\nx = 1\n[[s]]\nx = 2\n", "s[1].x", 3, "[[s]]\nx = 1\n[[s]]\nx = 3\n",
+        "a key of the second element of an array of tables");
+    CheckSets("a = 1\nb = 2\n", "a", 5, "a = 5\nb = 2\n", "only the value changes");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, ExistingValues_ArraysAndTablesOnOneLine)
+{
+    // Arrange & Act & Assert
+    // (Until the whole-value merge comes, an array or inline table that exists is written again on one line)
+    CheckSets("a = [\n  1,\n  2,\n] # c\n", "a", TArray{ 3, 4 }, "a = [3, 4] # c\n", "an array");
+    CheckSets("p = { x = 1 }\n", "p", TTable{ { "y", 2 } }, "p = { y = 2 }\n", "an inline table");
+    CheckSets("a = 1 # c\n", "a", TTable{ { "x", 1 } }, "a = { x = 1 } # c\n", "a scalar to a table, in place");
+    CheckSets("a = 1\n", "a", TArray{ TTable{ { "x", 1 } } }, "a = [{ x = 1 }]\n",
+        "an array of tables in place, as an array of inline tables");
+    CheckSets("a = [[1], 2]\n", "a[0]", TArray{ 5 }, "a = [[5], 2]\n", "an array in an array");
+    CheckSets("p = { x = 1 }\n", "p", 1, "p = 1\n", "an inline table to a scalar");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, IdenticalValue_ChangesNothing)
+{
+    // Arrange
+    double const nan = std::numeric_limits<double>::quiet_NaN();
+    struct TCase
+    {
+        std::string Text;
+        std::string Path;
+        TASWTomlValue Value;
+    };
+    std::vector<TCase> const cases = {
+        { "a = 1\n", "a", 1 },
+        { "a = 0x1\n", "a", 1 },
+        { "a = nan\n", "a", nan },
+        { "a = -nan\n", "a", std::copysign(nan, -1.0) },
+        { "p = { x = 1, y = 2 }\n", "p", TTable{ { "y", 2 }, { "x", 1 } } },
+        { "[t]\nx = 1\n", "t", TTable{ { "x", 1 } } },
+        { "x = 1\n", "", TTable{ { "x", 1 } } },
+        { "a = [1, 2]\n", "a", TArray{ 1, 2 } },
+    };
+
+    for (TCase const& item : cases)
+    {
+        TASWTomlDocument document;
+        CheckTrue(document.Parse(item.Text).IsOk(), Escaped(item.Text) + ": the text should parse");
+
+        // Act
+        ASWToml::TASWTomlResult const result = document.SetValue(item.Path, item.Value);
+
+        // Assert
+        CheckTrue(result.IsOk(), Escaped(item.Text) + ": setting the same value succeeds: " + result.Message);
+        CheckEquals(item.Text, document.ToText(), Escaped(item.Text) + ": the text stays as it was");
+        CheckFalse(document.IsModified(), Escaped(item.Text) + ": the document isn't modified");
+    }
+
+    // Arrange & Act & Assert
+    // A float of the other sign isn't the same value
+    CheckSets("a = 0.0\n", "a", -0.0, "a = -0.0\n", "-0.0 isn't 0.0");
+    CheckSets("a = nan\n", "a", std::copysign(nan, -1.0), "a = -nan\n", "a NaN of the other sign");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, LineBreaks_TheDocumentsOwn)
+{
+    // Arrange
+    std::string const native(ASWToml::Detail::LineBreakText(ASWToml::Detail::NativeLineBreak()));
+    TASWTomlOptions lf;
+    lf.Writing.LineEnding = ELineEnding::LF;
+
+    // Act & Assert
+    CheckSets("a = 1\r\nb = 2\r\n", "c", 3, "a = 1\r\nb = 2\r\nc = 3\r\n", "a text with CRLF");
+    CheckSets("a = 1\r\nb = 2\r\n[t]\n", "t.x", 1, "a = 1\r\nb = 2\r\n[t]\nx = 1\r\n", "the most common one");
+    CheckSets("a = 1\nb = 2", "c", 3, "a = 1\nb = 2\nc = 3\n", "a last line without a line break gets one");
+    CheckSets("", "a", 1, "a = 1" + native, "an empty text: the platform's");
+    CheckSets("a = 1\r\n", "b", 2, "a = 1\nb = 2\n", "converted as the writing options say", lf);
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, NewKeys_AsDottedKeys)
+{
+    // Arrange & Act & Assert
+    CheckSets("server.port = 80\n[t]\n", "server.host", "h", "server.port = 80\nserver.host = \"h\"\n[t]\n",
+        "after the last dotted key of the table");
+    CheckSets("  a . b.c = 1\nx = 2\n", "a.b.d", 2, "  a . b.c = 1\n  a . b.d = 2\nx = 2\n",
+        "the key parts and the indentation of the last one");
+    CheckSets("[t]\nu.a = 1\nu.b = 2\nz = 3\n", "t.u.c", 3, "[t]\nu.a = 1\nu.b = 2\nu.c = 3\nz = 3\n",
+        "in a header table");
+    CheckSets("a.b = 1\n", "a.c", TTable{ { "d", 1 }, { "e", TTable{} } }, "a.b = 1\na.c.d = 1\na.c.e = {}\n",
+        "a table as more dotted keys, an empty one as {}");
+    CheckSets("a.b = 1\n", "a.c.d", 1, "a.b = 1\na.c.d = 1\n", "a missing table as a dotted key");
+    CheckSets("a.b = 1\n", "a.s", TArray{ TTable{ { "x", 1 } } }, "a.b = 1\na.s = [{ x = 1 }]\n",
+        "an array of tables as an array of inline tables");
+    CheckSets("a.\"b c\".d = 1\n", "a.\"b c\".e", 2, "a.\"b c\".d = 1\na.\"b c\".e = 2\n", "quoted parts as written");
+    CheckSets("a.x = 1\n[a.t]\ny = 2\n", "a.z", 3, "a.x = 1\na.z = 3\n[a.t]\ny = 2\n",
+        "after the dotted keys, not in the header of a table under it");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, NewKeys_InHeaderTablesAndElements)
+{
+    // Arrange & Act & Assert
+    CheckSets("[t]\nx = 1\n\n# about u\n[u]\n", "t.y", 2, "[t]\nx = 1\ny = 2\n\n# about u\n[u]\n",
+        "after the last key line, before the blank and comment lines");
+    CheckSets("[t]\n# nothing\n[u]\n", "t.y", 2, "[t]\ny = 2\n# nothing\n[u]\n", "right after a header without keys");
+    CheckSets("[t]\n  x = 1\n", "t.y", 2, "[t]\n  x = 1\n  y = 2\n", "with the last key line's indentation");
+    CheckSets("[t]\nx = [\n  1,\n]\n", "t.y", 2, "[t]\nx = [\n  1,\n]\ny = 2\n", "after a value on several lines");
+    CheckSets("[[s]]\nx = 1\n[[s]]\nx = 2\n", "s[0].y", 3, "[[s]]\nx = 1\ny = 3\n[[s]]\nx = 2\n",
+        "in the first element of an array of tables");
+    CheckSets("[t]\nx = 1\n[t.u]\n", "t.y", 2, "[t]\nx = 1\ny = 2\n[t.u]\n", "before the header of a sub-table");
+    CheckSets("[t]\nu.a = 1\n", "t.z", 2, "[t]\nu.a = 1\nz = 2\n", "after a dotted key line");
+    CheckSets("[\"a b\"]\n", "\"a b\".\"c d\"", 1, "[\"a b\"]\n\"c d\" = 1\n", "a key quoted where needed");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, NewKeys_InInlineTables)
+{
+    // Arrange & Act & Assert
+    CheckSets("p = { x = 1 }\n", "p.y", 2, "p = { x = 1, y = 2 }\n", "after the last entry");
+    CheckSets("p = {x=1}\n", "p.y", 2, "p = {x=1, y = 2}\n", "after an entry without blanks");
+    CheckSets("p = {}\n", "p.y", 2, "p = { y = 2 }\n", "in an empty inline table");
+    CheckSets("p = {  }\n", "p.y", 2, "p = { y = 2 }\n", "in an empty inline table with blanks");
+    CheckSets("p = { x = 1, }\n", "p.y", 2, "p = { x = 1, y = 2, }\n", "after a trailing comma (TOML 1.1)");
+    CheckSets("p = { a.b = 1, c = 2 }\n", "p.a.d", 3, "p = { a.b = 1, c = 2, a.d = 3 }\n",
+        "a dotted key in an inline table");
+    CheckSets("p = { a.b.c = 1, x = 2 }\n", "p.a.b.d", 2, "p = { a.b.c = 1, x = 2, a.b.d = 2 }\n",
+        "a dotted key of two tables, at the end of the inline table");
+    CheckSets("p = { x = 1 }\n", "p.q.r", 1, "p = { x = 1, q = { r = 1 } }\n", "a missing table as an inline table");
+    CheckSets("a = [{ x = 1 }]\n", "a[0].y", 2, "a = [{ x = 1, y = 2 }]\n", "an inline table in an array");
+    CheckSets("p = {\n  x = 1,\n}\n", "p.y", 2, "p = {\n  x = 1,\n  y = 2,\n}\n",
+        "an inline table on several lines (TOML 1.1)");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, NewKeys_InTheRoot)
+{
+    // Arrange
+    std::string const native(ASWToml::Detail::LineBreakText(ASWToml::Detail::NativeLineBreak()));
+
+    // Act & Assert
+    CheckSets("# file\n\n[t]\nx = 1\n", "b", "new", "# file\n\nb = \"new\"\n\n[t]\nx = 1\n",
+        "after the file comment and the blank line under it");
+    CheckSets("# file\n\n\n# more\n[t]\n", "a", 1, "# file\n\n\na = 1\n\n# more\n[t]\n",
+        "after the blank lines under the file comment, apart from the next comment");
+    CheckSets("  a = 1\n[t]\n", "b", 2, "  a = 1\n  b = 2\n[t]\n", "after the last key, with its indentation");
+    CheckSets("[t]\n", "a", 1, "a = 1\n\n[t]\n", "at the start, apart from the first header");
+    CheckSets("# about t\n[t]\n", "a", 1, "a = 1\n\n# about t\n[t]\n", "before the first header's comment");
+    CheckSets("\n[t]\n", "a", 1, "a = 1\n\n[t]\n", "at the start, before a blank line");
+    CheckSets("# c\n# d\n", "a", 1, "# c\n# d\n\na = 1\n", "after a file comment that ends the text");
+    CheckSets("", "a", 1, "a = 1" + native, "in an empty text");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, NewTables_AsHeaders)
+{
+    // Arrange & Act & Assert
+    CheckSets("a = 1\n", "t", TTable{ { "x", 1 }, { "u", TTable{ { "y", 2 } } } },
+        "a = 1\n\n[t]\nx = 1\n\n[t.u]\ny = 2\n", "a table and its sub-table at the end");
+    CheckSets("[a]\nx = 1\n\n[c]\ny = 2\n", "a.b", TTable{ { "z", 3 } }, "[a]\nx = 1\n\n[a.b]\nz = 3\n\n[c]\ny = 2\n",
+        "after its parent's block, not at the end");
+    CheckSets("[a]\nx = 1\n[c]\n", "a.b", TTable{ { "z", 3 } }, "[a]\nx = 1\n\n[a.b]\nz = 3\n\n[c]\n",
+        "with a blank line before and after it");
+    CheckSets("[a]\n[a.b]\n", "a.c", TTable{ { "x", 1 } }, "[a]\n[a.b]\n\n[a.c]\nx = 1\n",
+        "after its parent's sub-tables");
+    CheckSets("[a]\nx = 1\n", "a.b.c.d", 1, "[a]\nx = 1\n\n[a.b.c]\nd = 1\n",
+        "missing tables as one header, the ones with only tables left implicit");
+    CheckSets("x = 1\n\n# about a.b\n[a.b]\ny = 2\n", "a.z", 3, "x = 1\n\n[a]\nz = 3\n\n# about a.b\n[a.b]\ny = 2\n",
+        "a table only a longer header made gets its header before that header's comment");
+    CheckSets("[[s]]\nx = 1\n[[s]]\nx = 2\n", "s[0].t", TTable{ { "y", 1 } },
+        "[[s]]\nx = 1\n\n[s.t]\ny = 1\n\n[[s]]\nx = 2\n", "a table under the first element stays in it");
+    CheckSets("a = 1\n", "s", TArray{ TTable{ { "x", 1 } }, TTable{ { "x", 2 } } },
+        "a = 1\n\n[[s]]\nx = 1\n\n[[s]]\nx = 2\n", "an array of tables");
+    CheckSets("a = 1\n", "t", TTable{}, "a = 1\n\n[t]\n", "an empty table");
+    CheckSets("a = 1\n# end\n", "t", TTable{ { "x", 1 } }, "a = 1\n# end\n\n[t]\nx = 1\n",
+        "a table of the root at the end of the text");
+    CheckSets("[\"a b\"]\n", "\"a b\".c", TTable{ { "x", 1 } }, "[\"a b\"]\n\n[\"a b\".c]\nx = 1\n",
+        "the parent's key parts as written");
+    CheckSets("[ a . b ]\n", "a.b.c", TTable{ { "x", 1 } }, "[ a . b ]\n\n[a . b.c]\nx = 1\n",
+        "the parent's key parts with their blanks");
+    CheckSets("a = 1\nb = 2", "t", TTable{ { "x", 1 } }, "a = 1\nb = 2\n\n[t]\nx = 1\n",
+        "after a last line without a line break");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, NewTables_BlankLinesAsTheOptionsSay)
+{
+    // Arrange
+    TASWTomlOptions options;
+    options.Writing.BlankLineBeforeNewTable = false;
+
+    // Act & Assert
+    CheckSets("a = 1\n", "t", TTable{ { "x", 1 } }, "a = 1\n[t]\nx = 1\n", "no blank line before a new header",
+        options);
+    CheckSets("[a]\nx = 1\n[c]\n", "a.b", TTable{ { "z", 3 } }, "[a]\nx = 1\n[a.b]\nz = 3\n[c]\n",
+        "nor after one", options);
+    CheckSets("[t]\n", "a", 1, "a = 1\n[t]\n", "nor between a new root key and a header", options);
+    CheckSets("a = 1\n", "s", TArray{ TTable{}, TTable{} }, "a = 1\n[[s]]\n[[s]]\n", "nor between elements",
+        options);
+    CheckSets("x = 1\n[a.b]\n", "a.z", 3, "x = 1\n[a]\nz = 3\n[a.b]\n", "nor around a header of an implicit table",
+        options);
+
+    // Arrange & Act & Assert
+    // With the option on, elements after a blank line (so the first needs none) are apart from each other
+    CheckSets("a = 1\n\n", "s", TArray{ TTable{ { "x", 1 } }, TTable{ { "x", 2 } } },
+        "a = 1\n\n[[s]]\nx = 1\n\n[[s]]\nx = 2\n", "elements after a blank line");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, RejectsWhatCantBeSet)
+{
+    // Arrange
+    std::chrono::year_month_day const badDate{ std::chrono::year{ 2023 }, std::chrono::February,
+        std::chrono::day{ 29 } };
+
+    // Act & Assert
+    CheckFails("a = 1\n", "a..b", 1, ETomlCode::InvalidArgument, "isn't valid", "a path that isn't valid");
+    CheckFails("port = 80\n", "port.x", 1, ETomlCode::InvalidArgument,
+        "Can't set port.x: port is a value of type Integer, not a table.", "a key of a scalar");
+    CheckFails("a = [1]\n", "a.b", 1, ETomlCode::InvalidArgument, "a is an array, so an index must come before a key.",
+        "a key of an array");
+    CheckFails("[t]\n", "t[0]", 1, ETomlCode::InvalidArgument, "t isn't an array.", "an index of a table");
+    CheckFails("a = [1]\n", "a[3]", 1, ETomlCode::NotFound, "the array a has 1 element.", "an index past the end");
+    CheckFails("a = 1\n", "b[0]", 1, ETomlCode::NotFound, "b doesn't exist, so it has no elements.",
+        "an index of a missing key");
+    CheckFails("a = 1\n", "", 1, ETomlCode::InvalidArgument, "Can't set the root table: it can only be set to a table.",
+        "the root to a scalar");
+    CheckFails("[t]\nx = 1\n", "t", TTable{ { "x", 2 } }, ETomlCode::InvalidArgument,
+        "a table can't be set as a whole yet", "a header table as a whole");
+    CheckFails("x = 1\n", "", TTable{ { "x", 2 } }, ETomlCode::InvalidArgument, "a table can't be set as a whole yet",
+        "the root as a whole");
+    CheckFails("[[s]]\n", "s", TArray{ TTable{}, TTable{} }, ETomlCode::InvalidArgument,
+        "an array of tables can't be set as a whole yet", "an array of tables as a whole");
+    CheckFails("[t]\nx = 1\n", "t", 1, ETomlCode::InvalidArgument, "a table can't be set as a whole yet",
+        "a header table to a scalar");
+    CheckFails("a = 1\n", "b", "\xFF", ETomlCode::InvalidValue, "isn't valid UTF-8", "a string that isn't UTF-8");
+    CheckFails("a = 1\n", "a", badDate, ETomlCode::InvalidValue, "The date can't be written", "a date that isn't");
+
+    // Arrange
+    TASWTomlOptions shallow;
+    shallow.Reading.MaxNestingDepth = 2;
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("a = [1]\n", shallow).IsOk(), "the text should parse");
+    TASWTomlValue const deep = TArray{ TASWTomlValue(TArray{ 1 }) };
+    ASWToml::TASWTomlValueOptions badValues;
+    badValues.StringStyle = static_cast<ASWToml::EStringStyle>(9);
+
+    // Act
+    ASWToml::TASWTomlResult const tooDeep = document.SetValue("t.b", deep);
+    ASWToml::TASWTomlResult const deepElement = document.SetValue("a[0]", deep);
+    ASWToml::TASWTomlResult const fits = document.SetValue("b", deep);
+    ASWToml::TASWTomlResult const fitsInPlace = document.SetValue("a", deep);
+    ASWToml::TASWTomlResult const badOptions = document.SetValue("c", 1, badValues);
+
+    // Assert
+    CheckEquals(ETomlCode::NestingTooDeep, tooDeep.Code, "a table and two arrays are 3 deep, beyond 2");
+    CheckEquals(ETomlCode::NestingTooDeep, deepElement.Code, "an element of an array and two arrays in it");
+    CheckTrue(fits.IsOk(), "two arrays in the root fit: " + fits.Message);
+    CheckTrue(fitsInPlace.IsOk(), "and in place of a key's value: " + fitsInPlace.Message);
+    CheckEquals(ETomlCode::InvalidOptions, badOptions.Code, "value options that aren't valid");
+    CheckEquals("a = [[1]]\nb = [[1]]\n"s, document.ToText(), "only the edits that fit changed the text");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentSetValue, ValueOptions_PerCall)
+{
+    // Arrange
+    ASWToml::TASWTomlValueOptions hexadecimal;
+    hexadecimal.IntegerBase = ASWToml::EIntegerBase::Hexadecimal;
+    ASWToml::TASWTomlValueOptions decimal;
+    decimal.IntegerBase = ASWToml::EIntegerBase::Decimal;
+    TASWTomlOptions literal;
+    literal.Values.StringStyle = ASWToml::EStringStyle::Literal;
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("a = 0xFF\n", literal).IsOk(), "the text should parse");
+
+    // Act
+    ASWToml::TASWTomlResult const first = document.SetValue("b", 255, hexadecimal);
+    ASWToml::TASWTomlResult const second = document.SetValue("a", 10, decimal);
+    ASWToml::TASWTomlResult const third = document.SetValue("s", "x");
+    ASWToml::TASWTomlResult const fourth = document.SetValue("n", 16);
+
+    // Assert
+    CheckTrue(first.IsOk() && second.IsOk() && third.IsOk() && fourth.IsOk(), "the values should be set");
+    CheckEquals("a = 10\nb = 0xFF\ns = 'x'\nn = 16\n"s, document.ToText(),
+        "the options of each call, else the document's");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentAppend
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentAppend::TTest_ASWToml_DocumentAppend()
+    : inherited("ASWToml_DocumentAppend_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentAppend::~TTest_ASWToml_DocumentAppend()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentAppend::CheckAppends(std::string const& text, ASWToml::TASWTomlPath const& path,
+    TASWTomlValue const& value, std::string const& expected, std::string const& msg, std::source_location loc)
+{
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), msg + ": the text should parse", loc);
+
+    ASWToml::TASWTomlResult const result = document.Append(path, value);
+
+    CheckTrue(result.IsOk(), msg + ": the value should be appended: " + result.Message, loc);
+    CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
+    TASWTomlValue const* const array = document.Find(path);
+    CheckTrue(array != nullptr && array->IsArray() && !array->AsArray()->empty() &&
+        ASWToml::Detail::IdenticalValues(array->AsArray()->back(), value), msg + ": the value at the end", loc);
+    CheckTrue(document.IsModified(), msg + ": the document is modified", loc);
+
+    TASWTomlDocument reread;
+    CheckTrue(reread.Parse(document.ToText()).IsOk() && reread.GetRoot() == document.GetRoot(),
+        msg + ": the text should read as the document's values", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentAppend::CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path,
+    TASWTomlValue const& value, ETomlCode code, std::string const& expectedText, std::string const& msg,
+    std::source_location loc)
+{
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), msg + ": the text should parse", loc);
+
+    ASWToml::TASWTomlResult const result = document.Append(path, value);
+
+    CheckEquals(code, result.Code, msg + ": the code", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message", loc);
+    CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
+    CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentAppend::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentAppend::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentAppend::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentAppend::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentAppend, ArraysOfTables_NewElementAfterTheLast)
+{
+    // Arrange & Act & Assert
+    CheckAppends("[[s]]\nx = 1\n\n[s.t]\ny = 1\n\n[u]\n", "s", TTable{ { "x", 2 } },
+        "[[s]]\nx = 1\n\n[s.t]\ny = 1\n\n[[s]]\nx = 2\n\n[u]\n", "after the last element's sub-tables");
+    CheckAppends("[[s]]\nx = 1\n", "s", TTable{}, "[[s]]\nx = 1\n\n[[s]]\n", "an empty element, at the end");
+    CheckAppends("[[ a . s ]]\n", "a.s", TTable{ { "x", 1 } }, "[[ a . s ]]\n\n[[a . s]]\nx = 1\n",
+        "the key parts of the last element's header");
+    CheckAppends("[[\"s\"]]\n[[s]]\n", "s", TTable{}, "[[\"s\"]]\n[[s]]\n\n[[s]]\n",
+        "the last element's, not the first's");
+    CheckAppends("[t]\n[[t.s]]\nx = 1\n[t.u]\n", "t.s", TTable{ { "x", 2 } },
+        "[t]\n[[t.s]]\nx = 1\n\n[[t.s]]\nx = 2\n\n[t.u]\n", "before the next table of its parent");
+    CheckAppends("[[s]]\nx = 1", "s", TTable{ { "x", 2 } }, "[[s]]\nx = 1\n\n[[s]]\nx = 2\n",
+        "after a last line without a line break");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentAppend, ArrayValues_InTheirLayout)
+{
+    // Arrange & Act & Assert
+    CheckAppends("ports = [80, 443]\n", "ports", 8080, "ports = [80, 443, 8080]\n", "an array on one line");
+    CheckAppends("ports = [\n  80,\n  443 # https\n]\n", "ports", 8080, "ports = [\n  80,\n  443, # https\n  8080\n]\n",
+        "one per line, the comment kept on its line");
+    CheckAppends("ports = [\n  80,\n  443, # https\n]\n", "ports", 8080,
+        "ports = [\n  80,\n  443, # https\n  8080,\n]\n", "one per line with a trailing comma");
+    CheckAppends("ports = []\n", "ports", 1, "ports = [1]\n", "an empty array");
+    CheckAppends("ports = [ ]\n", "ports", 1, "ports = [1]\n", "an empty array with a blank");
+    CheckAppends("ports = [1]\n", "ports", 2, "ports = [1, 2]\n", "after the first element");
+    CheckAppends("ports = [ 1 ]\n", "ports", 2, "ports = [ 1, 2 ]\n", "with the blanks inside the brackets");
+    CheckAppends("a = [[1]]\n", "a[0]", 2, "a = [[1, 2]]\n", "an array in an array");
+    CheckAppends("a = [1]\n", "a", TTable{ { "x", 1 } }, "a = [1, { x = 1 }]\n", "an inline table");
+    CheckAppends("a = [\r\n  1,\r\n]\r\n", "a", 2, "a = [\r\n  1,\r\n  2,\r\n]\r\n", "with its CRLF line breaks");
+    CheckAppends("[t]\na = [\n    'x', # first\n    'y'\n] # list\n", "t.a", "z",
+        "[t]\na = [\n    'x', # first\n    'y',\n    \"z\"\n] # list\n", "the indentation of the last element");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentAppend, MissingKeys_GetAnArray)
+{
+    // Arrange & Act & Assert
+    CheckAppends("a = 1\n", "list", 1, "a = 1\nlist = [1]\n", "an array of the value");
+    CheckAppends("a = 1\n", "s", TTable{ { "x", 1 } }, "a = 1\n\n[[s]]\nx = 1\n", "an array of tables");
+    CheckAppends("[t]\nx = 1\n", "t.list", "a", "[t]\nx = 1\nlist = [\"a\"]\n", "in a header table");
+    CheckAppends("p = {}\n", "p.l", 1, "p = { l = [1] }\n", "in an inline table");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentAppend, RejectsWhatCantBeAppended)
+{
+    // Arrange & Act & Assert
+    CheckFails("a = 1\n", "a", 2, ETomlCode::InvalidArgument, "Can't append to a: it isn't an array.", "a scalar");
+    CheckFails("[t]\n", "t", 1, ETomlCode::InvalidArgument, "Can't append to t: it isn't an array.", "a table");
+    CheckFails("a = 1\n", "", 1, ETomlCode::InvalidArgument, "Can't append to the root table: it isn't an array.",
+        "the root");
+    CheckFails("[[s]]\n", "s", 1, ETomlCode::InvalidArgument,
+        "An element of an array of tables must be a table, not a value of type Integer.", "a scalar to tables");
+    CheckFails("a = 1\n", "a..b", 1, ETomlCode::InvalidArgument, "isn't valid", "a path that isn't valid");
+    CheckFails("port = 80\n", "port.x", 1, ETomlCode::InvalidArgument,
+        "Can't append to port.x: port is a value of type Integer, not a table.", "a key of a scalar");
+    CheckFails("a = [1]\n", "a[2]", 1, ETomlCode::NotFound, "the array a has 1 element.", "an index past the end");
+    CheckFails("a = [1]\n", "a", "\xFF", ETomlCode::InvalidValue, "isn't valid UTF-8", "a string that isn't UTF-8");
+
+    // Arrange
+    TASWTomlOptions shallow;
+    shallow.Reading.MaxNestingDepth = 2;
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("a = [[1]]\n", shallow).IsOk(), "the text should parse");
+    ASWToml::TASWTomlValueOptions badValues;
+    badValues.IntegerBase = static_cast<ASWToml::EIntegerBase>(9);
+
+    // Act
+    ASWToml::TASWTomlResult const tooDeep = document.Append("a", TArray{ TASWTomlValue(TArray{ 2 }) });
+    ASWToml::TASWTomlResult const fits = document.Append("a[0]", 2);
+    ASWToml::TASWTomlResult const badOptions = document.Append("a[0]", 3, badValues);
+
+    // Assert
+    CheckEquals(ETomlCode::NestingTooDeep, tooDeep.Code, "an array of an array in the array would be 3 deep");
+    CheckTrue(fits.IsOk(), "a scalar fits: " + fits.Message);
+    CheckEquals(ETomlCode::InvalidOptions, badOptions.Code, "value options that aren't valid");
+    CheckEquals("a = [[1, 2]]\n"s, document.ToText(), "only the edit that fits changed the text");
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentAppend, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentErrors, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentFuzz, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentIndex, "Document")
@@ -3529,6 +4044,7 @@ ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentLookups, "D
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentModel, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentParse, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentRoundTrip, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentSetValue, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentTables, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentToText, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_TomlTest, "Document")

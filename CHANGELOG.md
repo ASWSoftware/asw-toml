@@ -36,9 +36,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     missing folders (on).
   - `Values` (`TASWTomlValueOptions`): how a string is written (`EStringStyle`: `Auto`, a literal
     string such as `'C:\Users\me'` when the text holds a backslash and a literal string can hold
-    it, else a basic string; or always `Basic`; or `Literal` whenever it can hold the text) and the
-    base of an integer (`EIntegerBase`: `Auto`, which is decimal, `Decimal`, `Hexadecimal`, `Octal`
-    or `Binary`; a negative number is always decimal). Every form is read, whichever these say.
+    it, else a basic string, and for a string that replaces one, the form of that one; or always
+    `Basic`; or `Literal` whenever it can hold the text) and the base of an integer
+    (`EIntegerBase`: `Auto`, which is decimal, or for an integer that replaces one, the base of that
+    one; `Decimal`, `Hexadecimal`, `Octal` or `Binary`; a negative number is always decimal). Every
+    form is read, whichever these say.
 
   Each group's `Validate()` checks its own settings (e.g. the comment prefix must start with `#`
   and hold only what a TOML comment may), and `TASWTomlOptions::Validate()` checks the four; a
@@ -128,5 +130,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nothing when the new reading options refuse the text (e.g. a lower `MaxNestingDepth`).
   `IsModified()` tells whether an edit changed the text; `Parse()`, `Reset()` and `ClearModified()`
   clear it. A document is copyable; it isn't thread-safe.
+- Editing a `TASWTomlDocument`, which changes only the text an edit needs and keeps the rest byte
+  for byte; new text uses only the syntax TOML 1.0 reads. `SetValue(path, value)` (and with
+  `TASWTomlValueOptions` for the call) sets a value in place, keeping its key, spacing and
+  end-of-line comment, and a scalar's form where it can (a hexadecimal mask stays hexadecimal, a
+  literal or multi-line string stays one). A missing key goes where its table is written: after the
+  table's last key line (copying its indentation), as a dotted key after the table's last dotted
+  key, or inside an inline table's braces; a table that only longer headers made gets a header of
+  its own. A table value becomes a `[path]` header with its keys, its sub-tables as headers and its
+  arrays of tables as `[[path]]` headers, placed after its parent table and the tables under it,
+  with a blank line before it when `Writing.BlankLineBeforeNewTable` is on; missing tables on the
+  way are made as the place allows (a header, dotted keys, or an inline table).
+  `Append(path, value)` adds an element to an array in its layout (on the same line, or on a line of
+  its own when the elements are one per line) or a `[[path]]` element to an array of tables after
+  its last element, and gives a missing key an array of the one value. Setting a value identical to
+  the one there changes nothing; every edit's text is read again, and an edit that wouldn't read
+  back as meant changes nothing. Setting a whole table that exists isn't supported yet. A path that
+  doesn't fit (through a value that isn't a table, an index past the end) fails with
+  `InvalidArgument` or `NotFound`, a value that can't be written with `InvalidValue`, and one nested
+  too deep with `NestingTooDeep`.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

@@ -59,7 +59,10 @@ enum class EBomMode : int
 // than a tab.
 enum class EStringStyle : int
 {
-    Auto = 0, // A literal string when the text holds a backslash and a literal string can hold it, else a basic one
+    // A new string: a literal string when the text holds a backslash and a literal string can hold it, else a basic
+    // one. A string that replaces one keeps its form: basic, literal (when a literal string can hold the text, else
+    // basic) or multi-line.
+    Auto = 0,
     Basic = 1, // A basic string ("..."), with escapes such as \" and \n
     Literal = 2, // A literal string when it can hold the text, else a basic one
 };
@@ -68,7 +71,9 @@ enum class EStringStyle : int
 // decimal whatever the base, since TOML's other bases have no sign.
 enum class EIntegerBase : int
 {
-    Auto = 0, // Decimal
+    // A new integer in decimal; one that replaces an integer in the base of that one (hexadecimal, octal or binary),
+    // unless it is negative
+    Auto = 0,
     Decimal = 1, // e.g. 255
     Hexadecimal = 2, // e.g. 0xFF (digits in upper case)
     Octal = 3, // e.g. 0o377

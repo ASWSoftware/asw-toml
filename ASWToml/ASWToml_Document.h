@@ -257,6 +257,15 @@ private:
     // writing options, but for the byte order mark)
     std::string BodyText() const;
 
+    // Makes 'model', 'index' and 'root' the document's, and sets the modified flag
+    void Commit(Detail::TDocModel& model, Detail::TDocIndex& index, TASWTomlValue& root) noexcept;
+
+    // Reads 'body', the document's text after an edit (without a byte order mark), with the document's byte order mark
+    // and options into 'model', 'index' and 'root', as ReadText() does. Fails with the parser's code and message
+    // (but no Line or Column, as they would be about a text the caller never saw) when the text doesn't parse.
+    TASWTomlResult ReadEdited(std::string const& body, Detail::TDocModel& model, Detail::TDocIndex& index,
+        TASWTomlValue& root) const;
+
     // Reads 'text' (a whole document, with or without a byte order mark) into 'model', 'index' and 'root' with the
     // reading options of 'options', as Parse() describes; on failure, they are left as they were
     static TASWTomlResult ReadText(std::string_view text, TASWTomlOptions const& options, Detail::TDocModel& model,
@@ -265,6 +274,22 @@ private:
 public:
     // An empty document with the default options: no keys, tables or byte order mark, so ToText() is empty
     TASWTomlDocument();
+
+    // Adds 'value' at the end of the array at 'path', written with the document's Values options (the second form:
+    // with 'values'), as SetValue() writes a value:
+    // - An array value gets a new element after its last one, in the layout of the elements before it: on the same
+    //   line after ", " in an array on one line, or on a line of its own in an array with one element per line,
+    //   keeping a comment at the end of the last one's line and a comma after the last element if there was one.
+    // - An array of tables ([[path]]) gets a new [[path]] header with the keys of 'value', which must be a table,
+    //   after the last element and its sub-tables.
+    // - A missing key gets an array of the one value, as SetValue() would write it: an array of tables when 'value'
+    //   is a table and a header can go there.
+    // Fails with InvalidArgument when 'path' isn't valid, names a value that isn't an array (or the root), goes through
+    // one that isn't a table, or 'value' isn't a table for an array of tables; InvalidOptions for 'values' that aren't
+    // valid; NotFound for an index past the end of an array; InvalidValue or NestingTooDeep as SetValue() does. On
+    // failure nothing changes. Throws only std::bad_alloc, and then nothing changes either.
+    TASWTomlResult Append(TASWTomlPath const& path, TASWTomlValue const& value);
+    TASWTomlResult Append(TASWTomlPath const& path, TASWTomlValue const& value, TASWTomlValueOptions const& values);
 
     // Clears the modified flag (see IsModified()), e.g. after the text was saved
     void ClearModified() noexcept;
@@ -322,6 +347,40 @@ public:
     // new reading options refuse (e.g. NestingTooDeep for a lower MaxNestingDepth); then nothing changes. Throws only
     // std::bad_alloc, and then nothing changes either.
     TASWTomlResult SetOptions(TASWTomlOptions const& options);
+
+    // Sets the key, table or element of an array at 'path' to 'value', changing only the text it needs, with the
+    // document's Values options (the second form: with 'values') for new strings and integers. New text uses only the
+    // syntax TOML 1.0 reads; the rest of the text stays byte for byte.
+    // - A value that exists (a key's value, an element of an array, or a key of an inline table) is replaced in place:
+    //   its key, the blanks around '=' and a comment at the end of its line stay. A scalar keeps its form where it can
+    //   when Values asks for Auto: a basic, literal or multi-line string stays one (a literal one that can't hold the
+    //   new text becomes basic), and an integer keeps its hexadecimal, octal or binary base unless the new value is
+    //   negative. A new array is written as [1, 2] and a table as an inline table, { x = 1 }, on one line.
+    // - A missing key is added where its table is written: after the last key line of a [header] table, an element of
+    //   an array of tables or the root table (the root's after the file comment and the blank line under it when it
+    //   has no keys yet), copying that line's indentation; as a dotted key after the last one of a table dotted keys
+    //   made (server.host = "x" after server.port = 80); inside the braces of an inline table, in the spacing of its
+    //   entries. A table that only longer headers made ([a] of [a.b]) gets its own [a] header, before the first of
+    //   theirs. Missing tables on the way are made in the form their table allows: a header ([a.b]) under the root, a
+    //   header table, an element or an implicit table; dotted keys under a dotted-key table; an inline table inside an
+    //   inline table.
+    // - A table value where a header can go is written as a [path] header with its keys, then its sub-tables as headers
+    //   of their own and its arrays of tables (arrays that aren't empty and hold only tables) as [[path]] headers; a
+    //   table whose only keys are tables gets no header of its own. A new header goes after the last header of its
+    //   parent table and the tables under it (at the end of the file for the root), after a blank line when
+    //   Writing.BlankLineBeforeNewTable is on.
+    // - New lines get GetLineBreak(); a last line without a line break gets one first.
+    // A value identical to the one there (floats by their sign too, so -0.0 isn't 0.0, and a NaN is a NaN of the same
+    // sign) changes nothing, and leaves the modified flag as it was. Setting a table that exists (the root, a header,
+    // dotted-key, implicit or element table) or an array of tables as a whole isn't supported yet (InvalidArgument).
+    // Fails with InvalidArgument when 'path' isn't valid, goes through a value that isn't a table (port.x when port is
+    // an integer), puts a key after an array or an index after a table, or names the root for a value that isn't a
+    // table; InvalidOptions for 'values' that aren't valid; NotFound for an index past the end of an array (or into a
+    // missing key); InvalidValue for a value that can't be written (a string that isn't valid UTF-8, a date or time
+    // that isn't valid); NestingTooDeep when the result would be nested deeper than Reading.MaxNestingDepth. On
+    // failure nothing changes. Throws only std::bad_alloc, and then nothing changes either.
+    TASWTomlResult SetValue(TASWTomlPath const& path, TASWTomlValue const& value);
+    TASWTomlResult SetValue(TASWTomlPath const& path, TASWTomlValue const& value, TASWTomlValueOptions const& values);
 
     // The document as text, as its writing options say: a UTF-8 byte order mark (with EBomMode::Auto, when the text
     // that was read had one), then the text. With ELineEnding::Auto every line break stays as it was; LF, CRLF and

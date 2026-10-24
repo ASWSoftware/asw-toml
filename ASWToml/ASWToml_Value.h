@@ -285,6 +285,19 @@ struct TASWTomlKeyValue
 // The type's name, e.g. "LocalDateTime"; "Unknown" for a value that isn't an ETomlType
 char const* ToString(ETomlType type) noexcept;
 
+//---------------------------------------------------------------------------
+// Internals of the library. Not part of the public interface.
+//---------------------------------------------------------------------------
+namespace Detail
+{
+
+// Whether 'left' and 'right' are the same value as the edits see it, so setting one over the other changes nothing:
+// as operator== compares them (arrays in order, tables in any key order), but a float is identical only to one with
+// the same sign, so -0.0 differs from 0.0 and a NaN is identical to a NaN of the same sign (which TOML text keeps)
+bool IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& right) noexcept;
+
+} // namespace Detail
+
 } // namespace ASWToml
 
 //---------------------------------------------------------------------------

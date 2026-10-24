@@ -578,6 +578,42 @@ ASW_TEST(TTest_ASWToml_ValueModel, Equality_ComparesTypeAndValue)
     CheckFalse(TASWTomlValue(Time(7, 32, 0)) == TASWTomlValue(Time(7, 32, 1)), "different times");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ValueModel, IdenticalValues_FloatsBySign)
+{
+    // Arrange
+    double const nan = std::numeric_limits<double>::quiet_NaN();
+    double const negativeNan = std::copysign(nan, -1.0);
+    TASWTomlValue first;
+    first.Set("a", TASWTomlValue::TValueVector{ nan, 1 });
+    first.Set("b", -0.0);
+    TASWTomlValue second;
+    second.Set("b", -0.0);
+    second.Set("a", TASWTomlValue::TValueVector{ nan, 1 });
+    TASWTomlValue third = second;
+    third.Find("a")->AsArray()->front() = negativeNan;
+
+    // Act & Assert
+    CheckTrue(ASWToml::Detail::IdenticalValues(nan, nan), "a NaN is identical to a NaN of the same sign");
+    CheckTrue(ASWToml::Detail::IdenticalValues(negativeNan, std::copysign(std::nan("1"), -1.0)),
+        "whatever their other bits, as TOML text writes no more");
+    CheckFalse(ASWToml::Detail::IdenticalValues(nan, negativeNan), "but not to one of the other sign");
+    CheckFalse(ASWToml::Detail::IdenticalValues(nan, 1.0), "nor to a number");
+    CheckFalse(ASWToml::Detail::IdenticalValues(0.0, -0.0), "0.0 and -0.0 differ");
+    CheckTrue(ASWToml::Detail::IdenticalValues(1.5, 1.5), "equal floats");
+    CheckFalse(ASWToml::Detail::IdenticalValues(1, 1.0), "an integer and a float differ");
+    CheckTrue(ASWToml::Detail::IdenticalValues("x", "x"), "equal strings");
+    CheckTrue(ASWToml::Detail::IdenticalValues(Time(7, 32, 0), Time(7, 32, 0)), "equal times");
+    CheckTrue(ASWToml::Detail::IdenticalValues(first, second), "tables in any order, with NaNs in arrays");
+    CheckFalse(ASWToml::Detail::IdenticalValues(first, third), "a NaN of the other sign deep inside");
+    CheckFalse(ASWToml::Detail::IdenticalValues(TASWTomlValue::TValueVector{ 1, 2 },
+        TASWTomlValue::TValueVector{ 2, 1 }), "arrays in another order differ");
+    CheckFalse(ASWToml::Detail::IdenticalValues(TASWTomlValue::TValueVector{ 1 }, TASWTomlValue::TValueVector{ 1, 2 }),
+        "arrays of other sizes differ");
+    second.Set("c", 1);
+    CheckFalse(ASWToml::Detail::IdenticalValues(first, second), "a table with another key differs");
+    CheckFalse(ASWToml::Detail::IdenticalValues(second, first), "both ways");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_ValueModel, Equality_TablesIgnoreOrder)
 {
     // Arrange

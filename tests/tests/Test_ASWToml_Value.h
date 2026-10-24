@@ -72,6 +72,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Default_IsEmptyTable();
     void Test_Equality_ComparesTypeAndValue();
     void Test_Equality_TablesIgnoreOrder();
+    void Test_IdenticalValues_FloatsBySign();
     void Test_Table_SetFindRemove();
     void Test_TomlType_ValuesNeverChange();
     void Test_ToString_TomlTypeNames();

@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "ASWToml_Value.h"
 //---------------------------------------------------------------------------
+#include <cmath>
 #include <cstddef>
 #include <utility>
 //---------------------------------------------------------------------------
@@ -170,6 +171,57 @@ char const* ToString(ETomlType type) noexcept
     }
 
     return "Unknown";
+}
+//---------------------------------------------------------------------------
+bool Detail::IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& right) noexcept
+{
+    if (left.GetType() != right.GetType())
+        return false;
+
+    double const* const leftFloat = left.AsFloat();
+    if (leftFloat != nullptr)
+    {
+        double const rightFloat = *right.AsFloat();
+        if (std::signbit(*leftFloat) != std::signbit(rightFloat))
+            return false;
+
+        return std::isnan(*leftFloat) ? std::isnan(rightFloat) : *leftFloat == rightFloat;
+    }
+
+    TASWTomlValue::TValueVector const* const leftArray = left.AsArray();
+    if (leftArray != nullptr)
+    {
+        TASWTomlValue::TValueVector const& rightArray = *right.AsArray();
+        if (leftArray->size() != rightArray.size())
+            return false;
+
+        for (std::size_t i = 0; i < leftArray->size(); ++i)
+        {
+            if (!IdenticalValues((*leftArray)[i], rightArray[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+    TASWTomlValue::TKeyValueVector const* const leftTable = left.AsTable();
+    if (leftTable != nullptr)
+    {
+        if (leftTable->size() != right.AsTable()->size())
+            return false;
+
+        for (TASWTomlKeyValue const& entry : *leftTable)
+        {
+            TASWTomlValue const* const rightValue = right.Find(entry.Key);
+            if (rightValue == nullptr || !IdenticalValues(entry.Value, *rightValue))
+                return false;
+        }
+
+        return true;
+    }
+
+    // The other types have no float in them
+    return left == right;
 }
 //---------------------------------------------------------------------------
 
