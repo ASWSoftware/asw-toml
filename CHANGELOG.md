@@ -143,11 +143,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   way are made as the place allows (a header, dotted keys, or an inline table).
   `Append(path, value)` adds an element to an array in its layout (on the same line, or on a line of
   its own when the elements are one per line) or a `[[path]]` element to an array of tables after
-  its last element, and gives a missing key an array of the one value. Setting a value identical to
-  the one there changes nothing; every edit's text is read again, and an edit that wouldn't read
-  back as meant changes nothing. Setting a whole table that exists isn't supported yet. A path that
-  doesn't fit (through a value that isn't a table, an index past the end) fails with
-  `InvalidArgument` or `NotFound`, a value that can't be written with `InvalidValue`, and one nested
-  too deep with `NestingTooDeep`.
+  its last element, and gives a missing key an array of the one value. `Remove(path)` removes a key,
+  table, array of tables or element with the text that defines it, and returns `false` when there is
+  nothing to remove: a key's line with its comment (the comment lines directly above it) and the
+  comment at its end; an element of an array or an entry of an inline table with one comma (a
+  trailing comma stays, and removing the last one leaves `[]` or `{}`), and with its line when it is
+  on a line of its own; a table's header with its comment and lines, the tables under it and the
+  dotted keys that define it; an element of an array of tables with the tables under it. Blank lines
+  don't pile up where text is removed, and a table that only dotted keys or longer headers made goes
+  with its last key, and an array of tables with its last element. `Rename(path, newKey)` gives a
+  key, table or array of tables another name in its table, in its key line and in every header and
+  dotted key that names it, each part bare when it can be (a part that was a literal string stays
+  one when it can hold the name); renaming onto a key the table has fails with `AlreadyExists`.
+  Setting a value identical to the one there changes nothing; every edit's text is read again, and
+  an edit that wouldn't read back as meant changes nothing. Setting a whole table that exists isn't
+  supported yet. A path that doesn't fit (through a value that isn't a table, an index past the end)
+  fails with `InvalidArgument` or `NotFound`, a value that can't be written with `InvalidValue`, and
+  one nested too deep with `NestingTooDeep`.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

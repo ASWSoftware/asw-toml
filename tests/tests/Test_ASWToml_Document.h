@@ -483,6 +483,91 @@ public:
     void TearDown_Test(ITestCase& testCase) override;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentRemove
+//
+// TASWTomlDocument::Remove(): keys, elements, entries, tables and arrays of tables, each with the text that defines it
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentRemove : public TAutoTestGroup<TTest_ASWToml_DocumentRemove>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentRemove> inherited;
+
+private:
+    // Checks that Remove() of 'path' in a document of 'text' returns false and changes nothing
+    void CheckKeeps(std::string const& text, ASWToml::TASWTomlPath const& path, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that Remove() of 'path' in a document of 'text' returns true, gives the text 'expected', sets the
+    // modified flag, and that the text reads as the document's values
+    void CheckRemoves(std::string const& text, ASWToml::TASWTomlPath const& path, std::string const& expected,
+        std::string const& msg, std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_ArrayElements_OnLinesOfTheirOwn();
+    void Test_ArrayElements_WithOneComma();
+    void Test_ArraysOfTables_ElementsWithTheirTables();
+    void Test_BlankLines_DontPileUp();
+    void Test_EmptyTables_GoWhenNothingDefinesThem();
+    void Test_InlineTableEntries_WithOneComma();
+    void Test_KeyLines_WithTheirComments();
+    void Test_LineBreaks_AsTheTextHasThem();
+    void Test_NothingThere_ReturnsFalse();
+    void Test_Tables_WithTheTablesUnderThem();
+
+public:
+    TTest_ASWToml_DocumentRemove();
+    ~TTest_ASWToml_DocumentRemove() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentRename
+//
+// TASWTomlDocument::Rename(): a key or table under a new name, in every place that names it
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentRename : public TAutoTestGroup<TTest_ASWToml_DocumentRename>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentRename> inherited;
+
+private:
+    // Checks that Rename() of 'path' to 'newKey' in a document of 'text' fails with 'code' and a message that holds
+    // 'expectedText', and changes nothing
+    void CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path, std::string const& newKey,
+        ASWToml::ETomlCode code, std::string const& expectedText, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that Rename() of 'path' to 'newKey' in a document of 'text' succeeds, gives the text 'expected' and the
+    // value that was at 'path' at 'newPath' (and nothing at 'path'), sets the modified flag, and that the text reads
+    // as the document's values
+    void CheckRenames(std::string const& text, ASWToml::TASWTomlPath const& path, std::string const& newKey,
+        ASWToml::TASWTomlPath const& newPath, std::string const& expected, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Keys_OnlyTheNameChanges();
+    void Test_NewName_BareBasicOrLiteral();
+    void Test_RejectsWhatCantBeRenamed();
+    void Test_SameName_ChangesNothing();
+    void Test_Tables_EveryPlaceThatNamesThem();
+
+public:
+    TTest_ASWToml_DocumentRename();
+    ~TTest_ASWToml_DocumentRename() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------

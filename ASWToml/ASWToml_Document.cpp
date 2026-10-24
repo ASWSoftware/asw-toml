@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "ASWToml_Document.h"
 //---------------------------------------------------------------------------
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -40,7 +41,11 @@ constexpr std::string_view Utf8Bom = "\xEF\xBB\xBF";
 
 using Detail::ENodeKind;
 using Detail::NoIndex;
+using Detail::TIndexVector;
 using Detail::TTextRange;
+
+// For each line of a text, or each element or entry of an array or inline table, whether an edit removes it
+using TFlagVector = std::vector<bool>;
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -78,6 +83,10 @@ private:
     std::string m_Verb; // What the edit does to a path, for messages: "set" or "append to"
     TSpliceVector m_Splices;
 
+    // Adds to 'items' the values 'node' stands for in an array or inline table: itself for a value, or the values of
+    // the dotted keys under a dotted-key table
+    void AddValues(std::size_t node, TIndexVector& items) const;
+
     // Adds 'item' (a value, or a "key = value" entry) at the end of the array or inline table 'container', after its
     // last element or entry 'last' (NoIndex when it has none), in their layout: on the same line after the last one,
     // or, when they are one per line, on a line of its own after the last one's line
@@ -95,8 +104,24 @@ private:
     // an empty block
     std::size_t BlockEnd(std::size_t block) const;
 
+    // The first byte of the comment lines directly above the line that starts at 'lineStart', in an array or inline
+    // table whose text before that line starts at 'begin' (after the bracket or comma before it); 'lineStart' when
+    // there are none
+    std::size_t CommentHead(std::size_t begin, std::size_t lineStart) const;
+
     // The first of the comment lines directly above 'line'; 'line' itself when there are none
     std::size_t CommentStart(std::size_t line) const;
+
+    // The array or inline table that 'node' is an element or entry of (through the dotted-key tables it is in);
+    // NoIndex when it is written in key lines and headers instead
+    std::size_t Container(std::size_t node) const;
+
+    // The elements of the array 'container', or the entries of the inline table 'container' (the values of its keys,
+    // through dotted keys), in the order they are in the text
+    TIndexVector ContainerItems(std::size_t container) const;
+
+    // Adds a change of the text: the bytes [begin, end) removed
+    void Erase(std::size_t begin, std::size_t end);
 
     // Adds a change of the text: 'text' inserted at 'offset'
     void Insert(std::size_t offset, std::string text);
@@ -109,6 +134,9 @@ private:
     // Adds 'lines', which end with a line break, at 'offset', the start of a line or the end of the text (where a
     // line break comes first when the last line has none)
     void InsertLines(std::size_t offset, std::string lines);
+
+    // Where the element or entry 'item' of an array or inline table starts: its value, or its key
+    std::size_t ItemStart(std::size_t item) const;
 
     // The last key line of 'block'; NoIndex when it has none
     std::size_t LastKeyLine(std::size_t block) const;
@@ -125,6 +153,22 @@ private:
 
     // The line the byte at 'offset' is on; NoIndex when it is past the end
     std::size_t LineOf(std::size_t offset) const;
+
+    // Follows 'path' (valid) through the nodes that exist: sets 'node' to the node at 'path' and 'missing' to the
+    // number of its parts, or at the first key that doesn't exist, 'node' to the table that would hold it and
+    // 'missing' to its part. Fails, for messages about the edit of 'path', with InvalidArgument for an index of what
+    // isn't an array, a key of an array or of a scalar, and NotFound for an index past the end of an array.
+    TASWTomlResult Locate(TASWTomlPath const& path, std::size_t& node, std::size_t& missing) const;
+
+    // Marks in 'lines' the lines of 'block' (which has a header) with the header's comment, up to the comment lines
+    // of the next header
+    void MarkBlock(std::size_t block, TFlagVector& lines) const;
+
+    // Marks in 'lines' the key/value line 'line' with its comment
+    void MarkLine(std::size_t line, TFlagVector& lines) const;
+
+    // Marks in 'lines' the lines that define 'node' (written in key lines and headers) and the tables under it
+    void MarkSubtree(std::size_t node, TFlagVector& lines) const;
 
     // The name of 'node' (one of its Names) inside 'range'; an empty range when it has none there
     TTextRange NameIn(std::size_t node, TTextRange range) const;
@@ -147,6 +191,14 @@ private:
     // The key parts, as written, of a header that names 'table' (a header table, an element or an implicit table),
     // e.g. a."b c"; empty for the root
     std::string PathText(std::size_t table) const;
+
+    // Removes 'items' (some of the elements or entries of the array or inline table 'container'), each run of them
+    // with one comma, or with the lines they are on when a run starts a line; all of them leave [] or {}
+    void RemoveItems(std::size_t container, TIndexVector const& items);
+
+    // Removes the lines marked in 'lines', each run of them with a blank line next to it when blank lines would pile
+    // up, and keeping a text without a line break at its end without one
+    void RemoveLines(TFlagVector const& lines);
 
     // How many levels of tables and arrays may be nested in a value inside 'depth' levels
     std::size_t Room(std::size_t depth) const noexcept;
@@ -181,6 +233,12 @@ public:
     // Whether the edit changes nothing
     bool IsEmpty() const noexcept;
 
+    // The changes of TASWTomlDocument::Remove() of 'node', which isn't the root
+    void Remove(std::size_t node);
+
+    // The changes of TASWTomlDocument::Rename()
+    TASWTomlResult Rename(TASWTomlPath const& path, std::string_view newKey);
+
     // The changes of TASWTomlDocument::SetValue()
     TASWTomlResult SetValue(TASWTomlPath const& path, TASWTomlValue const& value);
 };
@@ -193,10 +251,13 @@ std::string ConvertLineBreaks(std::string const& text, ELineBreak lineBreak);
 Detail::TDocIndex EmptyIndex();
 TASWTomlResult Failure(ETomlCode code, std::string message);
 TASWTomlValue const* FindValue(TASWTomlValue const& root, TASWTomlPath const& path) noexcept;
+TASWTomlValue* FindValue(TASWTomlValue& root, TASWTomlPath const& path) noexcept;
 bool IsArrayOfTables(TASWTomlValue const& value) noexcept;
 std::size_t KeyStart(std::string_view text, std::size_t offset) noexcept;
 std::string Layout(std::string_view before);
 std::string MessagePath(TASWTomlPath const& path);
+TASWTomlPath Prefix(TASWTomlPath const& path, std::size_t count);
+void RemoveValue(TASWTomlValue& root, Detail::TDocIndex const& index, TASWTomlPath const& path);
 TASWTomlValue Wrapped(TASWTomlPath::TPartVector const& parts, std::size_t first, TASWTomlValue const& value);
 
 //---------------------------------------------------------------------------
@@ -369,6 +430,16 @@ TASWTomlValue const* FindValue(TASWTomlValue const& root, TASWTomlPath const& pa
 }
 //---------------------------------------------------------------------------
 /*
+    FindValue
+
+    The value at 'path' in 'root', as the other FindValue() finds it, to be changed
+*/
+TASWTomlValue* FindValue(TASWTomlValue& root, TASWTomlPath const& path) noexcept
+{
+    return const_cast<TASWTomlValue*>(FindValue(static_cast<TASWTomlValue const&>(root), path));
+}
+//---------------------------------------------------------------------------
+/*
     IsArrayOfTables
 
     Whether 'value' is written as an array of tables where a header can go: an array that isn't empty and holds only
@@ -447,6 +518,58 @@ std::string MessagePath(TASWTomlPath const& path)
 }
 //---------------------------------------------------------------------------
 /*
+    Prefix
+
+    The path of the first 'count' parts of 'path' (valid), e.g. a.b for a.b[2].c and 2
+*/
+TASWTomlPath Prefix(TASWTomlPath const& path, std::size_t count)
+{
+    TASWTomlPath prefix;
+    for (std::size_t i = 0; i < count; ++i)
+        prefix.Append(path.GetParts()[i]);
+
+    return prefix;
+}
+//---------------------------------------------------------------------------
+/*
+    RemoveValue
+
+    Removes the value at 'path' (not the root, and in 'root', the values of 'index') from 'root', as the text without
+    it reads: then each table on the way that only dotted keys or longer headers made, and each array of tables, that
+    is left empty goes too, as nothing defines it any more
+*/
+void RemoveValue(TASWTomlValue& root, Detail::TDocIndex const& index, TASWTomlPath const& path)
+{
+    TASWTomlPath::TPartVector const& parts = path.GetParts();
+    for (std::size_t count = parts.size(); count > 0; --count)
+    {
+        TASWTomlPath const holderPath = Prefix(path, count - 1);
+        TASWTomlValue* const holder = FindValue(root, holderPath);
+        TASWTomlPathPart const& part = parts[count - 1];
+        bool empty = false;
+
+        if (part.IsKey())
+        {
+            holder->Remove(part.GetKey());
+            empty = holder->AsTable()->empty();
+        }
+        else
+        {
+            TASWTomlValue::TValueVector& array = *holder->AsArray();
+            array.erase(array.begin() + static_cast<std::ptrdiff_t>(part.GetIndex()));
+            empty = array.empty();
+        }
+
+        ENodeKind const kind = index.Nodes[Detail::FindNode(index, holderPath)].Kind;
+        if (count == 1 || !empty ||
+            (kind != ENodeKind::DottedTable && kind != ENodeKind::ImplicitTable && kind != ENodeKind::ArrayOfTables))
+        {
+            break;
+        }
+    }
+}
+//---------------------------------------------------------------------------
+/*
     Wrapped
 
     'value' inside a table for each of the keys parts[first] to the last part: { a = { b = value } } for the keys a
@@ -483,6 +606,18 @@ TEditor::TEditor(std::string const& text, Detail::TDocIndex const& index, TASWTo
     m_Style.Values = values;
     m_Style.LineBreak = lineBreak;
     m_Style.BlankLineBeforeTable = options.Writing.BlankLineBeforeNewTable;
+}
+//---------------------------------------------------------------------------
+void TEditor::AddValues(std::size_t node, TIndexVector& items) const
+{
+    if (m_Index.Nodes[node].Kind != ENodeKind::DottedTable)
+    {
+        items.push_back(node);
+        return;
+    }
+
+    for (std::size_t const child : m_Index.Nodes[node].Children)
+        AddValues(child, items);
 }
 //---------------------------------------------------------------------------
 TASWTomlResult TEditor::Append(TASWTomlPath const& path, TASWTomlValue const& value)
@@ -612,12 +747,72 @@ std::size_t TEditor::BlockEnd(std::size_t block) const
     return 0;
 }
 //---------------------------------------------------------------------------
+std::size_t TEditor::CommentHead(std::size_t begin, std::size_t lineStart) const
+{
+    std::size_t head = lineStart;
+    for (;;)
+    {
+        // The line above ends with the line feed before 'head'; it is a whole line when a line feed after 'begin'
+        // comes before it (the text before that one is the end of the line of the bracket or comma before)
+        std::size_t const lineFeed = TextOf(TTextRange{ begin, head - 1 }).rfind('\n');
+        if (lineFeed == std::string_view::npos)
+            break;
+
+        std::size_t const above = begin + lineFeed + 1;
+        std::size_t first = above;
+        while (Detail::IsBlank(m_Text[first]))
+            ++first;
+
+        if (m_Text[first] != '#')
+            break;
+
+        head = above;
+    }
+
+    return head;
+}
+//---------------------------------------------------------------------------
 std::size_t TEditor::CommentStart(std::size_t line) const
 {
     while (line > 0 && m_Index.Lines[line - 1].Kind == Detail::ELineKind::Comment)
         --line;
 
     return line;
+}
+//---------------------------------------------------------------------------
+std::size_t TEditor::Container(std::size_t node) const
+{
+    std::size_t holder = m_Index.Nodes[node].Parent;
+    while (m_Index.Nodes[holder].Kind == ENodeKind::DottedTable)
+        holder = m_Index.Nodes[holder].Parent;
+
+    ENodeKind const kind = m_Index.Nodes[holder].Kind;
+
+    return kind == ENodeKind::Array || kind == ENodeKind::InlineTable ? holder : NoIndex;
+}
+//---------------------------------------------------------------------------
+TIndexVector TEditor::ContainerItems(std::size_t container) const
+{
+    Detail::TIndexNode const& holder = m_Index.Nodes[container];
+    if (holder.Kind == ENodeKind::Array)
+        return holder.Children;
+
+    TIndexVector items;
+    for (std::size_t const child : holder.Children)
+        AddValues(child, items);
+
+    // In the order of the text, as the dotted keys of a table may be apart from each other
+    for (std::size_t i = 1; i < items.size(); ++i)
+    {
+        std::size_t const item = items[i];
+        std::size_t j = i;
+        for (; j > 0 && m_Index.Nodes[items[j - 1]].Item.Begin > m_Index.Nodes[item].Item.Begin; --j)
+            items[j] = items[j - 1];
+
+        items[j] = item;
+    }
+
+    return items;
 }
 //---------------------------------------------------------------------------
 std::string TEditor::EditedText() const
@@ -634,6 +829,11 @@ std::string TEditor::EditedText() const
     text.append(m_Text, done, std::string::npos);
 
     return text;
+}
+//---------------------------------------------------------------------------
+void TEditor::Erase(std::size_t begin, std::size_t end)
+{
+    m_Splices.push_back(TSplice{ begin, end, std::string() });
 }
 //---------------------------------------------------------------------------
 void TEditor::Insert(std::size_t offset, std::string text)
@@ -664,6 +864,15 @@ void TEditor::InsertLines(std::size_t offset, std::string lines)
 bool TEditor::IsEmpty() const noexcept
 {
     return m_Splices.empty();
+}
+//---------------------------------------------------------------------------
+std::size_t TEditor::ItemStart(std::size_t item) const
+{
+    Detail::TIndexNode const& node = m_Index.Nodes[item];
+    if (m_Index.Nodes[node.Parent].Kind == ENodeKind::Array)
+        return node.Value.Begin;
+
+    return KeyStart(m_Text, node.Item.Begin);
 }
 //---------------------------------------------------------------------------
 std::size_t TEditor::LastKeyLine(std::size_t block) const
@@ -740,6 +949,94 @@ std::size_t TEditor::LineOf(std::size_t offset) const
     }
 
     return NoIndex;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TEditor::Locate(TASWTomlPath const& path, std::size_t& node, std::size_t& missing) const
+{
+    TASWTomlPath::TPartVector const& parts = path.GetParts();
+    node = 0;
+
+    for (std::size_t i = 0; i < parts.size(); ++i)
+    {
+        Detail::TIndexNode const& holder = m_Index.Nodes[node];
+        bool const isArray = holder.Kind == ENodeKind::Array || holder.Kind == ENodeKind::ArrayOfTables;
+        TASWTomlPathPart const& part = parts[i];
+        TASWTomlPath const walked = Prefix(path, i);
+
+        if (part.IsIndex())
+        {
+            if (!isArray)
+                return PathFailure(ETomlCode::InvalidArgument, path, MessagePath(walked) + " isn't an array.");
+
+            if (part.GetIndex() >= holder.Children.size())
+            {
+                std::size_t const count = holder.Children.size();
+                return PathFailure(ETomlCode::NotFound, path, "the array " + MessagePath(walked) + " has " +
+                    std::to_string(count) + (count == 1 ? " element." : " elements."));
+            }
+
+            node = holder.Children[part.GetIndex()];
+            continue;
+        }
+
+        if (isArray)
+        {
+            return PathFailure(ETomlCode::InvalidArgument, path, MessagePath(walked) +
+                " is an array, so an index must come before a key.");
+        }
+
+        if (holder.Kind == ENodeKind::Scalar)
+        {
+            TASWTomlValue const* const scalar = FindValue(m_Root, walked);
+            return PathFailure(ETomlCode::InvalidArgument, path, MessagePath(walked) + " is a value of type " +
+                std::string(ToString(scalar->GetType())) + ", not a table.");
+        }
+
+        Detail::TNodeIndexMap::const_iterator const found = holder.Keys.find(part.GetKey());
+        if (found == holder.Keys.end())
+        {
+            missing = i;
+            return TASWTomlResult();
+        }
+
+        node = found->second;
+    }
+
+    missing = parts.size();
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+void TEditor::MarkBlock(std::size_t block, TFlagVector& lines) const
+{
+    std::size_t end = m_Index.Lines.size();
+    if (block + 1 < m_Index.BlockLines.size())
+        end = CommentStart(m_Index.BlockLines[block + 1]);
+
+    for (std::size_t line = CommentStart(m_Index.BlockLines[block]); line < end; ++line)
+        lines[line] = true;
+}
+//---------------------------------------------------------------------------
+void TEditor::MarkLine(std::size_t line, TFlagVector& lines) const
+{
+    for (std::size_t i = CommentStart(line); i <= line; ++i)
+        lines[i] = true;
+}
+//---------------------------------------------------------------------------
+void TEditor::MarkSubtree(std::size_t node, TFlagVector& lines) const
+{
+    Detail::TIndexNode const& marked = m_Index.Nodes[node];
+    if (marked.Block != NoIndex)
+        MarkBlock(marked.Block, lines);
+    else if (marked.Line != NoIndex)
+        MarkLine(marked.Line, lines);
+
+    // The values in an array or inline table are on its lines
+    if (marked.Kind == ENodeKind::Scalar || marked.Kind == ENodeKind::Array || marked.Kind == ENodeKind::InlineTable)
+        return;
+
+    for (std::size_t const child : marked.Children)
+        MarkSubtree(child, lines);
 }
 //---------------------------------------------------------------------------
 TTextRange TEditor::NameIn(std::size_t node, TTextRange range) const
@@ -986,6 +1283,193 @@ std::string TEditor::PathText(std::size_t table) const
     return std::string();
 }
 //---------------------------------------------------------------------------
+void TEditor::Remove(std::size_t node)
+{
+    std::size_t const container = Container(node);
+    if (container != NoIndex)
+    {
+        TIndexVector items;
+        AddValues(node, items);
+        RemoveItems(container, items);
+
+        return;
+    }
+
+    TFlagVector lines(m_Index.Lines.size(), false);
+    MarkSubtree(node, lines);
+    RemoveLines(lines);
+}
+//---------------------------------------------------------------------------
+void TEditor::RemoveItems(std::size_t container, TIndexVector const& items)
+{
+    Detail::TIndexNode const& holder = m_Index.Nodes[container];
+    TIndexVector const all = ContainerItems(container);
+    TFlagVector removed(all.size(), false);
+    for (std::size_t i = 0; i < all.size(); ++i)
+        removed[i] = std::find(items.begin(), items.end(), all[i]) != items.end();
+
+    if (items.size() == all.size())
+    {
+        // All of them: an empty array or inline table
+        Erase(holder.Value.Begin + 1, holder.Close.End - 1);
+        return;
+    }
+
+    for (std::size_t first = 0; first < all.size(); ++first)
+    {
+        if (!removed[first])
+            continue;
+
+        // A run of them, from 'first' to 'last'
+        std::size_t last = first;
+        while (last + 1 < all.size() && removed[last + 1])
+            ++last;
+
+        Detail::TIndexNode const& firstItem = m_Index.Nodes[all[first]];
+        Detail::TIndexNode const& lastItem = m_Index.Nodes[all[last]];
+        bool const atEnd = last + 1 == all.size();
+        bool const lastComma = lastItem.Item.End > lastItem.Value.End;
+        std::size_t const begin = ItemStart(all[first]);
+        std::size_t const next = atEnd ? holder.Close.End - 1 : ItemStart(all[last + 1]);
+        std::size_t const lineFeed = TextOf(TTextRange{ firstItem.Item.Begin, begin }).rfind('\n');
+        std::size_t const nextLineFeed = TextOf(TTextRange{ lastItem.Item.End, next }).find('\n');
+        std::size_t const comma = first > 0 ? m_Index.Nodes[all[first - 1]].Item.End - 1 : 0;
+
+        if (lineFeed != std::string_view::npos)
+        {
+            // The run starts a line: that line goes with the comment lines directly above it, and the comma before
+            // it when it ends the array or inline table without a comma of its own (which would be a trailing comma)
+            std::size_t const lineStart = firstItem.Item.Begin + lineFeed + 1;
+            std::size_t const head = CommentHead(firstItem.Item.Begin, lineStart);
+            if (atEnd && !lastComma && first > 0)
+                Erase(comma, comma + 1);
+
+            if (nextLineFeed != std::string_view::npos)
+            {
+                // Through the end of the line it ends on, its comment included
+                Erase(head, lastItem.Item.End + nextLineFeed + 1);
+            }
+            else if (atEnd)
+            {
+                Erase(head, lastItem.Item.End);
+            }
+            else
+            {
+                // The next one is on the same line: it keeps the indentation
+                if (head < lineStart)
+                    Erase(head, lineStart);
+
+                Erase(begin, next);
+            }
+        }
+        else if (first == 0)
+        {
+            // The first ones, with the comma after them and the blanks before the next one
+            Erase(begin, next);
+        }
+        else if (atEnd)
+        {
+            // The last ones, with the comma before them; a trailing comma stays
+            Erase(comma, lastComma ? lastItem.Item.End - 1 : lastItem.Item.End);
+        }
+        else
+        {
+            // Ones in the middle, with the blanks before them and the comma after them
+            Erase(firstItem.Item.Begin, lastItem.Item.End);
+        }
+
+        first = last;
+    }
+}
+//---------------------------------------------------------------------------
+void TEditor::RemoveLines(TFlagVector const& lines)
+{
+    std::size_t const count = m_Index.Lines.size();
+    std::size_t kept = 0; // The lines before this one are removed or kept already
+
+    for (std::size_t first = 0; first < count; ++first)
+    {
+        if (!lines[first])
+            continue;
+
+        // A run of them, from 'first' to before 'end'
+        std::size_t end = first;
+        while (end < count && lines[end])
+            ++end;
+
+        // When a blank line would be left on each side (or one before the end of the text), the one before goes too;
+        // at the start of the text, the blank line after
+        std::size_t begin = first;
+        bool const blankAfter = end < count && m_Index.Lines[end].Kind == Detail::ELineKind::Blank;
+        if (begin > kept && m_Index.Lines[begin - 1].Kind == Detail::ELineKind::Blank && (blankAfter || end == count))
+            --begin;
+        else if (begin == 0 && blankAfter)
+            ++end;
+
+        std::size_t from = m_Index.Lines[begin].Text.Begin;
+        std::size_t const to = end < count ? m_Index.Lines[end].Text.Begin : m_Text.size();
+
+        // A text that doesn't end with a line break keeps that: the line before loses its line break instead
+        if (to == m_Text.size() && !m_Text.empty() && m_Text.back() != '\n' && begin > kept)
+            from = m_Index.Lines[begin - 1].Text.End;
+
+        Erase(from, to);
+        kept = end;
+        first = end - 1;
+    }
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TEditor::Rename(TASWTomlPath const& path, std::string_view newKey)
+{
+    m_Verb = "rename";
+    if (!path.IsValid())
+        return Failure(ETomlCode::InvalidArgument, path.GetError());
+
+    if (path.IsRoot())
+        return PathFailure(ETomlCode::InvalidArgument, path, "it has no name.");
+
+    TASWTomlPath::TPartVector const& parts = path.GetParts();
+    if (parts.back().IsIndex())
+        return PathFailure(ETomlCode::InvalidArgument, path, "an element of an array has no name.");
+
+    std::size_t node = 0;
+    std::size_t missing = 0;
+    TASWTomlResult result = Locate(path, node, missing);
+    if (!result.IsOk())
+        return result;
+
+    if (missing < parts.size())
+        return PathFailure(ETomlCode::NotFound, path, MessagePath(Prefix(path, missing + 1)) + " doesn't exist.");
+
+    Detail::TIndexNode const& renamed = m_Index.Nodes[node];
+    if (renamed.Key == newKey)
+        return result;
+
+    std::string bare;
+    result = Detail::WriteKey(newKey, bare);
+    if (!result.IsOk())
+        return result;
+
+    if (m_Index.Nodes[renamed.Parent].Keys.find(newKey) != m_Index.Nodes[renamed.Parent].Keys.end())
+    {
+        return PathFailure(ETomlCode::AlreadyExists, path, MessagePath(Prefix(path, parts.size() - 1)) +
+            " already has a key " + TASWTomlPath({ TASWTomlPathPart(newKey) }).ToString() + ".");
+    }
+
+    // A quoted part that was literal stays literal when it can
+    std::string literal;
+    if (bare.front() == '"')
+        result = Detail::WriteString(newKey, literal, EStringStyle::Literal);
+
+    for (TTextRange const& name : renamed.Names)
+    {
+        bool const wasLiteral = m_Text[name.Begin] == '\'';
+        m_Splices.push_back(TSplice{ name.Begin, name.End, wasLiteral && !literal.empty() ? literal : bare });
+    }
+
+    return result;
+}
+//---------------------------------------------------------------------------
 std::size_t TEditor::Room(std::size_t depth) const noexcept
 {
     return depth < m_MaxDepth ? m_MaxDepth - depth : 0;
@@ -1081,66 +1565,24 @@ TASWTomlResult TEditor::Walk(TASWTomlPath const& path, TASWTomlValue const& valu
 
     // Through the parts that exist, to the first missing key, if any
     std::size_t node = 0;
-    TASWTomlPath walked;
+    std::size_t missing = 0;
+    TASWTomlResult const result = Locate(path, node, missing);
+    if (!result.IsOk())
+        return result;
 
-    for (std::size_t i = 0; i < parts.size(); ++i)
+    if (missing == parts.size())
+        return SetExisting(node, path, value);
+
+    for (std::size_t i = missing + 1; i < parts.size(); ++i)
     {
-        Detail::TIndexNode const& holder = m_Index.Nodes[node];
-        bool const isArray = holder.Kind == ENodeKind::Array || holder.Kind == ENodeKind::ArrayOfTables;
-        TASWTomlPathPart const& part = parts[i];
-
-        if (part.IsIndex())
+        if (parts[i].IsIndex())
         {
-            if (!isArray)
-                return PathFailure(ETomlCode::InvalidArgument, path, MessagePath(walked) + " isn't an array.");
-
-            if (part.GetIndex() >= holder.Children.size())
-            {
-                std::size_t const count = holder.Children.size();
-                return PathFailure(ETomlCode::NotFound, path, "the array " + MessagePath(walked) + " has " +
-                    std::to_string(count) + (count == 1 ? " element." : " elements."));
-            }
-
-            node = holder.Children[part.GetIndex()];
+            return PathFailure(ETomlCode::NotFound, path, MessagePath(Prefix(path, missing + 1)) +
+                " doesn't exist, so it has no elements.");
         }
-        else
-        {
-            if (isArray)
-            {
-                return PathFailure(ETomlCode::InvalidArgument, path, MessagePath(walked) +
-                    " is an array, so an index must come before a key.");
-            }
-
-            if (holder.Kind == ENodeKind::Scalar)
-            {
-                TASWTomlValue const* const scalar = FindValue(m_Root, walked);
-                return PathFailure(ETomlCode::InvalidArgument, path, MessagePath(walked) + " is a value of type " +
-                    std::string(ToString(scalar->GetType())) + ", not a table.");
-            }
-
-            Detail::TNodeIndexMap::const_iterator const found = holder.Keys.find(part.GetKey());
-            if (found == holder.Keys.end())
-            {
-                for (std::size_t j = i + 1; j < parts.size(); ++j)
-                {
-                    if (parts[j].IsIndex())
-                    {
-                        walked.Append(part);
-                        return PathFailure(ETomlCode::NotFound, path, MessagePath(walked) +
-                            " doesn't exist, so it has no elements.");
-                    }
-                }
-
-                return NewKey(node, part.GetKey(), Wrapped(parts, i + 1, value));
-            }
-
-            node = found->second;
-        }
-
-        walked.Append(part);
     }
 
-    return SetExisting(node, path, value);
+    return NewKey(node, parts[missing].GetKey(), Wrapped(parts, missing + 1, value));
 }
 //---------------------------------------------------------------------------
 
@@ -1330,6 +1772,68 @@ TASWTomlResult TASWTomlDocument::ReadText(std::string_view text, TASWTomlOptions
     result = Detail::BuildIndex(newModel, body, options.Reading.MaxNestingDepth, index, root);
     if (result.IsOk())
         model = std::move(newModel);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+bool TASWTomlDocument::Remove(TASWTomlPath const& path)
+{
+    std::size_t const node = Detail::FindNode(m_Index, path);
+    if (node == NoIndex || node == 0)
+        return false;
+
+    std::string const body = BodyText();
+    TEditor editor(body, m_Index, m_Root, m_Options, m_Options.Values, GetLineBreak());
+    editor.Remove(node);
+
+    Detail::TDocModel model;
+    Detail::TDocIndex index;
+    TASWTomlValue root;
+    if (!ReadEdited(editor.EditedText(), model, index, root).IsOk())
+        return false;
+
+    // The text must read as the values without the one at 'path'
+    TASWTomlValue expected = m_Root;
+    RemoveValue(expected, m_Index, path);
+    if (!Detail::IdenticalValues(root, expected))
+        return false;
+
+    Commit(model, index, root);
+
+    return true;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::Rename(TASWTomlPath const& path, std::string_view newKey)
+{
+    std::string const body = BodyText();
+    TEditor editor(body, m_Index, m_Root, m_Options, m_Options.Values, GetLineBreak());
+    TASWTomlResult result = editor.Rename(path, newKey);
+    if (!result.IsOk() || editor.IsEmpty())
+        return result;
+
+    Detail::TDocModel model;
+    Detail::TDocIndex index;
+    TASWTomlValue root;
+    result = ReadEdited(editor.EditedText(), model, index, root);
+    if (!result.IsOk())
+        return result;
+
+    // The text must read as the values with the key under its new name
+    TASWTomlValue expected = m_Root;
+    std::string const& oldKey = path.GetParts().back().GetKey();
+    for (TASWTomlKeyValue& item : *FindValue(expected, Prefix(path, path.GetParts().size() - 1))->AsTable())
+    {
+        if (item.Key == oldKey)
+            item.Key = newKey;
+    }
+
+    if (!Detail::IdenticalValues(root, expected))
+    {
+        return Failure(ETomlCode::InvalidValue, "Can't rename " + MessagePath(path) +
+            ": the text written for the new name doesn't read back as it.");
+    }
+
+    Commit(model, index, root);
 
     return result;
 }

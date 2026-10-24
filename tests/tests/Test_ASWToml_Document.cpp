@@ -4033,6 +4033,392 @@ ASW_TEST(TTest_ASWToml_DocumentAppend, RejectsWhatCantBeAppended)
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentRemove
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentRemove::TTest_ASWToml_DocumentRemove()
+    : inherited("ASWToml_DocumentRemove_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentRemove::~TTest_ASWToml_DocumentRemove()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRemove::CheckKeeps(std::string const& text, ASWToml::TASWTomlPath const& path,
+    std::string const& msg, std::source_location loc)
+{
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), msg + ": the text should parse", loc);
+
+    bool const removed = document.Remove(path);
+
+    CheckFalse(removed, msg + ": nothing is removed", loc);
+    CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
+    CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRemove::CheckRemoves(std::string const& text, ASWToml::TASWTomlPath const& path,
+    std::string const& expected, std::string const& msg, std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text);
+    CheckTrue(parsed.IsOk(), msg + ": the text should parse: " + parsed.Message, loc);
+
+    bool const removed = document.Remove(path);
+
+    CheckTrue(removed, msg + ": it should be removed", loc);
+    CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
+    CheckTrue(document.IsModified(), msg + ": the document is modified", loc);
+
+    TASWTomlDocument reread;
+    CheckTrue(reread.Parse(document.ToText()).IsOk() &&
+        ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()),
+        msg + ": the text should read as the document's values", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRemove::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRemove::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRemove::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRemove::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, ArrayElements_OnLinesOfTheirOwn)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("a = [\n  1, # one\n  # about two\n  2, # two\n  3\n]\n", "a[1]", "a = [\n  1, # one\n  3\n]\n",
+        "its line, with the comment lines above it and the comment at its end");
+    CheckRemoves("a = [\n  1, # one\n  2 # two\n]\n", "a[1]", "a = [\n  1 # one\n]\n",
+        "the last one, and the comma before it");
+    CheckRemoves("a = [\n  1, # one\n  2, # two\n]\n", "a[1]", "a = [\n  1, # one\n]\n",
+        "the last one with a trailing comma, which the one before keeps");
+    CheckRemoves("a = [\n  # first\n  1,\n  2,\n]\n", "a[0]", "a = [\n  2,\n]\n", "the first one with its comment");
+    CheckRemoves("a = [ # list\n  1,\n  2,\n]\n", "a[0]", "a = [ # list\n  2,\n]\n",
+        "a comment after the bracket stays");
+    CheckRemoves("a = [\n  1, 2,\n  3\n]\n", "a[1]", "a = [\n  1,\n  3\n]\n", "one after another on their line");
+    CheckRemoves("a = [\n  1,\n  2, 3\n]\n", "a[1]", "a = [\n  1,\n  3\n]\n", "one before another on their line");
+    CheckRemoves("a = [\n  1,\n  # two\n  2, 3\n]\n", "a[1]", "a = [\n  1,\n  3\n]\n",
+        "one before another, with its comment");
+    CheckRemoves("a = [\n  1,\n  2]\n", "a[1]", "a = [\n  1\n]\n", "the last one, before the bracket");
+    CheckRemoves("a = [\n  1,\n  # two\n  2]\n", "a[1]", "a = [\n  1\n]\n", "the last one with its comment");
+    CheckRemoves("a = [\n  1,\n  # not about two\n\n  2,\n]\n", "a[1]", "a = [\n  1,\n  # not about two\n\n]\n",
+        "a comment apart from it stays");
+    CheckRemoves("a = [\n  1,\n]\n", "a[0]", "a = []\n", "the only one leaves []");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, ArrayElements_WithOneComma)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("a = [1, 2, 3]\n", "a[0]", "a = [2, 3]\n", "the first one, with the comma after it");
+    CheckRemoves("a = [1, 2, 3]\n", "a[1]", "a = [1, 3]\n", "one in the middle");
+    CheckRemoves("a = [1, 2, 3]\n", "a[2]", "a = [1, 2]\n", "the last one, with the comma before it");
+    CheckRemoves("a = [1, 2, 3,]\n", "a[2]", "a = [1, 2,]\n", "a trailing comma stays");
+    CheckRemoves("a = [1,2,3]\n", "a[1]", "a = [1,3]\n", "without blanks");
+    CheckRemoves("a = [ 1, 2 ]\n", "a[0]", "a = [ 2 ]\n", "the blanks inside the brackets stay");
+    CheckRemoves("a = [ 1 ]\n", "a[0]", "a = []\n", "the only one leaves []");
+    CheckRemoves("a = [[1, 2], 3]\n", "a[0][1]", "a = [[1], 3]\n", "in an array in an array");
+    CheckRemoves("a = [{ x = 1 }, 2] # c\n", "a[0]", "a = [2] # c\n", "an inline table");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, ArraysOfTables_ElementsWithTheirTables)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("[[s]]\nx = 1\n\n[s.t]\ny = 1\n\n[[s]]\nx = 2\n", "s[0]", "[[s]]\nx = 2\n",
+        "an element with the table under it");
+    CheckRemoves("[[s]]\nx = 1\n\n[s.t]\ny = 1\n\n[[s]]\nx = 2\n", "s[1]", "[[s]]\nx = 1\n\n[s.t]\ny = 1\n",
+        "the last element");
+    CheckRemoves("# servers\n[[s]]\nx = 1\n\n# the second\n[[s]]\nx = 2\n", "s[1]", "# servers\n[[s]]\nx = 1\n",
+        "with its comment");
+    CheckRemoves("[[s]]\nx = 1\n[[s]]\nx = 2\n\n[u]\n", "s", "[u]\n", "every element of the array of tables");
+    CheckRemoves("[t]\n[[t.s]]\nx = 1\n[[t.s]]\nx = 2\n", "t.s[0]", "[t]\n[[t.s]]\nx = 2\n",
+        "an element of an array of tables in a table");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, BlankLines_DontPileUp)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("a = 1\n\nb = 2\n\nc = 3\n", "b", "a = 1\n\nc = 3\n", "between blank lines, one stays");
+    CheckRemoves("a = 1\n\nb = 2\n", "b", "a = 1\n", "at the end, the blank line before goes");
+    CheckRemoves("b = 2\n\nc = 3\n", "b", "c = 3\n", "at the start, the blank line after goes");
+    CheckRemoves("a = 1\n\nb = 2\nc = 3\n", "b", "a = 1\n\nc = 3\n", "a blank line on one side stays");
+    CheckRemoves("# file\n\nb = 2\n\n[t]\n", "b", "# file\n\n[t]\n",
+        "the file comment and the blank line under it stay");
+    CheckRemoves("a = 1\n\n[t]\nx = 1\n\n[u]\n", "t", "a = 1\n\n[u]\n", "a table between blank lines");
+    CheckRemoves("a = 1\n\n[t]\nx = 1\n\n", "t", "a = 1\n", "a table at the end");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, EmptyTables_GoWhenNothingDefinesThem)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("[t]\nx = 1\n", "t.x", "[t]\n", "a table with a header stays");
+    CheckRemoves("[[s]]\nx = 1\n", "s[0].x", "[[s]]\n", "an element stays");
+    CheckRemoves("a.x = 1\nb = 2\n", "a.x", "b = 2\n", "a dotted-key table goes with its last key");
+    CheckRemoves("a.x = 1\n[a.s]\n", "a.x", "[a.s]\n", "but stays while a table under it is left");
+    CheckRemoves("[t.a]\nx = 1\n", "t.a", "", "a table only a longer header made goes with it");
+    CheckRemoves("[[s]]\nx = 1\n", "s[0]", "", "an array of tables goes with its last element");
+    CheckRemoves("p = { a.x = 1 }\n", "p.a.x", "p = {}\n", "a dotted-key table in an inline table");
+
+    // Arrange
+    TASWTomlDocument dotted;
+    TASWTomlDocument array;
+    CheckTrue(dotted.Parse("a.x = 1\n").IsOk() && array.Parse("[[a.s]]\n").IsOk(), "the texts should parse");
+
+    // Act
+    bool const dottedRemoved = dotted.Remove("a.x");
+    bool const arrayRemoved = array.Remove("a.s[0]");
+
+    // Assert
+    CheckTrue(dottedRemoved && dotted.Find("a") == nullptr, "the dotted-key table is gone");
+    CheckTrue(arrayRemoved && array.Find("a") == nullptr, "the array of tables and the table it was in are gone");
+    CheckTrue(array.GetRoot() == TASWTomlValue(), "the root is empty");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, InlineTableEntries_WithOneComma)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("p = { a = 1, b = 2, c = 3 }\n", "p.a", "p = { b = 2, c = 3 }\n", "the first one");
+    CheckRemoves("p = { a = 1, b = 2, c = 3 }\n", "p.b", "p = { a = 1, c = 3 }\n", "one in the middle");
+    CheckRemoves("p = { a = 1, b = 2, c = 3 }\n", "p.c", "p = { a = 1, b = 2 }\n", "the last one");
+    CheckRemoves("p = { a = 1 }\n", "p.a", "p = {}\n", "the only one leaves {}");
+    CheckRemoves("p = { a.x = 1, b = 2, a.y = 3 }\n", "p.a", "p = { b = 2 }\n",
+        "a table of dotted keys, each of them");
+    CheckRemoves("p = { a.x = 1, a.y = 2 }\n", "p.a.x", "p = { a.y = 2 }\n", "one dotted key");
+    CheckRemoves("p = { q = { r = 1, s = 2 } }\n", "p.q.r", "p = { q = { s = 2 } }\n",
+        "in an inline table in an inline table");
+    CheckRemoves("a = [{ x = 1, y = 2 }]\n", "a[0].x", "a = [{ y = 2 }]\n", "in an inline table in an array");
+    CheckRemoves("p = {\n  a = 1,\n  b = 2,\n}\n", "p.a", "p = {\n  b = 2,\n}\n",
+        "an inline table on several lines (TOML 1.1)");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, KeyLines_WithTheirComments)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("a = 1\nb = 2\nc = 3\n", "b", "a = 1\nc = 3\n", "the key's line");
+    CheckRemoves("a = 1\n# about b\n# more\nb = 2 # two\nc = 3\n", "b", "a = 1\nc = 3\n",
+        "with the comment lines above it and the comment at its end");
+    CheckRemoves("# about a\n\n# about b\nb = 2\n", "b", "# about a\n", "a comment apart from it stays");
+    CheckRemoves("[t]\n  x = 1\n  y = 2\n", "t.x", "[t]\n  y = 2\n", "in a header table");
+    CheckRemoves("a = [\n  1,\n  2,\n] # c\nb = 1\n", "a", "b = 1\n", "a value on several lines");
+    CheckRemoves("p = { x = 1 }\nb = 1\n", "p", "b = 1\n", "an inline table's line");
+    CheckRemoves("a.x = 1\na.y = 2\n", "a.x", "a.y = 2\n", "a dotted key");
+    CheckRemoves("[[s]]\nx = 1\ny = 2\n", "s[0].x", "[[s]]\ny = 2\n", "a key of an element");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, LineBreaks_AsTheTextHasThem)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("a = 1\r\nb = 2\r\nc = 3\r\n", "b", "a = 1\r\nc = 3\r\n", "CRLF lines");
+    CheckRemoves("a = [\r\n  1,\r\n  2,\r\n]\r\n", "a[0]", "a = [\r\n  2,\r\n]\r\n", "an element on a CRLF line");
+    CheckRemoves("a = 1\nb = 2", "b", "a = 1", "a text without a line break at its end keeps that");
+    CheckRemoves("x = 1\n\n[t]\ny = 2", "t", "x = 1", "with the blank line before what is removed");
+    CheckRemoves(Bom + "a = 1\nb = 2\n", "a", Bom + "b = 2\n", "the byte order mark stays");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, NothingThere_ReturnsFalse)
+{
+    // Arrange & Act & Assert
+    CheckKeeps("a = 1\n", "", "the root");
+    CheckKeeps("a = 1\n", "b", "a missing key");
+    CheckKeeps("a = 1\n", "a.b", "a key of a scalar");
+    CheckKeeps("a = [1]\n", "a[1]", "an index past the end");
+    CheckKeeps("[t]\n", "t[0]", "an index of a table");
+    CheckKeeps("a = 1\n", "a..b", "a path that isn't valid");
+    CheckKeeps("", "a", "an empty document");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRemove, Tables_WithTheTablesUnderThem)
+{
+    // Arrange & Act & Assert
+    CheckRemoves("a = 1\n\n# about t\n[t]\nx = 1\n\n# about u\n[u]\ny = 2\n", "t", "a = 1\n\n# about u\n[u]\ny = 2\n",
+        "its header with its comment and lines, keeping the next header's comment");
+    CheckRemoves("a = 1\n\n[t]\nx = 1\n\n[u]\ny = 2\n\n[t.s]\nz = 3\n", "t", "a = 1\n\n[u]\ny = 2\n",
+        "and the tables under it, wherever they are");
+    CheckRemoves("[t]\nx = 1\n# y = 2\n\n[u]\n", "t", "[u]\n", "the comment lines at the end of its block");
+    CheckRemoves("a.x = 1\nb = 3\na.y = 2\n", "a", "b = 3\n", "a table of dotted keys: each of its lines");
+    CheckRemoves("a.x = 1\n[a.s]\ny = 1\n", "a", "", "its dotted keys and a header under it");
+    CheckRemoves("a.x = 1\n\n[a.s]\ny = 1", "a", "", "with a blank line between them");
+    CheckRemoves("[t.a]\nx = 1\n\n[u]\n\n[t.b]\ny = 2\n", "t", "[u]\n", "a table only longer headers made");
+    CheckRemoves("[t]\na.b = 1\nc = 2\n", "t.a", "[t]\nc = 2\n", "a dotted-key table in a header table");
+    CheckRemoves("[t]\nx = 1\n", "t", "", "the only table");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentRename
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentRename::TTest_ASWToml_DocumentRename()
+    : inherited("ASWToml_DocumentRename_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentRename::~TTest_ASWToml_DocumentRename()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRename::CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path,
+    std::string const& newKey, ETomlCode code, std::string const& expectedText, std::string const& msg,
+    std::source_location loc)
+{
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), msg + ": the text should parse", loc);
+
+    ASWToml::TASWTomlResult const result = document.Rename(path, newKey);
+
+    CheckEquals(code, result.Code, msg + ": the code", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message", loc);
+    CheckEquals(std::size_t(0), result.Line, msg + ": not about a place in the text", loc);
+    CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
+    CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRename::CheckRenames(std::string const& text, ASWToml::TASWTomlPath const& path,
+    std::string const& newKey, ASWToml::TASWTomlPath const& newPath, std::string const& expected,
+    std::string const& msg, std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text);
+    CheckTrue(parsed.IsOk(), msg + ": the text should parse: " + parsed.Message, loc);
+    TASWTomlValue const* const found = document.Find(path);
+    TASWTomlValue const old = found != nullptr ? *found : TASWTomlValue();
+
+    ASWToml::TASWTomlResult const result = document.Rename(path, newKey);
+
+    CheckTrue(result.IsOk(), msg + ": it should be renamed: " + result.Message, loc);
+    CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
+    TASWTomlValue const* const renamed = document.Find(newPath);
+    CheckTrue(found != nullptr && renamed != nullptr && ASWToml::Detail::IdenticalValues(*renamed, old),
+        msg + ": the value under its new name", loc);
+    CheckTrue(document.Find(path) == nullptr, msg + ": nothing under its old name", loc);
+    CheckTrue(document.IsModified(), msg + ": the document is modified", loc);
+
+    TASWTomlDocument reread;
+    CheckTrue(reread.Parse(document.ToText()).IsOk() &&
+        ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()),
+        msg + ": the text should read as the document's values", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRename::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRename::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRename::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentRename::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRename, Keys_OnlyTheNameChanges)
+{
+    // Arrange & Act & Assert
+    CheckRenames("a = 1 # c\nb = 2\n", "a", "z", "z", "z = 1 # c\nb = 2\n", "its value and comment stay");
+    CheckRenames("  a  =  1\n", "a", "b", "b", "  b  =  1\n", "the blanks stay");
+    CheckRenames("p = { x = 1, y = 2 }\n", "p.x", "z", "p.z", "p = { z = 1, y = 2 }\n", "a key of an inline table");
+    CheckRenames("a.x = 1\n", "a.x", "y", "a.y", "a.y = 1\n", "the last part of a dotted key");
+    CheckRenames("[t]\nx = 1\n", "t.x", "y", "t.y", "[t]\ny = 1\n", "a key of a header table");
+    CheckRenames("[[s]]\nx = 1\n", "s[0].x", "y", "s[0].y", "[[s]]\ny = 1\n", "a key of an element");
+    CheckRenames("a = [1, 2]\n", "a", "b", "b", "b = [1, 2]\n", "an array value");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRename, NewName_BareBasicOrLiteral)
+{
+    // Arrange & Act & Assert
+    CheckRenames("\"a\" = 1\n", "a", "b", "b", "b = 1\n", "bare when it can be");
+    CheckRenames("a = 1\n", "a", "host name", "\"host name\"", "\"host name\" = 1\n", "else a basic string");
+    CheckRenames("'a' = 1\n", "a", "host name", "\"host name\"", "'host name' = 1\n", "a literal one stays literal");
+    CheckRenames("'a' = 1\n", "a", "it's", "\"it's\"", "\"it's\" = 1\n", "unless a literal string can't hold it");
+    CheckRenames("a = 1\n", "a", "", ASWToml::TASWTomlPath({ "" }), "\"\" = 1\n", "the empty key");
+    CheckRenames("'a'.x = 1\n\"a\".y = 2\n", "a", "b c", "\"b c\"", "'b c'.x = 1\n\"b c\".y = 2\n",
+        "each part in the form it was written in");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRename, RejectsWhatCantBeRenamed)
+{
+    // Arrange & Act & Assert
+    CheckFails("a = 1\n", "a..b", "c", ETomlCode::InvalidArgument, "isn't valid", "a path that isn't valid");
+    CheckFails("a = 1\n", "", "b", ETomlCode::InvalidArgument, "Can't rename the root table: it has no name.",
+        "the root");
+    CheckFails("a = [1]\n", "a[0]", "b", ETomlCode::InvalidArgument,
+        "Can't rename a[0]: an element of an array has no name.", "an element");
+    CheckFails("[[s]]\n", "s[0]", "b", ETomlCode::InvalidArgument, "an element of an array has no name.",
+        "an element of an array of tables");
+    CheckFails("a = 1\n", "a.c", "b", ETomlCode::InvalidArgument,
+        "Can't rename a.c: a is a value of type Integer, not a table.", "a key of a scalar");
+    CheckFails("a = 1\n", "c", "b", ETomlCode::NotFound, "Can't rename c: c doesn't exist.", "a missing key");
+    CheckFails("[t]\n", "t.b.c", "d", ETomlCode::NotFound, "Can't rename t.b.c: t.b doesn't exist.",
+        "a missing table on the way");
+    CheckFails("a = [{ x = 1 }]\n", "a[2].x", "y", ETomlCode::NotFound, "the array a has 1 element.",
+        "an index past the end");
+    CheckFails("a = 1\nb = 2\n", "a", "b", ETomlCode::AlreadyExists,
+        "Can't rename a: the root table already has a key b.", "onto a key of the root");
+    CheckFails("[t]\nx = 1\ny = 2\n", "t.x", "y", ETomlCode::AlreadyExists, "Can't rename t.x: t already has a key y.",
+        "onto a key of a table");
+    CheckFails("a.x = 1\n[b]\n", "a", "b", ETomlCode::AlreadyExists, "already has a key b.", "onto a table");
+    CheckFails("a = 1\n", "a", "\xFF", ETomlCode::InvalidValue, "isn't valid UTF-8", "a name that isn't UTF-8");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRename, SameName_ChangesNothing)
+{
+    // Arrange
+    std::string const text = "'a' = 1\n[t]\n";
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), "the text should parse");
+
+    // Act
+    ASWToml::TASWTomlResult const key = document.Rename("a", "a");
+    ASWToml::TASWTomlResult const table = document.Rename("t", "t");
+
+    // Assert
+    CheckTrue(key.IsOk() && table.IsOk(), "renaming to the same name succeeds");
+    CheckEquals(text, document.ToText(), "the text stays as it was, a quoted key too");
+    CheckFalse(document.IsModified(), "the document isn't modified");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentRename, Tables_EveryPlaceThatNamesThem)
+{
+    // Arrange & Act & Assert
+    CheckRenames("[a]\nx = 1\n[a.b]\n[[a.c]]\n", "a", "z", "z", "[z]\nx = 1\n[z.b]\n[[z.c]]\n",
+        "a header table and the headers under it");
+    CheckRenames("a.x = 1\na.y = 2\n[a.s]\n", "a", "b", "b", "b.x = 1\nb.y = 2\n[b.s]\n", "a table of dotted keys");
+    CheckRenames("[[s]]\nx = 1\n[s.t]\n[[s]]\n", "s", "servers", "servers",
+        "[[servers]]\nx = 1\n[servers.t]\n[[servers]]\n", "an array of tables, in its elements' headers");
+    CheckRenames("[a.b]\nx = 1\n[a.c]\n", "a", "z", "z", "[z.b]\nx = 1\n[z.c]\n", "a table only longer headers made");
+    CheckRenames("[a]\n[a.b]\ny = 1\n", "a.b", "c", "a.c", "[a]\n[a.c]\ny = 1\n", "only the part of its own name");
+    CheckRenames("p = { a.x = 1, a.y = 2 }\n", "p.a", "b", "p.b", "p = { b.x = 1, b.y = 2 }\n",
+        "dotted keys in an inline table");
+    CheckRenames("[ a . b ]\n", "a", "c", "c", "[ c . b ]\n", "the blanks around the parts stay");
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
@@ -4043,6 +4429,8 @@ ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentIndex, "Doc
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentLookups, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentModel, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentParse, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentRemove, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentRename, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentRoundTrip, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentSetValue, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentTables, "Document")

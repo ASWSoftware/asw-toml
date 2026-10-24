@@ -336,6 +336,34 @@ public:
     // is cleared (see IsModified()). Throws only std::bad_alloc, and then nothing changes either.
     TASWTomlResult Parse(std::string_view text, TASWTomlOptions const& options = TASWTomlOptions());
 
+    // Removes the key, table, array of tables or element of an array at 'path' with the text that defines it, keeping
+    // the rest byte for byte:
+    // - A key: its line, with its comment (the comment lines directly above it) and the comment at its end. An entry
+    //   of an inline table or an element of an array value: it and one comma (the one after it, or for the last one
+    //   the one before it, so a trailing comma stays), and when it is on a line of its own, that line with the
+    //   comment lines directly above it and the comment at its end; removing the last one leaves {} or [].
+    // - A table: its header with its comment and lines, the headers and lines of the tables under it, and the dotted
+    //   keys that define it (a.x = 1 for the table a). An array of tables: all its elements. An element of an array
+    //   of tables (servers[1]): its [[...]] header with its comment and lines, and the tables under it.
+    // A blank line before what is removed goes with it when a blank line or the end of the text follows it, and at the
+    // start of the text a blank line after it goes, so blank lines don't pile up. A table that only dotted keys or
+    // longer headers made goes with its last key, and an array of tables with its last element, as nothing defines
+    // them any more; a table with a header stays, empty. Returns whether anything was removed (and then sets the
+    // modified flag): false when 'path' isn't valid, names the root table or names nothing. Throws only
+    // std::bad_alloc, and then nothing changes.
+    bool Remove(TASWTomlPath const& path);
+
+    // Renames the key, table or array of tables at 'path' to 'newKey' (one key part, unquoted, UTF-8) in its table,
+    // in every place that names it: the key of its line or of its entry in an inline table, and the part of each
+    // header and dotted key that goes through it ([a], [a.b], [[a.c]] and a.x = 1 for the table a). Only those key
+    // parts change: each is written bare when it can be, else as a basic string, or as a literal string where the old
+    // one was literal and one can hold the new name. Renaming to the same name changes nothing. Fails with
+    // InvalidArgument when 'path' isn't valid, names the root table or an element of an array, or goes through a value
+    // that isn't a table; NotFound when nothing is at 'path'; InvalidValue when 'newKey' isn't valid UTF-8;
+    // AlreadyExists when the table already has a key 'newKey'. On failure nothing changes. Throws only std::bad_alloc,
+    // and then nothing changes either.
+    TASWTomlResult Rename(TASWTomlPath const& path, std::string_view newKey);
+
     // Empties the document, as a new one is, and gives it 'options', so ToText() is empty, GetRoot() an empty table
     // and the modified flag clear. Fails with InvalidOptions (see TASWTomlOptions::Validate()), and then nothing
     // changes. Throws only std::bad_alloc, and then nothing changes either.
