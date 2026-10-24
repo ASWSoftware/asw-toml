@@ -59,7 +59,7 @@
         <UWP_CppLogo150>$(BDS)\bin\Artwork\Windows\UWP\cppreg_UwpDefault_150.png</UWP_CppLogo150>
         <SanitizedProjectName>ASWTomlTests_VCL_GUI</SanitizedProjectName>
         <IncludePath>..\..\..\..\third_party\asw-unit-tests\vcl\gui\src\;..\..\..\..\third_party\asw-unit-tests\src\;..\..\..\..\ASWToml\;..\..\..\tests\;..\..\..\toml-test\;$(IncludePath)</IncludePath>
-        <ILINK_LibraryPath>..\..\..\..\third_party\asw-unit-tests\vcl\gui\src\;..\..\..\..\third_party\asw-unit-tests\src\;..\..\..\..\ASWToml\;..\..\..\tests\;$(ILINK_LibraryPath)</ILINK_LibraryPath>
+        <ILINK_LibraryPath>..\..\..\toml-test\;..\..\..\..\third_party\asw-unit-tests\vcl\gui\src\;..\..\..\..\third_party\asw-unit-tests\src\;..\..\..\..\ASWToml\;..\..\..\tests\;$(ILINK_LibraryPath)</ILINK_LibraryPath>
         <Defines>ASWUNITTESTS_RTL_EXCEPTIONS;$(Defines)</Defines>
         <BCC_AllWarnings>true</BCC_AllWarnings>
         <BCC_SelectedWarnings>false</BCC_SelectedWarnings>

@@ -48,7 +48,7 @@
         <SanitizedProjectName>ASWTomlTests</SanitizedProjectName>
         <IncludePath>..\..\ASWToml\;..\..\third_party\asw-unit-tests\src\;..\tests\;..\toml-test\;$(IncludePath)</IncludePath>
         <_TCHARMapping>char</_TCHARMapping>
-        <ILINK_LibraryPath>..\..\ASWToml\;..\..\third_party\asw-unit-tests\src\;..\tests\;$(ILINK_LibraryPath)</ILINK_LibraryPath>
+        <ILINK_LibraryPath>..\toml-test\;..\..\ASWToml\;..\..\third_party\asw-unit-tests\src\;..\tests\;$(ILINK_LibraryPath)</ILINK_LibraryPath>
         <BCC_AllWarnings>true</BCC_AllWarnings>
         <BCC_SelectedWarnings>false</BCC_SelectedWarnings>
         <BCC_SelectedWarnings_v15>false</BCC_SelectedWarnings_v15>
