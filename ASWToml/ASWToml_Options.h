@@ -125,7 +125,8 @@ struct TASWTomlReadingOptions
 struct TASWTomlWritingOptions
 {
     // Written before the text of a new comment line, so a comment "Valid range: 0-4" is "# Valid range: 0-4". Must
-    // start with '#', the only comment character in TOML.
+    // be '#', the only comment character in TOML, and nothing else but spaces and tabs (e.g. "#" or "#  "), so a
+    // comment reads back as the text written after it.
     std::string CommentPrefix = "# ";
 
     // The line ending lines are written with

@@ -300,6 +300,17 @@ public:
     // of tables. The pointer is valid until the document is parsed again, changed or destroyed.
     TASWTomlValue const* Find(TASWTomlPath const& path) const noexcept;
 
+    // The comment of the key, table or array of tables at 'path': the comment lines directly above the line that
+    // defines it, up to the first line above them that isn't a comment line (a blank line, a key line or a header).
+    // That line is the key line of a key (whatever its value), the header of a table or of an element of an array of
+    // tables (servers[1]), and for an array of tables (servers), its first element's header. The root path's comment
+    // is the file comment: the comment lines at the start of the text when a blank line or the end of the text follows
+    // them (comment lines that lead straight into the first key or header are its comment instead). Each comment line
+    // without its '#' and the spaces and tabs around the rest, joined with "\n"; "" when there is none, nothing is at
+    // 'path', 'path' isn't valid, or what is there has no line of its own: a table that only dotted keys or longer
+    // headers made, or a value inside an array or inline table.
+    std::string GetComment(TASWTomlPath const& path) const;
+
     // The line break new lines get with ELineEnding::Auto: the most common one of the text that was read (the one
     // found first in a tie), or the platform's (CRLF on Windows, LF elsewhere) when it had none
     ELineBreak GetLineBreak() const noexcept;
@@ -311,6 +322,12 @@ public:
     // in the text, however the table was written (by a header, by dotted keys, as an inline table, or only as part of
     // a longer header), and each array of tables as an array of tables. An empty table for a new document.
     TASWTomlValue const& GetRoot() const noexcept;
+
+    // The comment at the end of the line that defines the key, table or array of tables at 'path' (see GetComment()):
+    // after the value of a key line (the closing bracket of an array on several lines) or the closing bracket of a
+    // header, without its '#' and the spaces and tabs around the rest; "" when there is none, or when nothing at
+    // 'path' has a line of its own (the root table has none).
+    std::string GetTrailingComment(TASWTomlPath const& path) const;
 
     // Whether the text that was read started with a UTF-8 byte order mark
     bool HasBom() const noexcept;
@@ -369,12 +386,35 @@ public:
     // changes. Throws only std::bad_alloc, and then nothing changes either.
     TASWTomlResult Reset(TASWTomlOptions const& options);
 
+    // Sets the comment of the key, table or array of tables at 'path' (see GetComment(); the root path's is the file
+    // comment) to 'text': its comment lines are replaced with one line for each line of 'text' (split at LF, CRLF or
+    // CR, a line break at its end starting no line, and each line without the spaces and tabs around it), each the
+    // indentation of the line they are above, Writing.CommentPrefix and the line ("#" for an empty one) and
+    // GetLineBreak(); the rest of the text stays byte for byte. An empty 'text' removes the comment. A text that
+    // GetComment() already gives, once split and trimmed, changes nothing. A new file comment goes at the start of the
+    // text with a blank line under it (unless one follows already); removing the file comment removes the blank line
+    // under it too, unless the comment lines after that would then be the file comment. Fails with InvalidArgument
+    // when 'path' isn't valid, goes through a value that isn't a table, or names what has no line of its own (a table
+    // that only dotted keys or longer headers made, or a value inside an array or inline table); NotFound when nothing
+    // is at 'path'; InvalidValue when 'text' isn't valid UTF-8 or holds a control character other than a tab or a
+    // line break, which TOML doesn't allow in a comment. On failure nothing changes. Throws only std::bad_alloc, and
+    // then nothing changes either.
+    TASWTomlResult SetComment(TASWTomlPath const& path, std::string_view text);
+
     // Gives the document 'options', which may be its own, and reads its text again with them, as Parse() does, so the
     // reading options apply to it. The text doesn't change, nor do the byte order mark (HasBom()) or the modified
     // flag. Fails with InvalidOptions (see TASWTomlOptions::Validate()), or with what Parse() reports for a text the
     // new reading options refuse (e.g. NestingTooDeep for a lower MaxNestingDepth); then nothing changes. Throws only
     // std::bad_alloc, and then nothing changes either.
     TASWTomlResult SetOptions(TASWTomlOptions const& options);
+
+    // Sets the comment at the end of the line of the key, table or array of tables at 'path' (see
+    // GetTrailingComment()) to 'text', without the spaces and tabs around it: Writing.CommentPrefix and the text
+    // replace the comment there, keeping the blanks before it, or when there is none, go at the end of the line after
+    // two spaces. An empty 'text' removes the comment with the blanks before it. A text that GetTrailingComment()
+    // already gives, once trimmed, changes nothing. Fails as SetComment() does, with InvalidArgument for the root path
+    // too, and InvalidValue for a line break in 'text'.
+    TASWTomlResult SetTrailingComment(TASWTomlPath const& path, std::string_view text);
 
     // Sets the key, table or element of an array at 'path' to 'value', changing only the text it needs, with the
     // document's Values options (the second form: with 'values') for new strings and integers. New text uses only the

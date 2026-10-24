@@ -77,8 +77,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Defaults_MatchDocumentedValues();
     void Test_ToString_EnumNames();
     void Test_Validate_AcceptsCommentPrefixVariants();
-    void Test_Validate_RejectsCommentPrefixWithControlCharacter();
-    void Test_Validate_RejectsCommentPrefixWithInvalidUtf8();
+    void Test_Validate_RejectsCommentPrefixWithOtherText();
     void Test_Validate_RejectsCommentPrefixWithoutHash();
     void Test_Validate_RejectsUnknownEnumValues();
 

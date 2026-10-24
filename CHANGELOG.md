@@ -42,9 +42,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     one; `Decimal`, `Hexadecimal`, `Octal` or `Binary`; a negative number is always decimal). Every
     form is read, whichever these say.
 
-  Each group's `Validate()` checks its own settings (e.g. the comment prefix must start with `#`
-  and hold only what a TOML comment may), and `TASWTomlOptions::Validate()` checks the four; a
-  problem is `ETomlCode::InvalidOptions` with a message naming the setting.
+  Each group's `Validate()` checks its own settings (e.g. the comment prefix must be `#` followed
+  only by spaces and tabs, so a comment reads back as the text written after it), and
+  `TASWTomlOptions::Validate()` checks the four; a problem is `ETomlCode::InvalidOptions` with a
+  message naming the setting.
 - The file layer that loading and saving will use (`ASWToml_File.cpp`, internal): whole files read
   and written in binary mode with the operating system's own file APIs, a size limit on reads, and
   saves that replace the file atomically (keeping its attributes on Windows, and its permissions
@@ -169,5 +170,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that doesn't fit (through a value that isn't a table, an index past the end) fails with
   `InvalidArgument` or `NotFound`, a value that can't be written with `InvalidValue`, and one nested
   too deep with `NestingTooDeep`.
+- Comments of a `TASWTomlDocument`, read and set by path. `GetComment(path)` gives the comment
+  lines directly above a key's line or a table's header (for an array of tables, its first
+  element's), and for the root path the file comment (the comment lines at the start of the file
+  when a blank line follows them), each line without its `#` and the blanks around the rest, joined
+  with `\n`. `GetTrailingComment(path)` gives the comment at the end of that line.
+  `SetComment(path, text)` replaces the comment lines with one line per line of the text, written
+  as `Writing.CommentPrefix` and the line with the indentation of the line below them (a new file
+  comment gets a blank line under it), and an empty text removes them.
+  `SetTrailingComment(path, text)` replaces the comment at the end of the line, or adds `  # text`
+  there, and an empty text removes it. A text that reads the same as the comment there changes
+  nothing. A table that only dotted keys or longer headers made and a value inside an array or
+  inline table have no line of their own, so their comments can't be set (`InvalidArgument`); a
+  comment that isn't valid UTF-8 or holds a control character other than a tab fails with
+  `InvalidValue`.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

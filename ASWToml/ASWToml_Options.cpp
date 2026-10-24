@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "ASWToml_Options.h"
 //---------------------------------------------------------------------------
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -30,29 +31,9 @@ namespace ASWToml
 namespace
 {
 
-bool HasCommentControlCharacter(std::string_view text) noexcept;
 bool HasLineBreakOrNul(std::string_view text) noexcept;
 TASWTomlResult Invalid(std::string message);
 
-//---------------------------------------------------------------------------
-/*
-    HasCommentControlCharacter
-
-    Whether 'text' holds a control character that TOML doesn't allow in a comment: U+0000 to U+0008, U+000A to U+001F
-    or U+007F (a tab is allowed)
-*/
-bool HasCommentControlCharacter(std::string_view text) noexcept
-{
-    for (char const c : text)
-    {
-        unsigned char const byte = static_cast<unsigned char>(c);
-
-        if ((byte < 0x20 && byte != '\t') || byte == 0x7F)
-            return true;
-    }
-
-    return false;
-}
 //---------------------------------------------------------------------------
 /*
     HasLineBreakOrNul
@@ -194,18 +175,21 @@ TASWTomlResult TASWTomlReadingOptions::Validate() const
 //---------------------------------------------------------------------------
 TASWTomlResult TASWTomlWritingOptions::Validate() const
 {
-    // CommentPrefix: a comment as TOML reads it, so a written comment line reads back
+    // CommentPrefix: '#' and blanks, so a comment line written with it reads back as the text after it
     if (CommentPrefix.empty() || CommentPrefix[0] != '#')
     {
-        return Invalid("Writing.CommentPrefix \"" + CommentPrefix +
-            "\" must start with '#', the only comment character in TOML.");
+        return Invalid("Writing.CommentPrefix " + Detail::MessageText(CommentPrefix) +
+            " must start with '#', the only comment character in TOML.");
     }
 
-    if (HasCommentControlCharacter(CommentPrefix))
-        return Invalid("Writing.CommentPrefix holds a control character other than a tab (e.g. a line break).");
-
-    if (!Detail::IsValidUtf8(CommentPrefix))
-        return Invalid("Writing.CommentPrefix isn't valid UTF-8.");
+    for (std::size_t i = 1; i < CommentPrefix.size(); ++i)
+    {
+        if (!Detail::IsBlank(CommentPrefix[i]))
+        {
+            return Invalid("Writing.CommentPrefix " + Detail::MessageText(CommentPrefix) + " may hold only spaces "
+                "and tabs after its '#', so a comment reads back as the text written after it.");
+        }
+    }
 
     // The enumerations, in case one was cast from a number
     if (std::string_view(ToString(LineEnding)) == "Unknown")

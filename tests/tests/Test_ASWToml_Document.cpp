@@ -190,6 +190,7 @@ using TCorpusTextVector = std::vector<TCorpusText>;
 
 
 void AddPaths(TASWTomlValue const& value, ASWToml::TASWTomlPath const& path, TPathVector& paths);
+std::string CommentAt(std::string const& text, ASWToml::TASWTomlPath const& path);
 std::string CorpusEscaped(std::string_view text);
 char const* CorpusType(TASWTomlValue const& value) noexcept;
 ASWToml::TASWTomlOptions DepthOptions(std::size_t maxDepth);
@@ -221,6 +222,7 @@ TASWTomlValue RenamedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath con
 TCorpusTextVector RoundTripCorpus();
 bool SameValue(std::string const& expected, TASWTomlValue const& value);
 std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range);
+std::string TrailingCommentAt(std::string const& text, ASWToml::TASWTomlPath const& path);
 TASWTomlValue* ValueAt(TASWTomlValue& root, ASWToml::TASWTomlPath const& path, std::size_t count);
 std::string ValuesDiffer(ASWUnitTests::TTomlTestFile const& file, TASWTomlValue const& root);
 TArray Variants(TASWTomlValue const& value);
@@ -255,6 +257,20 @@ void AddPaths(TASWTomlValue const& value, ASWToml::TASWTomlPath const& path, TPa
             AddPaths((*array)[i], child, paths);
         }
     }
+}
+//---------------------------------------------------------------------------
+/*
+    CommentAt
+
+    GetComment() of 'path' in a document of 'text'; "<doesn't parse>" when it doesn't parse
+*/
+std::string CommentAt(std::string const& text, ASWToml::TASWTomlPath const& path)
+{
+    TASWTomlDocument document;
+    if (!document.Parse(text).IsOk())
+        return "<doesn't parse>";
+
+    return document.GetComment(path);
 }
 //---------------------------------------------------------------------------
 /*
@@ -1298,6 +1314,20 @@ std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range)
         return "(out of the text)";
 
     return text.substr(range.Begin, range.End - range.Begin);
+}
+//---------------------------------------------------------------------------
+/*
+    TrailingCommentAt
+
+    GetTrailingComment() of 'path' in a document of 'text'; "<doesn't parse>" when it doesn't parse
+*/
+std::string TrailingCommentAt(std::string const& text, ASWToml::TASWTomlPath const& path)
+{
+    TASWTomlDocument document;
+    if (!document.Parse(text).IsOk())
+        return "<doesn't parse>";
+
+    return document.GetTrailingComment(path);
 }
 //---------------------------------------------------------------------------
 /*
@@ -4973,6 +5003,285 @@ ASW_TEST(TTest_ASWToml_DocumentMerge, Tables_ToAnotherType)
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentComments
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentComments::TTest_ASWToml_DocumentComments()
+    : inherited("ASWToml_DocumentComments_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentComments::~TTest_ASWToml_DocumentComments()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentComments::CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path,
+    std::string const& comment, ETomlCode code, std::string const& expectedText, std::string const& msg,
+    std::source_location loc)
+{
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), msg + ": the text should parse", loc);
+
+    ASWToml::TASWTomlResult const result = document.SetComment(path, comment);
+    ASWToml::TASWTomlResult const trailing = document.SetTrailingComment(path, comment);
+
+    CheckEquals(code, result.Code, msg + ": the code of SetComment()", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message of SetComment()", loc);
+    CheckEquals(code, trailing.Code, msg + ": the code of SetTrailingComment()", loc);
+    CheckContains(trailing.Message, expectedText, msg + ": the message of SetTrailingComment()", loc);
+    CheckEquals(std::size_t(0), result.Line + trailing.Line, msg + ": not about a place in the text", loc);
+    CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
+    CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentComments::CheckSets(std::string const& text, ASWToml::TASWTomlPath const& path,
+    std::string const& comment, std::string const& expected, std::string const& expectedComment,
+    std::string const& msg, TASWTomlOptions const& options, std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text, options);
+    CheckTrue(parsed.IsOk(), msg + ": the text should parse: " + parsed.Message, loc);
+    TASWTomlValue const old = document.GetRoot();
+
+    ASWToml::TASWTomlResult const result = document.SetComment(path, comment);
+
+    CheckTrue(result.IsOk(), msg + ": the comment should be set: " + result.Message, loc);
+    CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
+    CheckEquals(Escaped(expectedComment), Escaped(document.GetComment(path)), msg + ": the comment", loc);
+    CheckTrue(ASWToml::Detail::IdenticalValues(document.GetRoot(), old), msg + ": the values stay", loc);
+    CheckEquals(expected != text, document.IsModified(), msg + ": the document is modified if the text changed",
+        loc);
+
+    TASWTomlDocument reread;
+    CheckTrue(reread.Parse(document.ToText()).IsOk() &&
+        ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()) &&
+        reread.GetComment(path) == expectedComment, msg + ": the text should read back with the comment", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentComments::CheckSetsTrailing(std::string const& text, ASWToml::TASWTomlPath const& path,
+    std::string const& comment, std::string const& expected, std::string const& expectedComment,
+    std::string const& msg, TASWTomlOptions const& options, std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text, options);
+    CheckTrue(parsed.IsOk(), msg + ": the text should parse: " + parsed.Message, loc);
+    TASWTomlValue const old = document.GetRoot();
+
+    ASWToml::TASWTomlResult const result = document.SetTrailingComment(path, comment);
+
+    CheckTrue(result.IsOk(), msg + ": the comment should be set: " + result.Message, loc);
+    CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
+    CheckEquals(Escaped(expectedComment), Escaped(document.GetTrailingComment(path)), msg + ": the comment", loc);
+    CheckTrue(ASWToml::Detail::IdenticalValues(document.GetRoot(), old), msg + ": the values stay", loc);
+    CheckEquals(expected != text, document.IsModified(), msg + ": the document is modified if the text changed",
+        loc);
+
+    TASWTomlDocument reread;
+    CheckTrue(reread.Parse(document.ToText()).IsOk() &&
+        ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()) &&
+        reread.GetTrailingComment(path) == expectedComment, msg + ": the text should read back with the comment",
+        loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentComments::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentComments::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentComments::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentComments::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentComments, FileComment_GetAndSet)
+{
+    // Arrange
+    // A new document's line break is the platform's, so the empty one is written with LF
+    TASWTomlOptions lf;
+    lf.Writing.LineEnding = ELineEnding::LF;
+    TASWTomlDocument empty;
+    CheckTrue(empty.Parse("", lf).IsOk(), "the empty text should parse");
+
+    // Act & Assert
+    CheckEquals("a\nb"s, CommentAt("# a\n  #  b \n\n# c\nx = 1\n", ""), "the comment lines at the start, with a "
+        "blank line under them");
+    CheckEquals("c"s, CommentAt("# a\n\n# c\nx = 1\n", "x"), "the first key's comment is its own");
+    CheckEquals("only"s, CommentAt("# only\n", ""), "comment lines that end the text");
+    CheckEquals(""s, CommentAt("# c\nx = 1\n", ""), "comment lines that lead into the first key are its comment");
+    CheckEquals(""s, CommentAt("# c\n[t]\n", ""), "or the first header's");
+    CheckEquals(""s, CommentAt("\n# c\n\nx = 1\n", ""), "comment lines after a blank line aren't the file comment");
+
+    CheckSets("x = 1\n", "", "f", "# f\n\nx = 1\n", "f", "a new one goes at the start, with a blank line under it");
+    CheckSets("\n[t]\n", "", "f", "# f\n\n[t]\n", "f", "no second blank line when one follows already");
+    CheckSets("# c\nx = 1\n", "", "f", "# f\n\n# c\nx = 1\n", "f", "above the first key's comment");
+    CheckSets("# a\n# b\n\nx = 1\n", "", "c", "# c\n\nx = 1\n", "c", "one replaced");
+    CheckSets("# a\n\nx = 1\n", "", "", "x = 1\n", "", "one removed, with the blank line under it");
+    CheckSets("# a\n\n\nx = 1\n", "", "", "\nx = 1\n", "", "only one blank line goes with it");
+    CheckSets("# a\n\n", "", "", "", "", "and with a blank line that ends the text");
+    CheckSets("# a\n\n# c\nx = 1\n", "", "", "# c\nx = 1\n", "",
+        "the first key's comment stays its own after the blank line goes");
+    CheckSets("# a\n\n# b\n\nx = 1\n", "", "", "\n# b\n\nx = 1\n", "",
+        "the blank line stays when the comment lines after it would be the file comment");
+    CheckSets("# a\n\n# b\n", "", "", "\n# b\n", "", "also when they end the text");
+    CheckSets("# a", "", "b", "# b", "b", "a text without a line break at its end keeps that");
+    CheckSets("# a", "", "", "", "", "a text that is only the file comment");
+
+    CheckTrue(empty.SetComment("", "f").IsOk(), "the file comment of an empty document should be set");
+    CheckEquals("# f\n\n"s, empty.ToText(), "an empty document gets it with a blank line under it");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentComments, GetComment_LinesDirectlyAbove)
+{
+    // Arrange & Act & Assert
+    CheckEquals("a\nb"s, CommentAt("x = 0\n# a\n  #  b  \ny = 1\n", "y"), "a key's, each line trimmed");
+    CheckEquals("a\n# b\n\nc"s, CommentAt("# a\n## b\n#\n#c\nx = 1\n", "x"),
+        "only the first '#' is the comment's, and an empty line is kept");
+    CheckEquals(""s, CommentAt("# a\n\nx = 1\n", "x"), "none when a blank line is between");
+    CheckEquals("a"s, CommentAt("# a\nx = [\n  # inside\n  1,\n] # t\n", "x"), "a key whose value spans lines");
+    CheckEquals(""s, CommentAt("x = [\n  1,\n]\ny = 2\n", "y"), "none when the line above ends a value");
+    CheckEquals("a"s, CommentAt("x = 1\n# a\n[t]\ny = 1\n", "t"), "a header's, at the end of the block before");
+    CheckEquals(""s, CommentAt("x = 1\n# a\n[t]\ny = 1\n", "t.y"), "none for the first key after a header");
+    CheckEquals("b"s, CommentAt("[t]\n  # b\n  y = 1\n", "t.y"), "a key's, indented");
+    CheckEquals("one"s, CommentAt("# one\n[[s]]\n# two\n[[s]]\n", "s"), "an array of tables': its first element's");
+    CheckEquals("two"s, CommentAt("# one\n[[s]]\n# two\n[[s]]\n", "s[1]"), "an element of an array of tables'");
+    CheckEquals("a"s, CommentAt("# a\na.b = 1\n", "a.b"), "a dotted key's");
+    CheckEquals("a"s, CommentAt("# a\np = { x = 1 }\n", "p"), "an inline table's");
+
+    CheckEquals(""s, CommentAt("# a\na.b = 1\n", "a"), "a table that dotted keys make has none");
+    CheckEquals(""s, CommentAt("# a\n[t.u]\n", "t"), "nor a table that only a longer header makes");
+    CheckEquals(""s, CommentAt("p = { # a\n  x = 1 }\n", "p.x"), "nor a key of an inline table");
+    CheckEquals(""s, CommentAt("p = [\n  # a\n  1,\n]\n", "p[0]"), "nor an element of an array");
+    CheckEquals(""s, CommentAt("# a\nx = 1\n", "y"), "nor a missing key");
+    CheckEquals(""s, CommentAt("# a\nx = 1\n", "x..y"), "nor a path that isn't valid");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentComments, RejectsWhatCantBeCommented)
+{
+    // Arrange & Act & Assert
+    CheckFails("a = 1\n", "a..b", "c", ETomlCode::InvalidArgument, "isn't valid", "a path that isn't valid");
+    CheckFails("a.b = 1\n", "a", "c", ETomlCode::InvalidArgument,
+        "a: it is a table that dotted keys make, which has no line of its own.", "a table that dotted keys make");
+    CheckFails("[a.b]\n", "a", "c", ETomlCode::InvalidArgument,
+        "a: it is a table that only longer headers make, which has no line of its own.",
+        "a table that only a longer header makes");
+    CheckFails("p = { x = 1 }\n", "p.x", "c", ETomlCode::InvalidArgument,
+        "p.x: it is inside an array or inline table, whose comments can't be set.", "a key of an inline table");
+    CheckFails("p = { a.b = 1 }\n", "p.a", "c", ETomlCode::InvalidArgument, "inside an array or inline table",
+        "a table of dotted keys in an inline table");
+    CheckFails("p = [1, 2]\n", "p[1]", "c", ETomlCode::InvalidArgument, "inside an array or inline table",
+        "an element of an array");
+    CheckFails("a = 1\n", "a.b", "c", ETomlCode::InvalidArgument, "a is a value of type Integer, not a table.",
+        "a key of a scalar");
+    CheckFails("a = 1\n", "b", "c", ETomlCode::NotFound, "comment of b: b doesn't exist.", "a missing key");
+    CheckFails("[t]\n", "t.u.v", "c", ETomlCode::NotFound, "t.u doesn't exist.", "a missing table on the way");
+    CheckFails("[[s]]\n", "s[1]", "c", ETomlCode::NotFound, "the array s has 1 element.", "an index past the end");
+    CheckFails("a = 1\n", "a", "\xFF", ETomlCode::InvalidValue, "a: the comment isn't valid UTF-8.",
+        "a comment that isn't valid UTF-8");
+    CheckFails("a = 1\n", "a", "x\x7Fy", ETomlCode::InvalidValue,
+        "a: the comment holds a control character other than a tab", "a comment with a control character");
+
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("a = 1\n").IsOk(), "the text should parse");
+    ASWToml::TASWTomlResult const root = document.SetTrailingComment("", "c");
+    ASWToml::TASWTomlResult const lineBreak = document.SetTrailingComment("a", "x\ny");
+    CheckEquals(ETomlCode::InvalidArgument, root.Code, "the root has no line for a trailing comment");
+    CheckContains(root.Message, "Can't set the trailing comment of the root table: it has no line of its own.",
+        "the root's message");
+    CheckEquals(ETomlCode::InvalidValue, lineBreak.Code, "a trailing comment is one line");
+    CheckContains(lineBreak.Message, "the comment holds a control character", "the line break's message");
+    CheckEquals("a = 1\n"s, document.ToText(), "the text should be kept");
+    CheckFalse(document.IsModified(), "the document isn't modified");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentComments, SameText_ChangesNothing)
+{
+    // Arrange & Act & Assert
+    // However the lines there are written, and however the text is split and spaced
+    CheckSets("#a\n#   b  \nx = 1\n", "x", " a \r\n\tb\n", "#a\n#   b  \nx = 1\n", "a\nb", "a key's comment");
+    CheckSets("#f\n\nx = 1\n", "", "f", "#f\n\nx = 1\n", "f", "the file comment");
+    CheckSets("x = 1\n", "x", "", "x = 1\n", "", "no comment, none set");
+    CheckSets("x = 1\n", "", "", "x = 1\n", "", "no file comment, none set");
+    CheckSetsTrailing("x = 1 #a  \n", "x", "  a", "x = 1 #a  \n", "a", "a trailing comment");
+    CheckSetsTrailing("x = 1   \n", "x", "", "x = 1   \n", "", "no trailing comment, none set: the blanks stay");
+    CheckSetsTrailing("x = 1 #\n", "x", "", "x = 1 #\n", "", "an empty trailing comment, none set");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentComments, SetComment_ReplacesTheLinesAbove)
+{
+    // Arrange
+    TASWTomlOptions hash;
+    hash.Writing.CommentPrefix = "#";
+
+    // Act & Assert
+    CheckSets("x = 1\ny = 2\n", "y", "c", "x = 1\n# c\ny = 2\n", "c", "a new one directly above the key");
+    CheckSets("[t]\n  y = 2\n", "t.y", "a\nb", "[t]\n  # a\n  # b\n  y = 2\n", "a\nb", "with the key's indentation");
+    CheckSets("# a\n# b\nx = 1\n", "x", "c", "# c\nx = 1\n", "c", "two lines replaced by one");
+    CheckSets("x = 0\n# a\n# b\nx2 = 1\n", "x2", "", "x = 0\nx2 = 1\n", "", "removed");
+    CheckSets("x = 1\n\n  [t]\n", "t", "c", "x = 1\n\n  # c\n  [t]\n", "c", "a header's, with its indentation");
+    CheckSets("[[s]]\n[[s]]\n", "s[1]", "two", "[[s]]\n# two\n[[s]]\n", "two", "an element's");
+    CheckSets("[[s]]\n[[s]]\n", "s", "first", "# first\n[[s]]\n[[s]]\n", "first",
+        "an array of tables': its first element's");
+    CheckSets("a.b = 1\n", "a.b", "c", "# c\na.b = 1\n", "c", "a dotted key's");
+    CheckSets("x = [\n  1,\n]\n", "x", "c", "# c\nx = [\n  1,\n]\n", "c", "a key whose value spans lines");
+    CheckSets("x = 1\n", "x", "a\r\nb\rc\n", "# a\n# b\n# c\nx = 1\n", "a\nb\nc",
+        "split at CRLF, CR and LF, with no line after a line break at the end");
+    CheckSets("x = 1\n", "x", "a\n\n  \nb", "# a\n#\n#\n# b\nx = 1\n", "a\n\n\nb", "an empty line is the bare '#'");
+    CheckSets("x = 1\n", "x", "a\tb", "# a\tb\nx = 1\n", "a\tb", "a tab may be in a comment");
+    CheckSets("x = 1\r\ny = 2\r\n", "y", "a\nb", "x = 1\r\n# a\r\n# b\r\ny = 2\r\n", "a\nb",
+        "new lines get the text's line break");
+    CheckSets("x = 1\n", "x", "c\n\nd", "#c\n#\n#d\nx = 1\n", "c\n\nd", "the comment prefix of the options", hash);
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentComments, TrailingComment_GetAndSet)
+{
+    // Arrange
+    TASWTomlOptions hash;
+    hash.Writing.CommentPrefix = "#";
+
+    // Act & Assert
+    CheckEquals("t"s, TrailingCommentAt("x = 1   #   t  \n", "x"), "a key's, trimmed");
+    CheckEquals("# t"s, TrailingCommentAt("x = 1 ## t\n", "x"), "only the first '#' is the comment's");
+    CheckEquals("t"s, TrailingCommentAt("[a] # t\n", "a"), "a header's");
+    CheckEquals("one"s, TrailingCommentAt("[[s]] # one\n[[s]] # two\n", "s"), "an array of tables': its first "
+        "element's");
+    CheckEquals("two"s, TrailingCommentAt("[[s]] # one\n[[s]] # two\n", "s[1]"), "an element's");
+    CheckEquals("t"s, TrailingCommentAt("x = [ # a\n  1, # b\n] # t\n", "x"),
+        "after the closing bracket of an array on several lines");
+    CheckEquals(""s, TrailingCommentAt("x = 1\n# c\n", "x"), "none on the line");
+    CheckEquals(""s, TrailingCommentAt("x = 1 # t\n", ""), "the root has none");
+    CheckEquals(""s, TrailingCommentAt("p = { x = 1 } # t\n", "p.x"), "nor a key of an inline table");
+    CheckEquals(""s, TrailingCommentAt("a.b = 1 # t\n", "a"), "nor a table that dotted keys make");
+
+    CheckSetsTrailing("x = 1\n", "x", "t", "x = 1  # t\n", "t", "a new one after two spaces");
+    CheckSetsTrailing("x = 1   # old\n", "x", "  new ", "x = 1   # new\n", "new",
+        "one replaced, the blanks before it kept");
+    CheckSetsTrailing("x = 1   # old\ny = 2\n", "x", "", "x = 1\ny = 2\n", "", "one removed with the blanks before it");
+    CheckSetsTrailing("x = 1 \t \n", "x", "t", "x = 1  # t\n", "t", "blanks at the end of the line are replaced");
+    CheckSetsTrailing("  [a]\nx = 1\n", "a", "t", "  [a]  # t\nx = 1\n", "t", "a header's");
+    CheckSetsTrailing("[[s]]\n[[s]]\n", "s[1]", "t", "[[s]]\n[[s]]  # t\n", "t", "an element's");
+    CheckSetsTrailing("[[s]]\n[[s]]\n", "s", "t", "[[s]]  # t\n[[s]]\n", "t", "an array of tables': its first "
+        "element's");
+    CheckSetsTrailing("x = [\n  1, # one\n]\n", "x", "t", "x = [\n  1, # one\n]  # t\n", "t",
+        "after the closing bracket of an array on several lines");
+    CheckSetsTrailing("x = 1", "x", "t", "x = 1  # t", "t", "a text without a line break at its end keeps that");
+    CheckSetsTrailing("x = 1\r\n", "x", "t", "x = 1  # t\r\n", "t", "the line break stays");
+    CheckSetsTrailing("x = 1 # a\n", "x", "b", "x = 1 #b\n", "b", "the comment prefix of the options", hash);
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentEditFuzz
 /////////////////////////////////////////////////////////////////////////////
 
@@ -5160,6 +5469,7 @@ ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryTableAndArraySet)
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentAppend, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentComments, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentEditFuzz, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentErrors, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentFuzz, "Document")

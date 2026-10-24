@@ -616,6 +616,57 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentComments
+//
+// TASWTomlDocument::GetComment(), SetComment(), GetTrailingComment() and SetTrailingComment(): the comment lines above
+// a key or header (the file comment for the root) and the comment at the end of its line
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentComments : public TAutoTestGroup<TTest_ASWToml_DocumentComments>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentComments> inherited;
+
+private:
+    // Checks that SetComment() and SetTrailingComment() of 'path' to 'comment' in a document of 'text' both fail with
+    // 'code' and a message that holds 'expectedText', and change nothing
+    void CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path, std::string const& comment,
+        ASWToml::ETomlCode code, std::string const& expectedText, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that SetComment() of 'path' to 'comment' in a document of 'text' (parsed with 'options') succeeds, gives
+    // the text 'expected' and GetComment() 'expectedComment', keeps the values, sets the modified flag (or leaves it
+    // clear when 'expected' is 'text'), and that the text reads back with that comment
+    void CheckSets(std::string const& text, ASWToml::TASWTomlPath const& path, std::string const& comment,
+        std::string const& expected, std::string const& expectedComment, std::string const& msg,
+        ASWToml::TASWTomlOptions const& options = ASWToml::TASWTomlOptions(),
+        std::source_location loc = std::source_location::current());
+
+    // Checks as CheckSets() does, for SetTrailingComment() and GetTrailingComment()
+    void CheckSetsTrailing(std::string const& text, ASWToml::TASWTomlPath const& path, std::string const& comment,
+        std::string const& expected, std::string const& expectedComment, std::string const& msg,
+        ASWToml::TASWTomlOptions const& options = ASWToml::TASWTomlOptions(),
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_FileComment_GetAndSet();
+    void Test_GetComment_LinesDirectlyAbove();
+    void Test_RejectsWhatCantBeCommented();
+    void Test_SameText_ChangesNothing();
+    void Test_SetComment_ReplacesTheLinesAbove();
+    void Test_TrailingComment_GetAndSet();
+
+public:
+    TTest_ASWToml_DocumentComments();
+    ~TTest_ASWToml_DocumentComments() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentEditFuzz
 //
 // Edits of the texts of our round-trip corpus and toml-test's valid files: each one does what it should, the text

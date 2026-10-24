@@ -258,8 +258,8 @@ ASW_TEST(TTest_ASWToml_WritingOptions, ToString_EnumNames)
 ASW_TEST(TTest_ASWToml_WritingOptions, Validate_AcceptsCommentPrefixVariants)
 {
     // Arrange
-    // A '#' followed by anything a TOML comment may hold: tabs and UTF-8 included
-    TStringVector const prefixes = { "#", "# ", "#\t", "## ", "#! ", "# \xC2\xBB " };
+    // A '#' followed by nothing, or by spaces and tabs
+    TStringVector const prefixes = { "#", "# ", "#\t", "#  ", "# \t " };
 
     for (std::string const& prefix : prefixes)
     {
@@ -274,11 +274,13 @@ ASW_TEST(TTest_ASWToml_WritingOptions, Validate_AcceptsCommentPrefixVariants)
     }
 }
 //---------------------------------------------------------------------------
-ASW_TEST(TTest_ASWToml_WritingOptions, Validate_RejectsCommentPrefixWithControlCharacter)
+ASW_TEST(TTest_ASWToml_WritingOptions, Validate_RejectsCommentPrefixWithOtherText)
 {
     // Arrange
-    // TOML doesn't allow U+0000 to U+0008, U+000A to U+001F or U+007F in a comment
-    TStringVector const prefixes = { "#\n", "# \r", std::string("#\0", 2), "#\x01", "#\x08", "# \x1F", "#\x7F" };
+    // Text after the '#' would read back as part of the comment ("## a" reads as "# a"), and TOML doesn't allow
+    // control characters in a comment
+    TStringVector const prefixes = { "## ", "#! ", "# x", "# \xC2\xBB", "# \xFF", "#\n", "# \r",
+        std::string("#\0", 2), "#\x01", "# \x1F", "#\x7F" };
 
     for (std::string const& prefix : prefixes)
     {
@@ -286,20 +288,9 @@ ASW_TEST(TTest_ASWToml_WritingOptions, Validate_RejectsCommentPrefixWithControlC
         options.CommentPrefix = prefix;
 
         // Act & Assert
-        CheckInvalid(options, "Writing.CommentPrefix holds a control character",
-            "a prefix with the byte " + std::to_string(static_cast<unsigned char>(prefix.back())));
+        CheckInvalid(options, "may hold only spaces and tabs after its '#'",
+            "a prefix ending with the byte " + std::to_string(static_cast<unsigned char>(prefix.back())));
     }
-}
-//---------------------------------------------------------------------------
-ASW_TEST(TTest_ASWToml_WritingOptions, Validate_RejectsCommentPrefixWithInvalidUtf8)
-{
-    // Arrange & Act & Assert
-    ASWToml::TASWTomlWritingOptions options;
-    options.CommentPrefix = "# \xFF";
-    CheckInvalid(options, "Writing.CommentPrefix isn't valid UTF-8", "the byte FF");
-
-    options.CommentPrefix = "# \xC2";
-    CheckInvalid(options, "Writing.CommentPrefix isn't valid UTF-8", "a truncated sequence");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_WritingOptions, Validate_RejectsCommentPrefixWithoutHash)

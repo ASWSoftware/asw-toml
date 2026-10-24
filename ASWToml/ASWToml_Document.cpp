@@ -52,7 +52,7 @@ using Detail::TTextRange;
 // For each line of a text, or each element or entry of an array or inline table, whether an edit removes it
 using TFlagVector = std::vector<bool>;
 
-// Texts of new elements or entries, in order
+// Texts in order: of new elements or entries, or the lines of a comment
 using TStringVector = std::vector<std::string>;
 
 
@@ -108,10 +108,10 @@ using TContainerPlanMap = std::map<std::size_t, TContainerPlan>;
 // TEditor
 //
 // Works out how an edit changes a document's text, from its index: what text goes, where new text goes and what it
-// is, in the forms TASWTomlDocument::SetValue(), Append(), Remove() and Rename() describe. Every change is worked
-// out on the text as it is: the lines removed and the plans of the arrays and inline tables are collected first, and
-// Finish() turns them into the changes of the text. It doesn't change the text: the document makes the changes and
-// reads the text again.
+// is, in the forms TASWTomlDocument::SetValue(), Append(), Remove(), Rename(), SetComment() and SetTrailingComment()
+// describe. Every change is worked out on the text as it is: the lines removed and the plans of the arrays and inline
+// tables are collected first, and Finish() turns them into the changes of the text. It doesn't change the text: the
+// document makes the changes and reads the text again.
 /////////////////////////////////////////////////////////////////////////////
 class TEditor
 {
@@ -120,6 +120,7 @@ private:
     Detail::TDocIndex const& m_Index; // Its index
     TASWTomlValue const& m_Root; // Its values
     std::size_t m_MaxDepth; // Reading.MaxNestingDepth
+    std::string m_CommentPrefix; // Writing.CommentPrefix
     Detail::TWriteStyle m_Style; // How new text is written; MaxDepth is set for each piece
     std::string m_LineBreak; // The text of the line break new lines get
     std::string m_Verb; // What the edit does to a path, for messages: "set" or "append to"
@@ -148,13 +149,14 @@ private:
     // an empty block
     std::size_t BlockEnd(std::size_t block) const;
 
+    // Fails, for messages about the edit of 'path', with InvalidValue when 'text' can't be written in a comment: it
+    // isn't valid UTF-8, or holds a control character other than a tab (see HasCommentControlCharacter())
+    TASWTomlResult CheckCommentText(TASWTomlPath const& path, std::string_view text) const;
+
     // The first byte of the comment lines directly above the line that starts at 'lineStart', in an array or inline
     // table whose text before that line starts at 'begin' (after the bracket or comma before it); 'lineStart' when
     // there are none
     std::size_t CommentHead(std::size_t begin, std::size_t lineStart) const;
-
-    // The first of the comment lines directly above 'line'; 'line' itself when there are none
-    std::size_t CommentStart(std::size_t line) const;
 
     // The array or inline table that 'node' is an element or entry of (through the dotted-key tables it is in);
     // NoIndex when it is written in key lines and headers instead
@@ -170,6 +172,9 @@ private:
     // Whether 'value' can take the place of 'node' in the text: any value can for a value (of a key line, an element
     // or an entry), only a table for a table that isn't an inline table, and an array of tables for one
     bool Holds(std::size_t node, TASWTomlValue const& value) const;
+
+    // The blanks at the start of 'line'
+    std::string_view Indentation(std::size_t line) const;
 
     // Adds a change of the text: 'text' inserted at 'offset'
     void Insert(std::size_t offset, std::string text);
@@ -217,6 +222,11 @@ private:
     // 'missing' to its part. Fails, for messages about the edit of 'path', with InvalidArgument for an index of what
     // isn't an array, a key of an array or of a scalar, and NotFound for an index past the end of an array.
     TASWTomlResult Locate(TASWTomlPath const& path, std::size_t& node, std::size_t& missing) const;
+
+    // Follows 'path' (valid) to its node, and sets 'line' to the line that defines it (see DefiningLine()). Fails as
+    // Locate() does, with NotFound when nothing is at 'path', and InvalidArgument when what is there has no line of
+    // its own.
+    TASWTomlResult LocateLine(TASWTomlPath const& path, std::size_t& line) const;
 
     // Marks in 'lines' the lines of 'block' (which has a header) with the header's comment, up to the comment lines
     // of the next header
@@ -326,8 +336,8 @@ public:
     std::string EditedText() const;
 
     // Turns the lines removed and the plans of the arrays and inline tables into changes of the text, and puts all of
-    // them in the order of their places in it. Call it once, after Append(), Remove(), Rename() or SetValue()
-    // succeeded, before IsEmpty() and EditedText().
+    // them in the order of their places in it. Call it once, after Append(), Remove(), Rename(), SetComment(),
+    // SetTrailingComment() or SetValue() succeeded, before IsEmpty() and EditedText().
     void Finish();
 
     // Whether the edit changes nothing
@@ -339,6 +349,12 @@ public:
     // The changes of TASWTomlDocument::Rename()
     TASWTomlResult Rename(TASWTomlPath const& path, std::string_view newKey);
 
+    // The changes of TASWTomlDocument::SetComment()
+    TASWTomlResult SetComment(TASWTomlPath const& path, std::string_view text);
+
+    // The changes of TASWTomlDocument::SetTrailingComment()
+    TASWTomlResult SetTrailingComment(TASWTomlPath const& path, std::string_view text);
+
     // The changes of TASWTomlDocument::SetValue()
     TASWTomlResult SetValue(TASWTomlPath const& path, TASWTomlValue const& value);
 };
@@ -347,19 +363,31 @@ public:
 void AppendKey(Detail::TDocKey const& key, std::string& text);
 void AppendKeyValue(Detail::TDocKeyValue const& keyValue, std::string& text);
 void AppendValue(Detail::TDocValue const& value, std::string& text);
+TStringVector CommentLines(std::string_view text);
+std::string CommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& index, TASWTomlPath const& path);
+std::size_t CommentStart(Detail::TDocIndex const& index, std::size_t line) noexcept;
+std::string_view CommentText(std::string_view text) noexcept;
 std::string ConvertLineBreaks(std::string const& text, ELineBreak lineBreak);
+std::size_t DefiningLine(Detail::TDocIndex const& index, std::size_t node) noexcept;
 Detail::TDocIndex EmptyIndex();
 TASWTomlResult Failure(ETomlCode code, std::string message);
+std::size_t FileCommentLines(Detail::TDocIndex const& index) noexcept;
 TASWTomlValue const* FindValue(TASWTomlValue const& root, TASWTomlPath const& path) noexcept;
 TASWTomlValue* FindValue(TASWTomlValue& root, TASWTomlPath const& path) noexcept;
+bool HasCommentControlCharacter(std::string_view text) noexcept;
 bool IsArrayOfTables(TASWTomlValue const& value) noexcept;
+std::string Joined(TStringVector const& lines);
 std::size_t KeyStart(std::string_view text, std::size_t offset) noexcept;
 std::string Layout(std::string_view before);
 std::string MessagePath(TASWTomlPath const& path);
+std::string_view ModelText(Detail::TDocModel const& model, Detail::TIndexLine const& line) noexcept;
 TIndexVector Partners(TASWTomlValue::TValueVector const& old, TASWTomlValue::TValueVector const& values);
 TASWTomlPath Prefix(TASWTomlPath const& path, std::size_t count);
 void RemoveValue(TASWTomlValue& root, Detail::TDocIndex const& index, TASWTomlPath const& path);
 bool SpliceBefore(TSplice const& left, TSplice const& right) noexcept;
+std::string TrailingCommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& index,
+    TASWTomlPath const& path);
+std::string_view Trimmed(std::string_view text) noexcept;
 TASWTomlValue Wrapped(TASWTomlPath::TPartVector const& parts, std::size_t first, TASWTomlValue const& value);
 
 //---------------------------------------------------------------------------
@@ -442,6 +470,87 @@ void AppendValue(Detail::TDocValue const& value, std::string& text)
 }
 //---------------------------------------------------------------------------
 /*
+    CommentLines
+
+    The lines of the comment 'text', as TASWTomlDocument::SetComment() splits it: at each LF, CRLF or CR (one at its
+    end starting no line), each without the blanks around it; none for an empty 'text'
+*/
+TStringVector CommentLines(std::string_view text)
+{
+    TStringVector lines;
+    std::size_t begin = 0;
+    while (begin < text.size())
+    {
+        std::size_t const end = std::min(text.find_first_of("\r\n", begin), text.size());
+        lines.emplace_back(Trimmed(text.substr(begin, end - begin)));
+
+        begin = end + 1;
+        if (end + 1 < text.size() && text[end] == '\r' && text[end + 1] == '\n')
+            ++begin;
+    }
+
+    return lines;
+}
+//---------------------------------------------------------------------------
+/*
+    CommentOf
+
+    The comment of 'path' in the text whose model is 'model' and index 'index', as TASWTomlDocument::GetComment()
+    describes it
+*/
+std::string CommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& index, TASWTomlPath const& path)
+{
+    std::size_t const node = Detail::FindNode(index, path);
+    if (node == NoIndex)
+        return std::string();
+
+    // The file comment, or the comment lines above the line that defines the node
+    std::size_t const end = node == 0 ? FileCommentLines(index) : DefiningLine(index, node);
+    if (end == NoIndex)
+        return std::string();
+
+    std::size_t const begin = node == 0 ? 0 : CommentStart(index, end);
+    std::string comment;
+    for (std::size_t line = begin; line < end; ++line)
+    {
+        if (line > begin)
+            comment += '\n';
+
+        comment += CommentText(ModelText(model, index.Lines[line]));
+    }
+
+    return comment;
+}
+//---------------------------------------------------------------------------
+/*
+    CommentStart
+
+    The first of the comment lines of 'index' directly above its line 'line'; 'line' itself when there are none
+*/
+std::size_t CommentStart(Detail::TDocIndex const& index, std::size_t line) noexcept
+{
+    while (line > 0 && index.Lines[line - 1].Kind == Detail::ELineKind::Comment)
+        --line;
+
+    return line;
+}
+//---------------------------------------------------------------------------
+/*
+    CommentText
+
+    The text of the comment in 'text', a comment line or what follows a key's value or a header's closing bracket on
+    its line: what follows its '#', without the blanks around it; empty when it has no comment
+*/
+std::string_view CommentText(std::string_view text) noexcept
+{
+    std::size_t const hash = text.find('#');
+    if (hash == std::string_view::npos)
+        return std::string_view();
+
+    return Trimmed(text.substr(hash + 1));
+}
+//---------------------------------------------------------------------------
+/*
     ConvertLineBreaks
 
     'text' with each line break ("\n" or "\r\n") written as 'lineBreak'
@@ -473,6 +582,23 @@ std::string ConvertLineBreaks(std::string const& text, ELineBreak lineBreak)
 }
 //---------------------------------------------------------------------------
 /*
+    DefiningLine
+
+    The line of 'index' that defines 'node', whose comment and trailing comment are the node's: the key line of a
+    key, the header of a header table or an element of an array of tables, and the header of an array of tables'
+    first element; NoIndex when it has none (the root, a table only dotted keys or longer headers made, and a value
+    inside an array or inline table)
+*/
+std::size_t DefiningLine(Detail::TDocIndex const& index, std::size_t node) noexcept
+{
+    Detail::TIndexNode const& defined = index.Nodes[node];
+    if (defined.Kind == ENodeKind::ArrayOfTables)
+        return index.Nodes[defined.Children.front()].Line;
+
+    return defined.Line;
+}
+//---------------------------------------------------------------------------
+/*
     EmptyIndex
 
     The index of an empty model (see Detail::BuildIndex()): the root table, with no keys, and the first block, with no
@@ -499,6 +625,24 @@ TASWTomlResult Failure(ETomlCode code, std::string message)
     result.Message = std::move(message);
 
     return result;
+}
+//---------------------------------------------------------------------------
+/*
+    FileCommentLines
+
+    The number of lines of the file comment of 'index': the comment lines at its start, when a blank line or the end
+    of the text follows them; 0 when there is none
+*/
+std::size_t FileCommentLines(Detail::TDocIndex const& index) noexcept
+{
+    std::size_t count = 0;
+    while (count < index.Lines.size() && index.Lines[count].Kind == Detail::ELineKind::Comment)
+        ++count;
+
+    if (count < index.Lines.size() && index.Lines[count].Kind != Detail::ELineKind::Blank)
+        return 0;
+
+    return count;
 }
 //---------------------------------------------------------------------------
 /*
@@ -542,6 +686,25 @@ TASWTomlValue* FindValue(TASWTomlValue& root, TASWTomlPath const& path) noexcept
 }
 //---------------------------------------------------------------------------
 /*
+    HasCommentControlCharacter
+
+    Whether 'text' holds a control character that TOML doesn't allow in a comment: U+0000 to U+0008, U+000A to U+001F
+    or U+007F (a tab is allowed)
+*/
+bool HasCommentControlCharacter(std::string_view text) noexcept
+{
+    for (char const c : text)
+    {
+        unsigned char const byte = static_cast<unsigned char>(c);
+
+        if ((byte < 0x20 && byte != '\t') || byte == 0x7F)
+            return true;
+    }
+
+    return false;
+}
+//---------------------------------------------------------------------------
+/*
     IsArrayOfTables
 
     Whether 'value' is written as an array of tables where a header can go: an array that isn't empty and holds only
@@ -560,6 +723,25 @@ bool IsArrayOfTables(TASWTomlValue const& value) noexcept
     }
 
     return true;
+}
+//---------------------------------------------------------------------------
+/*
+    Joined
+
+    'lines' joined with "\n"
+*/
+std::string Joined(TStringVector const& lines)
+{
+    std::string joined;
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        if (i > 0)
+            joined += '\n';
+
+        joined += lines[i];
+    }
+
+    return joined;
 }
 //---------------------------------------------------------------------------
 /*
@@ -617,6 +799,21 @@ std::string Layout(std::string_view before)
 std::string MessagePath(TASWTomlPath const& path)
 {
     return path.IsRoot() ? std::string("the root table") : path.ToString();
+}
+//---------------------------------------------------------------------------
+/*
+    ModelText
+
+    The text in 'model' of the line 'line' of its index, without its line break: all of a blank or comment line, what
+    follows the value of a key line (blanks and a comment), and what follows the closing bracket of a header
+*/
+std::string_view ModelText(Detail::TDocModel const& model, Detail::TIndexLine const& line) noexcept
+{
+    Detail::TDocBlock const& block = model.Blocks[line.Block];
+    if (line.Entry == NoIndex)
+        return block.Header.Text;
+
+    return block.Entries[line.Entry].Text;
 }
 //---------------------------------------------------------------------------
 /*
@@ -779,6 +976,41 @@ bool SpliceBefore(TSplice const& left, TSplice const& right) noexcept
 }
 //---------------------------------------------------------------------------
 /*
+    TrailingCommentOf
+
+    The trailing comment of 'path' in the text whose model is 'model' and index 'index', as
+    TASWTomlDocument::GetTrailingComment() describes it
+*/
+std::string TrailingCommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& index,
+    TASWTomlPath const& path)
+{
+    std::size_t const node = Detail::FindNode(index, path);
+    std::size_t const line = node != NoIndex ? DefiningLine(index, node) : NoIndex;
+    if (line == NoIndex)
+        return std::string();
+
+    return std::string(CommentText(ModelText(model, index.Lines[line])));
+}
+//---------------------------------------------------------------------------
+/*
+    Trimmed
+
+    'text' without the blanks at its start and end
+*/
+std::string_view Trimmed(std::string_view text) noexcept
+{
+    std::size_t begin = 0;
+    while (begin < text.size() && Detail::IsBlank(text[begin]))
+        ++begin;
+
+    std::size_t end = text.size();
+    while (end > begin && Detail::IsBlank(text[end - 1]))
+        --end;
+
+    return text.substr(begin, end - begin);
+}
+//---------------------------------------------------------------------------
+/*
     Wrapped
 
     'value' inside a table for each of the keys parts[first] to the last part: { a = { b = value } } for the keys a
@@ -810,6 +1042,7 @@ TEditor::TEditor(std::string const& text, Detail::TDocIndex const& index, TASWTo
       m_Index(index),
       m_Root(root),
       m_MaxDepth(options.Reading.MaxNestingDepth),
+      m_CommentPrefix(options.Writing.CommentPrefix),
       m_LineBreak(Detail::LineBreakText(lineBreak)),
       m_RemovedLines(index.Lines.size(), false)
 {
@@ -968,6 +1201,20 @@ std::size_t TEditor::BlockEnd(std::size_t block) const
     return 0;
 }
 //---------------------------------------------------------------------------
+TASWTomlResult TEditor::CheckCommentText(TASWTomlPath const& path, std::string_view text) const
+{
+    if (!Detail::IsValidUtf8(text))
+        return PathFailure(ETomlCode::InvalidValue, path, "the comment isn't valid UTF-8.");
+
+    if (HasCommentControlCharacter(text))
+    {
+        return PathFailure(ETomlCode::InvalidValue, path, "the comment holds a control character other than a tab, "
+            "which TOML doesn't allow in a comment.");
+    }
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
 std::size_t TEditor::CommentHead(std::size_t begin, std::size_t lineStart) const
 {
     std::size_t head = lineStart;
@@ -991,14 +1238,6 @@ std::size_t TEditor::CommentHead(std::size_t begin, std::size_t lineStart) const
     }
 
     return head;
-}
-//---------------------------------------------------------------------------
-std::size_t TEditor::CommentStart(std::size_t line) const
-{
-    while (line > 0 && m_Index.Lines[line - 1].Kind == Detail::ELineKind::Comment)
-        --line;
-
-    return line;
 }
 //---------------------------------------------------------------------------
 std::size_t TEditor::Container(std::size_t node) const
@@ -1087,6 +1326,16 @@ bool TEditor::Holds(std::size_t node, TASWTomlValue const& value) const
     }
 
     return value.IsTable();
+}
+//---------------------------------------------------------------------------
+std::string_view TEditor::Indentation(std::size_t line) const
+{
+    std::size_t const begin = m_Index.Lines[line].Text.Begin;
+    std::size_t end = begin;
+    while (Detail::IsBlank(m_Text[end]))
+        ++end;
+
+    return TextOf(TTextRange{ begin, end });
 }
 //---------------------------------------------------------------------------
 void TEditor::Insert(std::size_t offset, std::string text)
@@ -1327,19 +1576,54 @@ TASWTomlResult TEditor::Locate(TASWTomlPath const& path, std::size_t& node, std:
     return TASWTomlResult();
 }
 //---------------------------------------------------------------------------
+TASWTomlResult TEditor::LocateLine(TASWTomlPath const& path, std::size_t& line) const
+{
+    std::size_t node = 0;
+    std::size_t missing = 0;
+    TASWTomlResult const result = Locate(path, node, missing);
+    if (!result.IsOk())
+        return result;
+
+    if (missing < path.GetParts().size())
+        return PathFailure(ETomlCode::NotFound, path, MessagePath(Prefix(path, missing + 1)) + " doesn't exist.");
+
+    line = DefiningLine(m_Index, node);
+    if (line != NoIndex)
+        return result;
+
+    // What has no line of its own
+    if (node == 0)
+        return PathFailure(ETomlCode::InvalidArgument, path, "it has no line of its own.");
+
+    if (Container(node) != NoIndex)
+    {
+        return PathFailure(ETomlCode::InvalidArgument, path,
+            "it is inside an array or inline table, whose comments can't be set.");
+    }
+
+    if (m_Index.Nodes[node].Kind == ENodeKind::DottedTable)
+    {
+        return PathFailure(ETomlCode::InvalidArgument, path,
+            "it is a table that dotted keys make, which has no line of its own.");
+    }
+
+    return PathFailure(ETomlCode::InvalidArgument, path,
+        "it is a table that only longer headers make, which has no line of its own.");
+}
+//---------------------------------------------------------------------------
 void TEditor::MarkBlock(std::size_t block, TFlagVector& lines) const
 {
     std::size_t end = m_Index.Lines.size();
     if (block + 1 < m_Index.BlockLines.size())
-        end = CommentStart(m_Index.BlockLines[block + 1]);
+        end = CommentStart(m_Index, m_Index.BlockLines[block + 1]);
 
-    for (std::size_t line = CommentStart(m_Index.BlockLines[block]); line < end; ++line)
+    for (std::size_t line = CommentStart(m_Index, m_Index.BlockLines[block]); line < end; ++line)
         lines[line] = true;
 }
 //---------------------------------------------------------------------------
 void TEditor::MarkLine(std::size_t line, TFlagVector& lines) const
 {
-    for (std::size_t i = CommentStart(line); i <= line; ++i)
+    for (std::size_t i = CommentStart(m_Index, line); i <= line; ++i)
         lines[i] = true;
 }
 //---------------------------------------------------------------------------
@@ -1465,7 +1749,7 @@ TASWTomlResult TEditor::MergeElements(std::size_t array, TASWTomlValue const& ol
         std::size_t const neighbour = next < elements.size() ? nodes[partners[next]] : nodes.back();
         std::size_t offset = 0;
         if (next < elements.size())
-            offset = m_Index.Lines[CommentStart(m_Index.Nodes[neighbour].Line)].Text.Begin;
+            offset = m_Index.Lines[CommentStart(m_Index, m_Index.Nodes[neighbour].Line)].Text.Begin;
         else
             offset = BlockEnd(SubtreeLastBlock(neighbour));
 
@@ -1654,7 +1938,7 @@ TASWTomlResult TEditor::NewKeyLines(std::size_t table, TASWTomlValue const& keys
     {
         // The table gets its own header with the keys, before the first header of its sub-tables and the comment
         // lines above it
-        std::size_t const offset = m_Index.Lines[CommentStart(SubtreeFirstHeader(table))].Text.Begin;
+        std::size_t const offset = m_Index.Lines[CommentStart(m_Index, SubtreeFirstHeader(table))].Text.Begin;
         std::string block = BlankLineBefore(offset) ? m_LineBreak : std::string();
         block += "[" + PathText(table) + "]" + m_LineBreak;
         result = WriteKeyLines("", keys, block);
@@ -1673,13 +1957,8 @@ TASWTomlResult TEditor::NewKeyLines(std::size_t table, TASWTomlValue const& keys
     if (last != NoIndex)
     {
         // After the table's last key line, with its indentation
-        Detail::TIndexLine const& line = m_Index.Lines[last];
-        std::size_t keyBegin = line.Text.Begin;
-        while (Detail::IsBlank(m_Text[keyBegin]))
-            ++keyBegin;
-
-        indent = TextOf(TTextRange{ line.Text.Begin, keyBegin });
-        offset = line.Next;
+        indent = Indentation(last);
+        offset = m_Index.Lines[last].Next;
     }
     else if (table != 0)
     {
@@ -1688,26 +1967,21 @@ TASWTomlResult TEditor::NewKeyLines(std::size_t table, TASWTomlValue const& keys
     }
     else
     {
-        // The root without keys: after the file comment (the comment lines at the start, when a blank line follows)
-        // and the blank lines under it, or at the start of the text
-        std::size_t const begin = m_Index.BlockLines[0];
-        std::size_t const end = m_Index.BlockLines.size() > 1 ? m_Index.BlockLines[1] : m_Index.Lines.size();
-        std::size_t i = begin;
-        while (i < end && m_Index.Lines[i].Kind == Detail::ELineKind::Comment)
-            ++i;
-
-        if (i > begin && i < end && m_Index.Lines[i].Kind == Detail::ELineKind::Blank)
-        {
-            while (i < end && m_Index.Lines[i].Kind == Detail::ELineKind::Blank)
-                ++i;
-
-            offset = m_Index.Lines[i - 1].Next;
-        }
-        else if (i > begin && i == m_Index.Lines.size())
+        // The root without keys: after the file comment (see FileCommentLines()) and the blank lines under it, or at
+        // the start of the text
+        std::size_t i = FileCommentLines(m_Index);
+        if (i > 0 && i == m_Index.Lines.size())
         {
             // A file comment that ends the text gets the blank line under it first
             offset = m_Text.size();
             lines = m_LineBreak;
+        }
+        else if (i > 0)
+        {
+            while (i < m_Index.Lines.size() && m_Index.Lines[i].Kind == Detail::ELineKind::Blank)
+                ++i;
+
+            offset = m_Index.Lines[i - 1].Next;
         }
     }
 
@@ -1792,11 +2066,8 @@ TASWTomlResult TEditor::NewKeys(std::size_t table, TASWTomlValue const& keys)
         }
 
         Detail::TIndexLine const& line = m_Index.Lines[lastValue.Line];
-        std::size_t keyBegin = line.Text.Begin;
-        while (Detail::IsBlank(m_Text[keyBegin]))
-            ++keyBegin;
-
-        std::string const indent(TextOf(TTextRange{ line.Text.Begin, keyBegin }));
+        std::string const indent(Indentation(lastValue.Line));
+        std::size_t const keyBegin = line.Text.Begin + indent.size();
         std::string const prefix(TextOf(TTextRange{ keyBegin, NameIn(table, line.Text).End }));
         std::string lines;
         for (TASWTomlKeyValue const& item : *keys.AsTable())
@@ -2099,6 +2370,89 @@ std::size_t TEditor::Room(std::size_t depth) const noexcept
     return depth < m_MaxDepth ? m_MaxDepth - depth : 0;
 }
 //---------------------------------------------------------------------------
+TASWTomlResult TEditor::SetComment(TASWTomlPath const& path, std::string_view text)
+{
+    m_Verb = "set the comment of";
+    if (!path.IsValid())
+        return Failure(ETomlCode::InvalidArgument, path.GetError());
+
+    // The comment lines there: the file comment's, or those above the line that defines the node at 'path'
+    std::size_t line = 0;
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    TASWTomlResult result;
+    if (path.IsRoot())
+    {
+        end = FileCommentLines(m_Index);
+    }
+    else
+    {
+        result = LocateLine(path, line);
+        if (!result.IsOk())
+            return result;
+
+        begin = CommentStart(m_Index, line);
+        end = line;
+    }
+
+    TStringVector const lines = CommentLines(text);
+    for (std::string const& comment : lines)
+    {
+        result = CheckCommentText(path, comment);
+        if (!result.IsOk())
+            return result;
+    }
+
+    // A text that reads as the comment there changes nothing, however its lines are written
+    bool same = lines.size() == end - begin;
+    for (std::size_t i = 0; same && i < lines.size(); ++i)
+        same = lines[i] == CommentText(TextOf(m_Index.Lines[begin + i].Text));
+
+    if (same)
+        return result;
+
+    // Each line with the indentation of the line it is above
+    std::string const indent(path.IsRoot() ? std::string_view() : Indentation(line));
+    std::string written;
+    for (std::string const& comment : lines)
+    {
+        written += indent;
+        written += comment.empty() ? std::string("#") : m_CommentPrefix + comment;
+        written += m_LineBreak;
+    }
+
+    std::size_t const count = m_Index.Lines.size();
+    std::size_t const from = begin < count ? m_Index.Lines[begin].Text.Begin : m_Text.size();
+    std::size_t to = end < count ? m_Index.Lines[end].Text.Begin : m_Text.size();
+
+    // The file comment has a blank line under it: a new one gets one unless one follows already, and a removed one
+    // takes it along, unless the comment lines after it would then be the file comment
+    bool const blankFollows = end < count && m_Index.Lines[end].Kind == Detail::ELineKind::Blank;
+    if (path.IsRoot() && lines.empty() && blankFollows)
+    {
+        std::size_t next = end + 1;
+        while (next < count && m_Index.Lines[next].Kind == Detail::ELineKind::Comment)
+            ++next;
+
+        bool const nextIsFileComment = next > end + 1 &&
+            (next == count || m_Index.Lines[next].Kind == Detail::ELineKind::Blank);
+        if (!nextIsFileComment)
+            to = m_Index.Lines[end].Next;
+    }
+    else if (path.IsRoot() && begin == end && !blankFollows)
+    {
+        written += m_LineBreak;
+    }
+
+    // A text that doesn't end with a line break keeps that
+    if (to == m_Text.size() && !written.empty() && !m_Text.empty() && m_Text.back() != '\n')
+        written.resize(written.size() - m_LineBreak.size());
+
+    m_Splices.push_back(TSplice{ from, to, std::move(written) });
+
+    return result;
+}
+//---------------------------------------------------------------------------
 TASWTomlResult TEditor::SetExisting(std::size_t node, TASWTomlPath const& path, TASWTomlValue const& value)
 {
     TASWTomlValue const& old = *FindValue(m_Root, path);
@@ -2114,6 +2468,40 @@ TASWTomlResult TEditor::SetExisting(std::size_t node, TASWTomlPath const& path, 
     (*array.AsArray())[path.GetParts().back().GetIndex()] = value;
 
     return MergeValue(existing.Parent, oldArray, array);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TEditor::SetTrailingComment(TASWTomlPath const& path, std::string_view text)
+{
+    m_Verb = "set the trailing comment of";
+    if (!path.IsValid())
+        return Failure(ETomlCode::InvalidArgument, path.GetError());
+
+    std::size_t line = 0;
+    TASWTomlResult result = LocateLine(path, line);
+    if (result.IsOk())
+        result = CheckCommentText(path, text);
+
+    if (!result.IsOk())
+        return result;
+
+    // A text that reads as the comment there changes nothing
+    std::string_view const comment = Trimmed(text);
+    TTextRange const trailing = m_Index.Lines[line].Trailing;
+    std::size_t const hash = TextOf(trailing).find('#');
+    bool const hasComment = hash != std::string_view::npos;
+    if ((!hasComment && comment.empty()) || (hasComment && comment == CommentText(TextOf(trailing))))
+        return result;
+
+    // None removes the comment with the blanks before it; else it replaces the one there, after the blanks before it,
+    // or goes at the end of the line after two spaces
+    if (comment.empty())
+        Erase(trailing.Begin, trailing.End);
+    else if (hasComment)
+        m_Splices.push_back(TSplice{ trailing.Begin + hash, trailing.End, m_CommentPrefix + std::string(comment) });
+    else
+        m_Splices.push_back(TSplice{ trailing.Begin, trailing.End, "  " + m_CommentPrefix + std::string(comment) });
+
+    return result;
 }
 //---------------------------------------------------------------------------
 TASWTomlResult TEditor::SetValue(TASWTomlPath const& path, TASWTomlValue const& value)
@@ -2363,6 +2751,11 @@ TASWTomlValue const* TASWTomlDocument::Find(TASWTomlPath const& path) const noex
     return FindValue(m_Root, path);
 }
 //---------------------------------------------------------------------------
+std::string TASWTomlDocument::GetComment(TASWTomlPath const& path) const
+{
+    return CommentOf(m_Model, m_Index, path);
+}
+//---------------------------------------------------------------------------
 ELineBreak TASWTomlDocument::GetLineBreak() const noexcept
 {
     if (m_Model.LineBreak == ELineBreak::None)
@@ -2379,6 +2772,11 @@ TASWTomlOptions const& TASWTomlDocument::GetOptions() const noexcept
 TASWTomlValue const& TASWTomlDocument::GetRoot() const noexcept
 {
     return m_Root;
+}
+//---------------------------------------------------------------------------
+std::string TASWTomlDocument::GetTrailingComment(TASWTomlPath const& path) const
+{
+    return TrailingCommentOf(m_Model, m_Index, path);
 }
 //---------------------------------------------------------------------------
 bool TASWTomlDocument::HasBom() const noexcept
@@ -2537,6 +2935,36 @@ TASWTomlResult TASWTomlDocument::Reset(TASWTomlOptions const& options)
     return result;
 }
 //---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::SetComment(TASWTomlPath const& path, std::string_view text)
+{
+    std::string const body = BodyText();
+    TEditor editor(body, m_Index, m_Root, m_Options, m_Options.Values, GetLineBreak());
+    TASWTomlResult result = editor.SetComment(path, text);
+    if (result.IsOk())
+        editor.Finish();
+
+    if (!result.IsOk() || editor.IsEmpty())
+        return result;
+
+    Detail::TDocModel model;
+    Detail::TDocIndex index;
+    TASWTomlValue root;
+    result = ReadEdited(editor.EditedText(), model, index, root);
+    if (!result.IsOk())
+        return result;
+
+    // The text must read as the same values, with the comment at 'path'
+    if (!Detail::IdenticalValues(root, m_Root) || CommentOf(model, index, path) != Joined(CommentLines(text)))
+    {
+        return Failure(ETomlCode::InvalidValue, "Can't set the comment of " + MessagePath(path) +
+            ": the text written for it doesn't read back as it.");
+    }
+
+    Commit(model, index, root);
+
+    return result;
+}
+//---------------------------------------------------------------------------
 TASWTomlResult TASWTomlDocument::SetOptions(TASWTomlOptions const& options)
 {
     TASWTomlResult result = options.Validate();
@@ -2559,6 +2987,36 @@ TASWTomlResult TASWTomlDocument::SetOptions(TASWTomlOptions const& options)
     m_Index = std::move(index);
     m_Options = std::move(newOptions);
     m_Root = std::move(root);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::SetTrailingComment(TASWTomlPath const& path, std::string_view text)
+{
+    std::string const body = BodyText();
+    TEditor editor(body, m_Index, m_Root, m_Options, m_Options.Values, GetLineBreak());
+    TASWTomlResult result = editor.SetTrailingComment(path, text);
+    if (result.IsOk())
+        editor.Finish();
+
+    if (!result.IsOk() || editor.IsEmpty())
+        return result;
+
+    Detail::TDocModel model;
+    Detail::TDocIndex index;
+    TASWTomlValue root;
+    result = ReadEdited(editor.EditedText(), model, index, root);
+    if (!result.IsOk())
+        return result;
+
+    // The text must read as the same values, with the comment at the end of the line of 'path'
+    if (!Detail::IdenticalValues(root, m_Root) || TrailingCommentOf(model, index, path) != Trimmed(text))
+    {
+        return Failure(ETomlCode::InvalidValue, "Can't set the trailing comment of " + MessagePath(path) +
+            ": the text written for it doesn't read back as it.");
+    }
+
+    Commit(model, index, root);
 
     return result;
 }
