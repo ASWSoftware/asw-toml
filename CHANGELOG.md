@@ -155,10 +155,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   key, table or array of tables another name in its table, in its key line and in every header and
   dotted key that names it, each part bare when it can be (a part that was a literal string stays
   one when it can hold the name); renaming onto a key the table has fails with `AlreadyExists`.
-  Setting a value identical to the one there changes nothing; every edit's text is read again, and
-  an edit that wouldn't read back as meant changes nothing. Setting a whole table that exists isn't
-  supported yet. A path that doesn't fit (through a value that isn't a table, an index past the end)
-  fails with `InvalidArgument` or `NotFound`, a value that can't be written with `InvalidValue`, and
-  one nested too deep with `NestingTooDeep`.
+  Setting a whole table or array over one that exists (the root included) merges them, so only what
+  differs changes: keys are matched by name, those that stay keep their lines, comments and order,
+  the others are removed or added; the elements of arrays and arrays of tables that are the same
+  stay (the longest common subsequence of the old and new ones), the others between them are set in
+  order, and the ones left over are removed or added in their places. An inline table stays inline,
+  an array on several lines keeps one element per line with its comments, and an array of tables
+  keeps its `[[...]]` blocks, so changing one server of a list of servers changes only its lines. A
+  table that isn't inline (one with a header, of dotted keys, or made by longer headers), or an
+  array of tables, set to a value of another kind is removed, and the value written as a new key of
+  its table (`t = 5` for `[t]`). Setting a value identical to the one there changes nothing; every
+  edit's text is read again, and an edit that wouldn't read back as meant changes nothing. A path
+  that doesn't fit (through a value that isn't a table, an index past the end) fails with
+  `InvalidArgument` or `NotFound`, a value that can't be written with `InvalidValue`, and one nested
+  too deep with `NestingTooDeep`.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

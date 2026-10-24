@@ -208,6 +208,7 @@ std::string NamesAt(std::string const& text, TDocIndex const& index, std::string
 std::string NestedArrays(std::size_t depth);
 std::string NestedArraysOfTables(std::size_t count);
 std::string NestedInlineTables(std::size_t depth);
+std::size_t NestingDepth(TASWTomlValue const& value) noexcept;
 ASWToml::Detail::TIndexNode const& NodeAt(TDocIndex const& index, std::string const& path);
 std::string RandomDocumentText(std::mt19937& generator);
 std::string RandomKey(std::mt19937& generator);
@@ -222,6 +223,7 @@ bool SameValue(std::string const& expected, TASWTomlValue const& value);
 std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range);
 TASWTomlValue* ValueAt(TASWTomlValue& root, ASWToml::TASWTomlPath const& path, std::size_t count);
 std::string ValuesDiffer(ASWUnitTests::TTomlTestFile const& file, TASWTomlValue const& root);
+TArray Variants(TASWTomlValue const& value);
 std::string WithLineBreaks(std::string_view text, std::string_view lineBreak);
 
 //---------------------------------------------------------------------------
@@ -726,6 +728,33 @@ std::string NestedInlineTables(std::size_t depth)
         text += " }";
 
     return text + "\n";
+}
+//---------------------------------------------------------------------------
+/*
+    NestingDepth
+
+    How many tables and arrays 'value' is, nested in one another, itself included: 0 for a scalar, 1 for an array of
+    scalars or an empty table, and so on
+*/
+std::size_t NestingDepth(TASWTomlValue const& value) noexcept
+{
+    std::size_t deepest = 0;
+    if (TTable const* const table = value.AsTable())
+    {
+        for (ASWToml::TASWTomlKeyValue const& item : *table)
+            deepest = std::max(deepest, NestingDepth(item.Value));
+    }
+    else if (TArray const* const array = value.AsArray())
+    {
+        for (TASWTomlValue const& element : *array)
+            deepest = std::max(deepest, NestingDepth(element));
+    }
+    else
+    {
+        return 0;
+    }
+
+    return deepest + 1;
 }
 //---------------------------------------------------------------------------
 /*
@@ -1325,6 +1354,50 @@ std::string ValuesDiffer(ASWUnitTests::TTomlTestFile const& file, TASWTomlValue 
     }
 
     return differences;
+}
+//---------------------------------------------------------------------------
+/*
+    Variants
+
+    Values to set a table or array 'value' to, to merge them with it: for a table, it with its first key removed and
+    one added, it with a table added, and an empty table; for an array, it with its first element removed and its last
+    one added again, reversed, and with its last one added at the start
+*/
+TArray Variants(TASWTomlValue const& value)
+{
+    TArray variants;
+    if (TTable const* const table = value.AsTable())
+    {
+        TASWTomlValue changed = value;
+        if (!table->empty())
+            changed.Remove(table->front().Key);
+
+        changed.Set("added key", 42);
+        variants.push_back(changed);
+
+        TASWTomlValue nested = value;
+        nested.Set("added table", TTable{ { "x", true } });
+        variants.push_back(nested);
+        variants.emplace_back(TTable());
+    }
+    else if (TArray const* const array = value.AsArray())
+    {
+        TArray changed = *array;
+        if (!changed.empty())
+            changed.erase(changed.begin());
+
+        changed.push_back(array->empty() ? TASWTomlValue(7) : array->back());
+        variants.emplace_back(changed);
+        variants.emplace_back(TArray(array->rbegin(), array->rend()));
+
+        TArray inserted = *array;
+        if (!inserted.empty())
+            inserted.insert(inserted.begin(), inserted.back());
+
+        variants.emplace_back(inserted);
+    }
+
+    return variants;
 }
 //---------------------------------------------------------------------------
 /*
@@ -3763,12 +3836,9 @@ ASW_TEST(TTest_ASWToml_DocumentSetValue, ExistingScalars_KeepTheirForm)
     CheckSets("a = 1\nb = 2\n", "a", 5, "a = 5\nb = 2\n", "only the value changes");
 }
 //---------------------------------------------------------------------------
-ASW_TEST(TTest_ASWToml_DocumentSetValue, ExistingValues_ArraysAndTablesOnOneLine)
+ASW_TEST(TTest_ASWToml_DocumentSetValue, ExistingValues_OtherTypesInPlace)
 {
     // Arrange & Act & Assert
-    // (Until the whole-value merge comes, an array or inline table that exists is written again on one line)
-    CheckSets("a = [\n  1,\n  2,\n] # c\n", "a", TArray{ 3, 4 }, "a = [3, 4] # c\n", "an array");
-    CheckSets("p = { x = 1 }\n", "p", TTable{ { "y", 2 } }, "p = { y = 2 }\n", "an inline table");
     CheckSets("a = 1 # c\n", "a", TTable{ { "x", 1 } }, "a = { x = 1 } # c\n", "a scalar to a table, in place");
     CheckSets("a = 1\n", "a", TArray{ TTable{ { "x", 1 } } }, "a = [{ x = 1 }]\n",
         "an array of tables in place, as an array of inline tables");
@@ -3973,14 +4043,6 @@ ASW_TEST(TTest_ASWToml_DocumentSetValue, RejectsWhatCantBeSet)
         "an index of a missing key");
     CheckFails("a = 1\n", "", 1, ETomlCode::InvalidArgument, "Can't set the root table: it can only be set to a table.",
         "the root to a scalar");
-    CheckFails("[t]\nx = 1\n", "t", TTable{ { "x", 2 } }, ETomlCode::InvalidArgument,
-        "a table can't be set as a whole yet", "a header table as a whole");
-    CheckFails("x = 1\n", "", TTable{ { "x", 2 } }, ETomlCode::InvalidArgument, "a table can't be set as a whole yet",
-        "the root as a whole");
-    CheckFails("[[s]]\n", "s", TArray{ TTable{}, TTable{} }, ETomlCode::InvalidArgument,
-        "an array of tables can't be set as a whole yet", "an array of tables as a whole");
-    CheckFails("[t]\nx = 1\n", "t", 1, ETomlCode::InvalidArgument, "a table can't be set as a whole yet",
-        "a header table to a scalar");
     CheckFails("a = 1\n", "b", "\xFF", ETomlCode::InvalidValue, "isn't valid UTF-8", "a string that isn't UTF-8");
     CheckFails("a = 1\n", "a", badDate, ETomlCode::InvalidValue, "The date can't be written", "a date that isn't");
 
@@ -4572,6 +4634,345 @@ ASW_TEST(TTest_ASWToml_DocumentRename, Tables_EveryPlaceThatNamesThem)
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentMerge
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentMerge::TTest_ASWToml_DocumentMerge()
+    : inherited("ASWToml_DocumentMerge_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentMerge::~TTest_ASWToml_DocumentMerge()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentMerge::CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path,
+    TASWTomlValue const& value, ETomlCode code, std::string const& expectedText, std::string const& msg,
+    std::source_location loc)
+{
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), msg + ": the text should parse", loc);
+
+    ASWToml::TASWTomlResult const result = document.SetValue(path, value);
+
+    CheckEquals(code, result.Code, msg + ": the code", loc);
+    CheckContains(result.Message, expectedText, msg + ": the message", loc);
+    CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
+    CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentMerge::CheckMerges(std::string const& text, ASWToml::TASWTomlPath const& path,
+    TASWTomlValue const& value, std::string const& expected, std::string const& msg, std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text);
+    CheckTrue(parsed.IsOk(), msg + ": the text should parse: " + parsed.Message, loc);
+
+    ASWToml::TASWTomlResult const result = document.SetValue(path, value);
+
+    CheckTrue(result.IsOk(), msg + ": the value should be set: " + result.Message, loc);
+    CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
+    TASWTomlValue const* const set = document.Find(path);
+    CheckTrue(set != nullptr && ASWToml::Detail::IdenticalValues(*set, value), msg + ": the value at the path", loc);
+    CheckTrue(document.IsModified(), msg + ": the document is modified", loc);
+
+    TASWTomlDocument reread;
+    CheckTrue(reread.Parse(document.ToText()).IsOk() &&
+        ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()),
+        msg + ": the text should read as the document's values", loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentMerge::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentMerge::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentMerge::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentMerge::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, Arrays_LargeOnesMergeToo)
+{
+    // Arrange
+    // 600 elements: reversed, too many to compare each with each (each one is set in place, in order); with one
+    // removed in the middle and the ends changed, the same ones at the start and the end are found first
+    TArray numbers;
+    std::string text = "a = [";
+    for (std::int64_t i = 0; i < 600; ++i)
+    {
+        numbers.push_back(i);
+        text += (i > 0 ? ", " : "") + std::to_string(i);
+    }
+
+    text += "]\n";
+    TArray const reversed(numbers.rbegin(), numbers.rend());
+    TArray changed = numbers;
+    changed.erase(changed.begin() + 300);
+    changed.front() = std::int64_t(-1);
+    changed.push_back(std::int64_t(600));
+
+    std::string reversedText = "a = [";
+    std::string changedText = "a = [";
+    for (std::size_t i = 0; i < 600; ++i)
+    {
+        reversedText += (i > 0 ? ", " : "") + std::to_string(599 - i);
+        if (i != 300)
+            changedText += (i > 0 ? ", " : "") + std::to_string(i == 0 ? -1 : static_cast<int>(i));
+    }
+
+    reversedText += "]\n";
+    changedText += ", 600]\n";
+
+    // Act & Assert
+    CheckMerges(text, "a", reversed, reversedText, "reversed");
+    CheckMerges(text, "a", changed, changedText, "one removed, the ends changed");
+
+    // Arrange
+    // One per line with a comment each: the ones that stay keep their comments, which takes the same ones at the start
+    // (one removed near the end, one added at the end) or at the end (one removed near the start, one added first)
+    std::string lines = "a = [\n";
+    for (std::size_t i = 0; i < 600; ++i)
+        lines += "  " + std::to_string(i) + ", # " + std::to_string(i) + "\n";
+
+    lines += "]\n";
+    TArray nearEnd(numbers.begin(), numbers.begin() + 598);
+    nearEnd.push_back(std::int64_t(599));
+    nearEnd.push_back(std::int64_t(1000));
+    TArray nearStart{ std::int64_t(-1), std::int64_t(0) };
+    nearStart.insert(nearStart.end(), numbers.begin() + 2, numbers.end());
+
+    std::string nearEndText = "a = [\n";
+    std::string nearStartText = "a = [\n  -1,\n";
+    for (std::size_t i = 0; i < 600; ++i)
+    {
+        std::string const line = "  " + std::to_string(i) + ", # " + std::to_string(i) + "\n";
+        if (i != 598)
+            nearEndText += line;
+
+        if (i != 1)
+            nearStartText += line;
+    }
+
+    nearEndText += "  1000,\n]\n";
+    nearStartText += "]\n";
+
+    // Act & Assert
+    CheckMerges(lines, "a", nearEnd, nearEndText, "one removed near the end, one added at the end");
+    CheckMerges(lines, "a", nearStart, nearStartText, "one removed near the start, one added first");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, Arrays_LeastChange)
+{
+    // Arrange & Act & Assert
+    CheckMerges("a = [1, 2, 3]\n", "a", TArray{ 2, 3 }, "a = [2, 3]\n", "the first one removed");
+    CheckMerges("a = [1, 2, 3]\n", "a", TArray{ 1, 3 }, "a = [1, 3]\n", "one in the middle removed");
+    CheckMerges("a = [1, 2, 3]\n", "a", TArray{ 1, 2, 3, 4 }, "a = [1, 2, 3, 4]\n", "one added at the end");
+    CheckMerges("a = [1, 2, 3]\n", "a", TArray{ 0, 1, 2, 3 }, "a = [0, 1, 2, 3]\n", "one added at the start");
+    CheckMerges("a = [1, 2, 3]\n", "a", TArray{ 1, 5, 2, 3 }, "a = [1, 5, 2, 3]\n", "one added in the middle");
+    CheckMerges("a = [1, 2, 3]\n", "a", TArray{ 1, 5, 3 }, "a = [1, 5, 3]\n", "one changed");
+    CheckMerges("a = [1,2,3]\n", "a", TArray{ 0, 1, 2, 3 }, "a = [0,1,2,3]\n", "the blanks of the others");
+    CheckMerges("a = [ 1, 2 ]\n", "a", TArray{ 0, 1, 2 }, "a = [ 0, 1, 2 ]\n", "the blanks inside the brackets");
+    CheckMerges("a = [1]\n", "a", TArray{ 0, 1 }, "a = [0, 1]\n", "before the only one");
+    CheckMerges("a = []\n", "a", TArray{ 1, 2 }, "a = [1, 2]\n", "into an empty one");
+    CheckMerges("a = [1, 2] # c\n", "a", TArray{}, "a = [] # c\n", "all of them removed");
+    CheckMerges("a = [{ x = 1 }, { x = 2 }]\n", "a", TArray{ TTable{ { "x", 1 } }, TTable{ { "x", 3 } } },
+        "a = [{ x = 1 }, { x = 3 }]\n", "an inline table in it merged");
+    CheckMerges("a = [[1, 2], [3]]\n", "a", TArray{ TArray{ 1, 2, 9 }, TArray{ 3 } }, "a = [[1, 2, 9], [3]]\n",
+        "an array in it merged");
+    CheckMerges("a = ['x', 0xF]\n", "a", TArray{ "y", 255 }, "a = ['y', 0xFF]\n", "each one in its form");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, Arrays_OnLinesOfTheirOwn)
+{
+    // Arrange & Act & Assert
+    CheckMerges("a = [\n  1,\n  2,\n] # c\n", "a", TArray{ 3, 4 }, "a = [\n  3,\n  4,\n] # c\n",
+        "each one set in its place");
+    CheckMerges("a = [\n  1, # one\n  # about two\n  2, # two\n  3,\n]\n", "a", TArray{ 1, 3 },
+        "a = [\n  1, # one\n  3,\n]\n", "one removed with its comments");
+    CheckMerges("a = [\n  1, # one\n  # about three\n  3, # three\n]\n", "a", TArray{ 1, 2, 3 },
+        "a = [\n  1, # one\n  2,\n  # about three\n  3, # three\n]\n", "one added above the next one's comment");
+    CheckMerges("a = [\n  1, # one\n  3, # three\n]\n", "a", TArray{ 1, 3, 4, 5 },
+        "a = [\n  1, # one\n  3, # three\n  4,\n  5,\n]\n", "two added at the end");
+    CheckMerges("a = [\n  1,\n  2\n]\n", "a", TArray{ 0, 1, 2 }, "a = [\n  0,\n  1,\n  2\n]\n", "one added first");
+    CheckMerges("a = [\r\n  1,\r\n  3,\r\n]\r\n", "a", TArray{ 1, 2, 3 }, "a = [\r\n  1,\r\n  2,\r\n  3,\r\n]\r\n",
+        "with CRLF line breaks");
+    CheckMerges("a = [\n  1, # one\n  2, # two\n  3, # three\n  4, # four\n]\n", "a", TArray{ 2, 3, 9 },
+        "a = [\n  2, # two\n  3, # three\n  9, # four\n]\n",
+        "the ones that stay found in the middle, so each keeps its comment");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, ArraysOfTables_ElementsKeepTheirBlocks)
+{
+    // Arrange
+    TTable const a{ { "name", "a" } };
+    TTable const b{ { "name", "b" } };
+    TTable const c{ { "name", "c" } };
+
+    // Act & Assert
+    CheckMerges("[[s]]\nname = \"a\"\n\n# b\n[[s]]\nname = \"b\"\n\n[[s]]\nname = \"c\"\n", "s", TArray{ b, c },
+        "# b\n[[s]]\nname = \"b\"\n\n[[s]]\nname = \"c\"\n", "the first one removed, the others keep their comments");
+    CheckMerges("[[s]]\nname = \"a\"\n\n[[s]]\nname = \"b\"\n", "s", TArray{ a, TTable{ { "name", "x" } }, b },
+        "[[s]]\nname = \"a\"\n\n[[s]]\nname = \"x\"\n\n[[s]]\nname = \"b\"\n", "one added in the middle");
+    CheckMerges("[[s]]\nname = \"a\"\n\n# about b\n[[s]]\nname = \"b\"\n", "s",
+        TArray{ a, TTable{ { "name", "x" } }, b },
+        "[[s]]\nname = \"a\"\n\n[[s]]\nname = \"x\"\n\n# about b\n[[s]]\nname = \"b\"\n",
+        "one added before the next one's comment");
+    CheckMerges("[[s]]\nname = \"a\"\nport = 1 # p\n\n[[s]]\nname = \"b\"\n", "s",
+        TArray{ TTable{ { "name", "a" }, { "port", 2 } }, b },
+        "[[s]]\nname = \"a\"\nport = 2 # p\n\n[[s]]\nname = \"b\"\n", "a changed one keeps its block and comments");
+    CheckMerges("[[s]]\nname = \"a\"\n\n[[s]]\nname = \"b\"\n", "s", TArray{ a, b, c },
+        "[[s]]\nname = \"a\"\n\n[[s]]\nname = \"b\"\n\n[[s]]\nname = \"c\"\n", "one added at the end");
+    CheckMerges("[[s]]\nname = \"a\"\n[s.t]\nx = 1\n\n[[s]]\nname = \"b\"\n", "s", TArray{ b },
+        "[[s]]\nname = \"b\"\n", "one removed with its table");
+    CheckMerges("[[s]]\nname = \"a\"\n[s.t]\nx = 1\n\n[u]\n", "s",
+        TArray{ TTable{ { "name", "a" }, { "t", TTable{ { "x", 1 } } } }, TTable{ { "name", "z" } } },
+        "[[s]]\nname = \"a\"\n[s.t]\nx = 1\n\n[[s]]\nname = \"z\"\n\n[u]\n", "one added after the last one's table");
+    CheckMerges("[[s]]\nx = 1\ny = 2\n", "s[0]", TTable{ { "x", 1 }, { "z", 3 } }, "[[s]]\nx = 1\nz = 3\n",
+        "an element merged");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, BlankLines_StayInShape)
+{
+    // Arrange & Act & Assert
+    CheckMerges("[t]\nx = 1\n# about y\ny = 2\n\n[u]\n", "t", TTable{ { "x", 5 } }, "[t]\nx = 5\n\n[u]\n",
+        "a key removed with its comment");
+    CheckMerges("# about b\nb = 2\n\n[t]\n", "", TTable{ { "c", 3 }, { "t", TTable{} } }, "c = 3\n\n[t]\n",
+        "a new key where a removed one was");
+    CheckMerges("[t]\nx = 1\n\n[u]\n\n[t.s]\ny = 1\n", "t", TTable{ { "x", 1 }, { "n", TTable{ { "z", 1 } } } },
+        "[t]\nx = 1\n\n[u]\n\n[t.n]\nz = 1\n", "a new table where a removed one was");
+    CheckMerges("[t]\nx = 1\n", "t", 5, "t = 5\n", "a table becomes a key line");
+    CheckMerges("[a.b]\nx = 1\n", "a", TTable{}, "[a]\n", "a table only a longer header made, emptied");
+    CheckMerges("a = 1\nb = 2", "", TTable{ { "a", 1 }, { "c", 3 } }, "a = 1\nc = 3\n",
+        "after a last line without a line break");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, InlineTables_KeepTheirLayout)
+{
+    // Arrange & Act & Assert
+    CheckMerges("p = { x = 1, y = 2 } # c\n", "p", TTable{ { "x", 1 }, { "z", 3 } }, "p = { x = 1, z = 3 } # c\n",
+        "a new entry where a removed one was");
+    CheckMerges("p = { x = 1, y = 2 }\n", "p", TTable{ { "y", 2 } }, "p = { y = 2 }\n", "one removed");
+    CheckMerges("p = { x = 1, y = 2 }\n", "p", TTable{ { "z", 3 }, { "w", 4 } }, "p = { z = 3, w = 4 }\n",
+        "all of them replaced");
+    CheckMerges("p = { a = 1, b = 2 }\n", "p", TTable{ { "b", 2 }, { "a", 1 }, { "c", 3 } },
+        "p = { a = 1, b = 2, c = 3 }\n", "one added, the order of the others kept");
+    CheckMerges("p = { x = 1 }\n", "p", TTable{ { "y", 2 } }, "p = { y = 2 }\n", "the only one replaced");
+    CheckMerges("p = { x = 1 }\n", "p", TTable{ { "y", 2 }, { "z", 3 } }, "p = { y = 2, z = 3 }\n",
+        "one in the place of the removed one, one after it");
+    CheckMerges("p = { a.x = 1, b = 2 }\n", "p", TTable{ { "a", TTable{ { "x", 1 }, { "y", 5 } } }, { "b", 2 } },
+        "p = { a.x = 1, b = 2, a.y = 5 }\n", "a dotted key added");
+    CheckMerges("p = {\n  a = 1,\n  b = 2,\n}\n", "p", TTable{ { "a", 1 }, { "c", 3 } },
+        "p = {\n  a = 1,\n  c = 3,\n}\n", "on several lines (TOML 1.1)");
+    CheckMerges("p = {\n  a = 1, # one\n  b = 2 # two\n}\n", "p", TTable{ { "a", 1 } }, "p = {\n  a = 1 # one\n}\n",
+        "the last one removed on several lines");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, RejectsWhatCantBeWritten)
+{
+    // Arrange & Act & Assert
+    CheckFails("[t]\nx = 1\n", "t", TTable{ { "x", "\xFF" } }, ETomlCode::InvalidValue, "isn't valid UTF-8",
+        "a value that isn't UTF-8");
+    CheckFails("[t]\nx = 1\ny = 2\n", "t", TTable{ { "y", 3 }, { "\xFF", 1 } }, ETomlCode::InvalidValue,
+        "isn't valid UTF-8", "a new key that isn't UTF-8, after a removal and a change");
+    CheckFails("a = [1, 2]\n", "a", TArray{ 1, 2, "\xFF" }, ETomlCode::InvalidValue, "isn't valid UTF-8",
+        "a new element that isn't UTF-8");
+
+    // Arrange
+    TASWTomlOptions shallow;
+    shallow.Reading.MaxNestingDepth = 2;
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("a = [1]\n", shallow).IsOk(), "the text should parse");
+    // (TArray{ TArray{ 1 } } would be a copy of the inner array for MSVC, not an array holding it)
+    TASWTomlValue const one = TArray{ 1 };
+    TASWTomlValue const two = TArray{ one };
+    TASWTomlValue const three = TArray{ two };
+
+    // Act
+    ASWToml::TASWTomlResult const tooDeep = document.SetValue("", TTable{ { "a", three } });
+    ASWToml::TASWTomlResult const fits = document.SetValue("", TTable{ { "a", two } });
+
+    // Assert
+    CheckEquals(ETomlCode::NestingTooDeep, tooDeep.Code, "three arrays are 3 deep, beyond 2");
+    CheckTrue(fits.IsOk(), "two arrays fit: " + fits.Message);
+    CheckEquals("a = [[1]]\n"s, document.ToText(), "only the edit that fits changed the text");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, Tables_EveryForm)
+{
+    // Arrange & Act & Assert
+    CheckMerges("a = 1\nb = 2\n\n[t]\nx = 1\n", "", TTable{ { "a", 1 }, { "t", TTable{ { "x", 1 } } }, { "c", 3 } },
+        "a = 1\nc = 3\n\n[t]\nx = 1\n", "the root");
+    CheckMerges("a = 1\n\n[t]\nx = 1\n\n[u]\ny = 2\n", "", TTable{ { "a", 2 }, { "u", TTable{ { "y", 2 } } } },
+        "a = 2\n\n[u]\ny = 2\n", "the root, a table removed");
+    CheckMerges("a.x = 1\na.y = 2\nb = 3\n", "a", TTable{ { "x", 1 }, { "z", 4 } }, "a.x = 1\na.z = 4\nb = 3\n",
+        "a table of dotted keys");
+    CheckMerges("a.x = 1\nb = 3\n", "a", TTable{ { "z", 4 } }, "a.z = 4\nb = 3\n",
+        "a table of dotted keys, its only key replaced");
+    CheckMerges("a.x = 1\n\"a\".y = 2\nb = 3\n", "a", TTable{ { "x", 1 }, { "z", 4 } }, "a.x = 1\na.z = 4\nb = 3\n",
+        "a new dotted key after the last one that stays, as it is written");
+    CheckMerges("a.x = 1\nb = 3\n", "a", TTable{}, "b = 3\n\n[a]\n", "a table of dotted keys, emptied");
+    CheckMerges("[a.b]\nx = 1\n[a.c]\ny = 2\n", "a", TTable{ { "b", TTable{ { "x", 1 } } }, { "d", 3 } },
+        "[a]\nd = 3\n\n[a.b]\nx = 1\n", "a table only longer headers made");
+    CheckMerges("x = 1\n[t]\n", "", TTable{ { "x", 1 }, { "t", TTable{ { "y", 1 } } } }, "x = 1\n[t]\ny = 1\n",
+        "an empty header table");
+    CheckMerges("p = { x = 1 }\n", "", TTable{ { "p", TTable{ { "x", 1 }, { "q", TTable{ { "r", 1 } } } } } },
+        "p = { x = 1, q = { r = 1 } }\n", "an inline table");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, Tables_KeysSetRemovedAndAdded)
+{
+    // Arrange & Act & Assert
+    CheckMerges("[t]\nx = 1 # one\ny = 2\n", "t", TTable{ { "x", 1 }, { "y", 3 } }, "[t]\nx = 1 # one\ny = 3\n",
+        "a key set");
+    CheckMerges("[t]\nx = 1\ny = 2\n", "t", TTable{ { "x", 1 } }, "[t]\nx = 1\n", "a key removed");
+    CheckMerges("[t]\nx = 1\ny = 2\n", "t", TTable{ { "x", 1 }, { "y", 2 }, { "z", 3 } }, "[t]\nx = 1\ny = 2\nz = 3\n",
+        "a key added");
+    CheckMerges("[t]\nx = 1\ny = 2\n", "t", TTable{ { "z", 3 } }, "[t]\nz = 3\n", "all of them replaced");
+    CheckMerges("[t]\nx = 1\ny = 2\n", "t", TTable{ { "x", 1 }, { "s", TTable{ { "a", 1 } } } },
+        "[t]\nx = 1\n\n[t.s]\na = 1\n", "a key removed, a table added");
+    CheckMerges("[t]\nx = 1\n[t.s]\na = 1\n", "t", TTable{ { "x", 1 } }, "[t]\nx = 1\n", "a table under it removed");
+    CheckMerges("[t]\nx = 1\n[t.s]\na = 1\n", "t", TTable{ { "x", 1 }, { "s", TTable{ { "a", 2 }, { "b", 3 } } } },
+        "[t]\nx = 1\n[t.s]\na = 2\nb = 3\n", "a table under it merged");
+    CheckMerges("a = 1\nb = 2\n\n[t]\nx = 1\n", "", TTable{ { "b", 2 } }, "b = 2\n", "the root, mostly removed");
+    CheckMerges("a = 1e2\nb = 1\n", "", TTable{ { "a", 100.0 }, { "b", 2 } }, "a = 1e2\nb = 2\n",
+        "a key that is the same keeps its text");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentMerge, Tables_ToAnotherType)
+{
+    // Arrange & Act & Assert
+    CheckMerges("a = 1\n[t]\nx = 1\n", "", TTable{ { "a", 1 }, { "t", 5 } }, "a = 1\nt = 5\n",
+        "a header table to a scalar, a key line where new keys go");
+    CheckMerges("[t]\nx = 1\n", "t", TArray{ 1 }, "t = [1]\n", "a header table to an array");
+    CheckMerges("[t]\nx = 1\n[t.u]\ny = 1\n", "t", TTable{ { "u", 2 } }, "[t]\nu = 2\n",
+        "a table under it to a scalar");
+    CheckMerges("[[s]]\nx = 1\n", "s", TArray{ 1, 2 }, "s = [1, 2]\n", "an array of tables to an array value");
+    CheckMerges("[[s]]\nx = 1\n", "s", TArray{}, "s = []\n", "an array of tables to an empty array");
+    CheckMerges("[[s]]\nx = 1\n[[s]]\nx = 2\n", "s[1]", 5, "s = [{ x = 1 }, 5]\n",
+        "an element of an array of tables to a scalar: the array becomes an array value");
+    CheckMerges("a.x = 1\nb = 2\n", "a", "text", "b = 2\na = \"text\"\n", "a table of dotted keys to a string");
+    CheckMerges("a = 1\n[t]\nx = 1\n[[s]]\n", "", TTable{ { "a", 1 } }, "a = 1\n", "tables removed");
+    CheckMerges("a = 1\n[t]\nx = 1\n", "", TTable{ { "a", 1 }, { "b", 3 }, { "t", 5 } }, "a = 1\nb = 3\nt = 5\n",
+        "a header table to a scalar, in the order of the new keys");
+    CheckMerges("a = 1\n[[s]]\nx = 1\n", "", TTable{ { "a", 1 }, { "b", 3 }, { "s", TArray{ 1, 2 } } },
+        "a = 1\nb = 3\ns = [1, 2]\n", "an array of tables to an array value, in the order of the new keys");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentEditFuzz
 /////////////////////////////////////////////////////////////////////////////
 
@@ -4691,6 +5092,69 @@ ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryPathRemoved)
     CheckTrue(removals > 1000, "every path of every text removed: " + std::to_string(removals));
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryTableAndArraySet)
+{
+    // Arrange
+    TCorpusTextVector const corpus = EditCorpus();
+    std::size_t sets = 0;
+
+    for (std::size_t i = 0; i < corpus.size(); ++i)
+    {
+        TASWTomlDocument original;
+        TASWTomlDocument next;
+        CheckTrue(original.Parse(corpus[i].Text).IsOk() && next.Parse(corpus[(i + 1) % corpus.size()].Text).IsOk(),
+            corpus[i].Name + ": the texts should parse");
+
+        // The root set to the next text's, and each table and array to each of its variants
+        TPathVector paths;
+        AddPaths(original.GetRoot(), ASWToml::TASWTomlPath(), paths);
+        TPathVector edited(1, ASWToml::TASWTomlPath());
+        TArray values(1, next.GetRoot());
+        for (ASWToml::TASWTomlPath const& path : paths)
+        {
+            for (TASWTomlValue const& variant : Variants(*original.Find(path)))
+            {
+                edited.push_back(path);
+                values.push_back(variant);
+            }
+        }
+
+        for (std::size_t j = 0; j < edited.size(); ++j)
+        {
+            std::string const msg = corpus[i].Name + ", " + edited[j].ToString() + ", variant " + std::to_string(j);
+            TASWTomlDocument document = original;
+
+            // Act
+            ASWToml::TASWTomlResult const result = document.SetValue(edited[j], values[j]);
+
+            // Assert
+            // A value that would be nested deeper than Reading.MaxNestingDepth (a table added at the limit) can't be
+            // set: it is inside a table or array for each part of its path but the last, the root not counted
+            ++sets;
+            std::size_t const depth = edited[j].GetParts().size() + NestingDepth(values[j]) - 1;
+            if (depth > ASWToml::TASWTomlReadingOptions::DefaultMaxNestingDepth)
+            {
+                CheckEquals(ETomlCode::NestingTooDeep, result.Code, msg + ": too deep");
+                CheckEquals(original.ToText(), document.ToText(), msg + ": the text should be kept");
+                continue;
+            }
+
+            TASWTomlValue const* const set = document.Find(edited[j]);
+            TASWTomlDocument reread;
+            CheckTrue(result.IsOk(), msg + ": it should be set: " + result.Message);
+            CheckTrue(set != nullptr && ASWToml::Detail::IdenticalValues(*set, values[j]), msg + ": the value set");
+            CheckTrue(reread.Parse(document.ToText()).IsOk() &&
+                ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()),
+                msg + ": the text should read as the document's values");
+            CheckEquals(!ASWToml::Detail::IdenticalValues(*original.Find(edited[j]), values[j]), document.IsModified(),
+                msg + ": the document is modified when the value differs");
+        }
+    }
+
+    // Assert
+    CheckTrue(sets > 2000, "every table and array of every text set: " + std::to_string(sets));
+}
+//---------------------------------------------------------------------------
 
 } // namespace ASWUnitTests
 
@@ -4701,6 +5165,7 @@ ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentErrors, "Do
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentFuzz, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentIndex, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentLookups, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentMerge, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentModel, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentParse, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentRemove, "Document")

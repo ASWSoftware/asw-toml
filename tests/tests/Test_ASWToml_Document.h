@@ -421,7 +421,7 @@ private:
 
 public: // Test methods, each defined with ASW_TEST
     void Test_ExistingScalars_KeepTheirForm();
-    void Test_ExistingValues_ArraysAndTablesOnOneLine();
+    void Test_ExistingValues_OtherTypesInPlace();
     void Test_IdenticalValue_ChangesNothing();
     void Test_LineBreaks_TheDocumentsOwn();
     void Test_NewKeys_AsDottedKeys();
@@ -570,6 +570,52 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentMerge
+//
+// TASWTomlDocument::SetValue() of a whole table or array over one that exists: the least text changes
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentMerge : public TAutoTestGroup<TTest_ASWToml_DocumentMerge>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentMerge> inherited;
+
+private:
+    // Checks that SetValue() of 'path' to 'value' in a document of 'text' fails with 'code' and a message that holds
+    // 'expectedText', and changes nothing
+    void CheckFails(std::string const& text, ASWToml::TASWTomlPath const& path, ASWToml::TASWTomlValue const& value,
+        ASWToml::ETomlCode code, std::string const& expectedText, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that SetValue() of 'path' to 'value' in a document of 'text' succeeds, gives the text 'expected' and the
+    // value at 'path', sets the modified flag, and that the text reads as the document's values
+    void CheckMerges(std::string const& text, ASWToml::TASWTomlPath const& path, ASWToml::TASWTomlValue const& value,
+        std::string const& expected, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Arrays_LargeOnesMergeToo();
+    void Test_Arrays_LeastChange();
+    void Test_Arrays_OnLinesOfTheirOwn();
+    void Test_ArraysOfTables_ElementsKeepTheirBlocks();
+    void Test_BlankLines_StayInShape();
+    void Test_InlineTables_KeepTheirLayout();
+    void Test_RejectsWhatCantBeWritten();
+    void Test_Tables_EveryForm();
+    void Test_Tables_KeysSetRemovedAndAdded();
+    void Test_Tables_ToAnotherType();
+
+public:
+    TTest_ASWToml_DocumentMerge();
+    ~TTest_ASWToml_DocumentMerge() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentEditFuzz
 //
 // Edits of the texts of our round-trip corpus and toml-test's valid files: each one does what it should, the text
@@ -583,6 +629,7 @@ private:
 public: // Test methods, each defined with ASW_TEST
     void Test_Corpus_EveryKeyRenamed();
     void Test_Corpus_EveryPathRemoved();
+    void Test_Corpus_EveryTableAndArraySet();
 
 public:
     TTest_ASWToml_DocumentEditFuzz();

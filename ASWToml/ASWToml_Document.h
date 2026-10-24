@@ -383,7 +383,20 @@ public:
     //   its key, the blanks around '=' and a comment at the end of its line stay. A scalar keeps its form where it can
     //   when Values asks for Auto: a basic, literal or multi-line string stays one (a literal one that can't hold the
     //   new text becomes basic), and an integer keeps its hexadecimal, octal or binary base unless the new value is
-    //   negative. A new array is written as [1, 2] and a table as an inline table, { x = 1 }, on one line.
+    //   negative. A value of another type is written in its place, an array as [1, 2] and a table as an inline table,
+    //   { x = 1 }, on one line.
+    // - A table or array that exists, set to a table or array, is merged with it, so only what differs changes: each
+    //   key of the value is set as this says (a table in it is merged too), each key the value doesn't have is removed
+    //   as Remove() removes it, and each new one added, in the order of the value; the keys that stay keep their
+    //   order, lines and comments. Of the elements of an array or an array of tables, those that are the same as new
+    //   ones stay (the longest common subsequence of the two), the others between them are set to the new ones in
+    //   order, and the ones left over are removed or added in their place: a new element before the next one that
+    //   stays, in its layout (above its comment lines when it starts a line), or at the end. An inline table stays
+    //   inline (a new entry takes the place of a removed one at its end), an array on several lines keeps one element
+    //   per line, and an array of tables keeps its [[path]] blocks with their comments.
+    // - A table that isn't inline, or an array of tables, set to a value it can't hold is removed, and the value
+    //   written as a new key of its table (t = 5 for [t]); an element of an array of tables set to a value that isn't
+    //   a table makes the whole array an array value.
     // - A missing key is added where its table is written: after the last key line of a [header] table, an element of
     //   an array of tables or the root table (the root's after the file comment and the blank line under it when it
     //   has no keys yet), copying that line's indentation; as a dotted key after the last one of a table dotted keys
@@ -399,10 +412,9 @@ public:
     //   Writing.BlankLineBeforeNewTable is on.
     // - New lines get GetLineBreak(); a last line without a line break gets one first.
     // A value identical to the one there (floats by their sign too, so -0.0 isn't 0.0, and a NaN is a NaN of the same
-    // sign) changes nothing, and leaves the modified flag as it was. Setting a table that exists (the root, a header,
-    // dotted-key, implicit or element table) or an array of tables as a whole isn't supported yet (InvalidArgument).
-    // Fails with InvalidArgument when 'path' isn't valid, goes through a value that isn't a table (port.x when port is
-    // an integer), puts a key after an array or an index after a table, or names the root for a value that isn't a
+    // sign; tables with their keys in any order) changes nothing, and leaves the modified flag as it was. Fails with
+    // InvalidArgument when 'path' isn't valid, goes through a value that isn't a table (port.x when port is an
+    // integer), puts a key after an array or an index after a table, or names the root for a value that isn't a
     // table; InvalidOptions for 'values' that aren't valid; NotFound for an index past the end of an array (or into a
     // missing key); InvalidValue for a value that can't be written (a string that isn't valid UTF-8, a date or time
     // that isn't valid); NestingTooDeep when the result would be nested deeper than Reading.MaxNestingDepth. On
