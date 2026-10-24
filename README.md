@@ -11,8 +11,12 @@ unit-test projects and CI, and the foundations the rest builds on: the shared re
 types (`ASWToml_Types.h`), the options (`ASWToml_Options.h`) and the file layer with its UTF-8 path
 conversions (`ASWToml_File.h`). It also has the TOML values: `TASWTomlValue` and the date and time
 types (`ASWToml_Value.h`), and the reading and writing of TOML's strings, numbers, booleans, dates
-and times. Reading and writing whole TOML documents comes next. [CHANGELOG.md](CHANGELOG.md) lists
-what each change adds. The interface may change in any way until 1.0.0.
+and times. And it reads whole TOML 1.1 documents: `TASWTomlDocument` (`ASWToml_Document.h`) keeps
+every byte of a text and writes it back unchanged, applies TOML's table rules, and gives each value
+by its path (`TASWTomlPath`, `ASWToml_Path.h`), checked against every file of toml-test's TOML 1.1
+list. Editing documents comes next, then the typed values, loading and saving files, and the
+settings binding. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The interface may change
+in any way until 1.0.0.
 
 ## Design
 
@@ -58,7 +62,8 @@ whose design it follows. Its goals:
   application's settings class derives from, declaring its tables and settings
   (`TASWTomlTable`, `TASWTomlSetting<T>`), arrays of tables included.
 - UTF-8, with or without a byte order mark (kept as the file had it); LF and CRLF line endings
-  (kept, even mixed); a size limit on loads and a nesting limit for arrays and inline tables.
+  (kept, even mixed); a size limit on loads and a nesting limit for tables, arrays and inline
+  tables.
 - Atomic saves with an optional backup, and UTF-8 file paths on Windows and Linux.
 
 # Donations:
