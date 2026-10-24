@@ -86,6 +86,10 @@ call :CopyFile "ASWToml\ASWToml_Version.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Versi
 if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Version.h" "%TARGET_DIR%\ASWToml\ASWToml_Version.h"
 if errorlevel 1 exit /b 1
+call :CopyFile "ASWToml\ASWToml_Writer.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Writer.cpp"
+if errorlevel 1 exit /b 1
+call :CopyFile "ASWToml\ASWToml_Writer.h" "%TARGET_DIR%\ASWToml\ASWToml_Writer.h"
+if errorlevel 1 exit /b 1
 
 echo Deployment completed successfully.
 exit /b 0

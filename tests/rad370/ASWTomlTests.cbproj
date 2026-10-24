@@ -138,6 +138,10 @@
             <DependentOn>..\..\ASWToml\ASWToml_Version.h</DependentOn>
             <BuildOrder>1</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Writer.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Writer.h</DependentOn>
+            <BuildOrder>34</BuildOrder>
+        </CppCompile>
         <PCHCompile Include="ASWTomlTestsPCH1.h">
             <BuildOrder>0</BuildOrder>
             <PCH>true</PCH>
@@ -177,6 +181,10 @@
         <CppCompile Include="..\tests\Test_ASWToml_Version.cpp">
             <DependentOn>..\tests\Test_ASWToml_Version.h</DependentOn>
             <BuildOrder>2</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_Writer.cpp">
+            <DependentOn>..\tests\Test_ASWToml_Writer.h</DependentOn>
+            <BuildOrder>35</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\tests\UT_Helper_TempDir.cpp">
             <DependentOn>..\tests\UT_Helper_TempDir.h</DependentOn>

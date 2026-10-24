@@ -56,6 +56,7 @@ void AppendDigits(std::int64_t value, std::size_t digitCount, std::string& text)
 void AppendHex(std::uint32_t value, std::size_t digitCount, std::string& text);
 void AppendTime(TASWTomlLocalTime const& time, std::string& text);
 bool CanBeLiteral(std::string_view value) noexcept;
+bool CanBeMultiLineLiteral(std::string_view value) noexcept;
 char CharacterAfterDigits(std::string_view text, std::size_t offset) noexcept;
 TASWTomlResult CheckDate(std::chrono::year_month_day const& date);
 TASWTomlResult CheckTime(TASWTomlLocalTime const& time);
@@ -225,6 +226,26 @@ bool CanBeLiteral(std::string_view value) noexcept
     for (char const c : value)
     {
         if (c == '\'' || (c != '\t' && IsControlCharacter(static_cast<unsigned char>(c))))
+            return false;
+    }
+
+    return true;
+}
+//---------------------------------------------------------------------------
+/*
+    CanBeMultiLineLiteral
+
+    Whether a multi-line literal string can hold 'value': it has no run of three ' (which would close it) and no
+    control character other than a tab and a line feed
+*/
+bool CanBeMultiLineLiteral(std::string_view value) noexcept
+{
+    if (value.find("'''") != std::string_view::npos)
+        return false;
+
+    for (char const c : value)
+    {
+        if (c != '\t' && c != '\n' && IsControlCharacter(static_cast<unsigned char>(c)))
             return false;
     }
 
@@ -1455,6 +1476,61 @@ TASWTomlResult WriteLocalTime(TASWTomlLocalTime const& value, std::string& text)
     AppendTime(value, text);
 
     return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult WriteMultiLineString(std::string_view value, std::string& text, bool literal, ELineBreak lineBreak,
+    bool breakFirst)
+{
+    if (!IsValidUtf8(value))
+        return Error(ETomlCode::InvalidValue, "The string can't be written: it isn't valid UTF-8.");
+
+    std::string_view const newLine = lineBreak == ELineBreak::None ? "\n" : LineBreakText(lineBreak);
+    literal = literal && CanBeMultiLineLiteral(value);
+
+    text += literal ? "'''" : "\"\"\"";
+    if (breakFirst || (!value.empty() && value.front() == '\n'))
+        text += newLine;
+
+    // How many " in a row were written as they are, so a third one is escaped and can't close the string
+    std::size_t quotes = 0;
+
+    for (char const c : value)
+    {
+        if (c == '\n')
+        {
+            text += newLine;
+        }
+        else if (literal || c == '\t')
+        {
+            text += c;
+        }
+        else if (c == '"')
+        {
+            quotes = quotes == 2 ? 0 : quotes + 1;
+            text += quotes == 0 ? "\\\"" : "\"";
+            continue;
+        }
+        else if (c == '\\' || c == '\b' || c == '\f' || c == '\r')
+        {
+            text += '\\';
+            text += EscapeLetter(c);
+        }
+        else if (IsControlCharacter(static_cast<unsigned char>(c)))
+        {
+            text += "\\u";
+            AppendHex(static_cast<unsigned char>(c), 4, text);
+        }
+        else
+        {
+            text += c;
+        }
+
+        quotes = 0;
+    }
+
+    text += literal ? "'''" : "\"\"\"";
+
+    return TASWTomlResult();
 }
 //---------------------------------------------------------------------------
 TASWTomlResult WriteOffsetDateTime(TASWTomlOffsetDateTime const& value, std::string& text)

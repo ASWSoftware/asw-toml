@@ -156,6 +156,10 @@
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Version.h</DependentOn>
             <BuildOrder>2</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Writer.cpp">
+            <DependentOn>..\..\..\..\ASWToml\ASWToml_Writer.h</DependentOn>
+            <BuildOrder>66</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\tests\Test_ASWToml_Document.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_Document.h</DependentOn>
             <BuildOrder>64</BuildOrder>
@@ -191,6 +195,10 @@
         <CppCompile Include="..\..\..\tests\Test_ASWToml_Version.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_Version.h</DependentOn>
             <BuildOrder>3</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\..\tests\Test_ASWToml_Writer.cpp">
+            <DependentOn>..\..\..\tests\Test_ASWToml_Writer.h</DependentOn>
+            <BuildOrder>67</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\tests\UT_Helper_TempDir.cpp">
             <DependentOn>..\..\..\tests\UT_Helper_TempDir.h</DependentOn>

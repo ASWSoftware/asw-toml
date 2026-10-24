@@ -57,6 +57,12 @@ private:
     void CheckWrites(std::string const& value, ASWToml::EStringStyle style, std::string const& expected,
         std::string const& msg, std::source_location loc = std::source_location::current());
 
+    // Checks that WriteMultiLineString() writes 'value' (with 'literal', 'lineBreak' and 'breakFirst') as 'expected',
+    // and that it reads back as 'value'
+    void CheckWritesMultiLine(std::string const& value, bool literal, ASWToml::ELineBreak lineBreak, bool breakFirst,
+        std::string const& expected, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
 public: // Test methods, each defined with ASW_TEST
     void Test_ReadString_BasicStrings();
     void Test_ReadString_Escapes();
@@ -71,6 +77,10 @@ public: // Test methods, each defined with ASW_TEST
     void Test_ReadString_RejectsUnclosedStrings();
     void Test_ReadString_ReportsLineAndColumn();
     void Test_ReadString_StartsAndStopsAtItsToken();
+    void Test_WriteMultiLineString_BasicStrings();
+    void Test_WriteMultiLineString_LiteralStrings();
+    void Test_WriteMultiLineString_ReadsBackEveryCharacter();
+    void Test_WriteMultiLineString_RejectsInvalidUtf8();
     void Test_WriteString_AppendsToText();
     void Test_WriteString_AutoStyle();
     void Test_WriteString_BasicStyle();

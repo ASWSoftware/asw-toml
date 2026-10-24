@@ -43,6 +43,7 @@ namespace
 using namespace std::string_literals;
 
 using ASWToml::EIntegerBase;
+using ASWToml::ELineBreak;
 using ASWToml::EStringStyle;
 using ASWToml::ETomlCode;
 using ASWToml::ETomlType;
@@ -603,6 +604,26 @@ void TTest_ASWToml_Strings::CheckWrites(std::string const& value, EStringStyle s
     CheckEquals(text.size(), position, msg + ": the string read back should end the text", loc);
 }
 //---------------------------------------------------------------------------
+void TTest_ASWToml_Strings::CheckWritesMultiLine(std::string const& value, bool literal, ELineBreak lineBreak,
+    bool breakFirst, std::string const& expected, std::string const& msg, std::source_location loc)
+{
+    std::string text = "x = ";
+
+    ASWToml::TASWTomlResult const result =
+        ASWToml::Detail::WriteMultiLineString(value, text, literal, lineBreak, breakFirst);
+
+    CheckTrue(result.IsOk(), msg + ": the string should be written: " + result.Message, loc);
+    CheckEquals("x = " + expected, text, msg + ": the text", loc);
+
+    std::string read;
+    std::size_t position = 4;
+    ASWToml::TASWTomlResult const readResult = ASWToml::Detail::ReadString(text, position, read);
+
+    CheckTrue(readResult.IsOk(), msg + ": the written string should read back: " + readResult.Message, loc);
+    CheckEquals(value, read, msg + ": the string read back", loc);
+    CheckEquals(text.size(), position, msg + ": the string read back should end the text", loc);
+}
+//---------------------------------------------------------------------------
 void TTest_ASWToml_Strings::SetUp_Group()
 {
 }
@@ -948,6 +969,116 @@ ASW_TEST(TTest_ASWToml_Strings, ReadString_StartsAndStopsAtItsToken)
     CheckReadsUpTo("\"\"\"\"\"\"\"\"", 8, "\"\"", "eight quotes: two inside the delimiters");
     CheckReadsUpTo("\"\"\"\"\"\"\"\"\"", 8, "\"\"", "nine quotes: one left over");
     CheckReadsUpTo("''''''''''''", 8, "''", "twelve apostrophes: four left over");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Strings, WriteMultiLineString_BasicStrings)
+{
+    // Arrange & Act & Assert
+    CheckWritesMultiLine("one\ntwo", false, ELineBreak::LF, false, "\"\"\"one\ntwo\"\"\"", "a line feed as it is");
+    CheckWritesMultiLine("one\ntwo", false, ELineBreak::CRLF, false, "\"\"\"one\r\ntwo\"\"\"",
+        "a line feed as the line break asked for");
+    CheckWritesMultiLine("one\ntwo", false, ELineBreak::None, false, "\"\"\"one\ntwo\"\"\"", "None writes LF");
+    CheckWritesMultiLine("one", false, ELineBreak::CRLF, true, "\"\"\"\r\none\"\"\"",
+        "a line break after the opening delimiter");
+    CheckWritesMultiLine("\none", false, ELineBreak::LF, false, "\"\"\"\n\none\"\"\"",
+        "a text that starts with a line feed gets one after the delimiter, which isn't read");
+    CheckWritesMultiLine("", false, ELineBreak::LF, false, "\"\"\"\"\"\"", "an empty string");
+    CheckWritesMultiLine("a\tb", false, ELineBreak::LF, false, "\"\"\"a\tb\"\"\"", "a tab as it is");
+    CheckWritesMultiLine("C:\\x\b\f\r", false, ELineBreak::LF, false, "\"\"\"C:\\\\x\\b\\f\\r\"\"\"",
+        "a backslash and the escapes of one letter");
+    CheckWritesMultiLine("a\r\nb", false, ELineBreak::CRLF, false, "\"\"\"a\\r\r\nb\"\"\"",
+        "a carriage return is escaped, as a line break reads as a line feed");
+    CheckWritesMultiLine("\0\x1B\x7F"s, false, ELineBreak::LF, false, "\"\"\"\\u0000\\u001B\\u007F\"\"\"",
+        "other control characters as \\u00XX");
+    CheckWritesMultiLine("say \"hi\"", false, ELineBreak::LF, false, "\"\"\"say \"hi\"\"\"\"", "quotes as they are");
+    CheckWritesMultiLine("\"\"\"", false, ELineBreak::LF, false, "\"\"\"\"\"\\\"\"\"\"", "the third quote of a run");
+    CheckWritesMultiLine("\"\"\"\"\"\"\"", false, ELineBreak::LF, false,
+        "\"\"\"\"\"\\\"\"\"\\\"\"\"\"\"", "every third quote of a long run");
+    CheckWritesMultiLine("\"\"", false, ELineBreak::LF, false, "\"\"\"\"\"\"\"\"",
+        "two quotes just inside the delimiters");
+    CheckWritesMultiLine("Jos\xC3\xA9", false, ELineBreak::LF, false, "\"\"\"Jos\xC3\xA9\"\"\"", "UTF-8 as it is");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Strings, WriteMultiLineString_LiteralStrings)
+{
+    // Arrange & Act & Assert
+    CheckWritesMultiLine("C:\\x\nC:\\y", true, ELineBreak::LF, false, "'''C:\\x\nC:\\y'''", "a backslash as it is");
+    CheckWritesMultiLine("one\ntwo", true, ELineBreak::CRLF, true, "'''\r\none\r\ntwo'''",
+        "line breaks, and one after the opening delimiter");
+    CheckWritesMultiLine("\none", true, ELineBreak::LF, false, "'''\n\none'''",
+        "a text that starts with a line feed gets one after the delimiter");
+    CheckWritesMultiLine("it's 'quoted'", true, ELineBreak::LF, false, "'''it's 'quoted''''",
+        "single apostrophes, one just inside the closing delimiter");
+    CheckWritesMultiLine("''", true, ELineBreak::LF, false, "''''''''", "two apostrophes inside the delimiters");
+    CheckWritesMultiLine("a\tb", true, ELineBreak::LF, false, "'''a\tb'''", "a tab");
+
+    // A text a multi-line literal string can't hold is a multi-line basic string
+    CheckWritesMultiLine("'''", true, ELineBreak::LF, false, "\"\"\"'''\"\"\"", "three apostrophes");
+    CheckWritesMultiLine("a\r\nb", true, ELineBreak::LF, false, "\"\"\"a\\r\nb\"\"\"", "a carriage return");
+    CheckWritesMultiLine("\x1B", true, ELineBreak::LF, false, "\"\"\"\\u001B\"\"\"", "an escape character");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Strings, WriteMultiLineString_ReadsBackEveryCharacter)
+{
+    // Arrange
+    // Every ASCII character, characters of 2, 3 and 4 bytes, and runs of delimiters at the start, inside and the end
+    std::string everyAscii;
+    for (int c = 0; c < 0x80; ++c)
+        everyAscii += static_cast<char>(c);
+
+    std::string const multiByte = "\xC2\x80\xDF\xBF\xE0\xA0\x80\xEF\xBF\xBF\xF0\x90\x80\x80\xF4\x8F\xBF\xBF";
+    TStringVector const values = { everyAscii, multiByte, "'", "''", "'''", "''''", "a'", "a''", "'a", "''a", "\"",
+        "\"\"", "\"\"\"", "\"\"\"\"", "\"\"\"\"\"", "a\"", "a\"\"", "\"a", "\"\"a", "\n", "\n\n", "a\n", "\r\n", "\\",
+        "a\\", "\\\n", "" };
+
+    for (std::string const& value : values)
+    {
+        for (bool const literal : { false, true })
+        {
+            for (ELineBreak const lineBreak : { ELineBreak::LF, ELineBreak::CRLF })
+            {
+                for (bool const breakFirst : { false, true })
+                {
+                    std::string text;
+                    std::string read;
+                    std::size_t position = 0;
+
+                    // Act
+                    ASWToml::TASWTomlResult const writeResult =
+                        ASWToml::Detail::WriteMultiLineString(value, text, literal, lineBreak, breakFirst);
+                    ASWToml::TASWTomlResult const readResult = ASWToml::Detail::ReadString(text, position, read);
+
+                    // Assert
+                    CheckTrue(writeResult.IsOk(), text + " should be written: " + writeResult.Message);
+                    CheckTrue(readResult.IsOk(), text + " should read back: " + readResult.Message);
+                    CheckEquals(value, read, text + ": the value read back");
+                    CheckEquals(text.size(), position, text + ": the string should be the whole text");
+                }
+            }
+        }
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Strings, WriteMultiLineString_RejectsInvalidUtf8)
+{
+    // Arrange
+    TStringVector const values = { "a\xFF", "\xED\xA0\x80", "\xC3" };
+
+    for (std::string const& value : values)
+    {
+        for (bool const literal : { false, true })
+        {
+            std::string text = "x";
+
+            // Act
+            ASWToml::TASWTomlResult const result =
+                ASWToml::Detail::WriteMultiLineString(value, text, literal, ELineBreak::LF, false);
+
+            // Assert
+            CheckEquals(ASWToml::ETomlCode::InvalidValue, result.Code, "invalid UTF-8 can't be written");
+            CheckEquals("x"s, text, "nothing should be appended");
+        }
+    }
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Strings, WriteString_AppendsToText)

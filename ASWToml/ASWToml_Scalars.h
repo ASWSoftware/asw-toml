@@ -137,6 +137,16 @@ TASWTomlResult WriteLocalDateTime(TASWTomlLocalDateTime const& value, std::strin
 // std::bad_alloc.
 TASWTomlResult WriteLocalTime(TASWTomlLocalTime const& value, std::string& text);
 
+// Appends 'value' to 'text' as a multi-line string, each line feed in it written as 'lineBreak' (LF when it is None),
+// with a line break right after the opening delimiter when 'breakFirst' is true or 'value' starts with a line feed
+// (one there is left out when it is read): a multi-line literal string ('''...''') when 'literal' is true and one can
+// hold the text (no run of three ' and no control character but a tab and a line feed), else a multi-line basic
+// string ("""...""") with \\, \b, \f and \r escaped, the other control characters but a tab and a line feed as
+// \u00XX, the third " of a run as \", and the rest as it is. Fails with InvalidValue, appending nothing, when 'value'
+// isn't valid UTF-8. Throws only std::bad_alloc ('text' may then hold part of the string).
+TASWTomlResult WriteMultiLineString(std::string_view value, std::string& text, bool literal, ELineBreak lineBreak,
+    bool breakFirst);
+
 // Appends 'value' to 'text' as a TOML offset date-time: the date and time as WriteLocalDateTime() writes them, then Z
 // for offset 0, else +HH:MM or -HH:MM, e.g. 1979-05-27T07:32:00Z or 1979-05-27T00:32:00-07:00. Fails with
 // InvalidValue, appending nothing, when the date, the time or the offset isn't valid (see

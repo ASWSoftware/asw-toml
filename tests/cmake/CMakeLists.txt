@@ -50,6 +50,7 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Utils.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Value.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Version.cpp"
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Writer.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_TempDir.cpp"
     "${ASWTOML_TOML_TEST_DIR}/TomlTest_Corpus.cpp"
 )

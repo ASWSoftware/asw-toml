@@ -55,6 +55,8 @@ add_library(ASWToml STATIC
     ASWToml/ASWToml_Value.h
     ASWToml/ASWToml_Version.cpp
     ASWToml/ASWToml_Version.h
+    ASWToml/ASWToml_Writer.cpp
+    ASWToml/ASWToml_Writer.h
 )
 add_library(ASWToml::ASWToml ALIAS ASWToml)
 
