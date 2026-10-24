@@ -84,6 +84,9 @@ using TValueMap = std::map<std::string, TASWTomlValue const*>;
 // How many texts of a fuzz test ended with each code
 using TCodeCountMap = std::map<ETomlCode, std::size_t>;
 
+// Paths of a document's values
+using TPathVector = std::vector<ASWToml::TASWTomlPath>;
+
 // The UTF-8 byte order mark
 std::string const Bom = "\xEF\xBB\xBF";
 
@@ -186,9 +189,11 @@ struct TCorpusText
 using TCorpusTextVector = std::vector<TCorpusText>;
 
 
+void AddPaths(TASWTomlValue const& value, ASWToml::TASWTomlPath const& path, TPathVector& paths);
 std::string CorpusEscaped(std::string_view text);
 char const* CorpusType(TASWTomlValue const& value) noexcept;
 ASWToml::TASWTomlOptions DepthOptions(std::size_t maxDepth);
+TCorpusTextVector EditCorpus();
 std::string Escaped(std::string const& text);
 TExpectedMap ExpectedValues(std::string_view expected);
 std::string FindFailure(TASWTomlDocument const& document, TASWTomlValue const& value,
@@ -196,6 +201,7 @@ std::string FindFailure(TASWTomlDocument const& document, TASWTomlValue const& v
 void FlattenValues(TASWTomlValue const& value, std::string const& path, TValueMap& values);
 bool IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& right);
 bool IsInText(ASWToml::TASWTomlResult const& result, std::string_view text);
+bool IsSubsequence(std::string const& part, std::string const& whole);
 std::string KeyList(TASWTomlValue const& value);
 std::string MutatedText(std::mt19937& generator, std::string_view source);
 std::string NamesAt(std::string const& text, TDocIndex const& index, std::string const& path);
@@ -208,12 +214,46 @@ std::string RandomKey(std::mt19937& generator);
 ASWToml::TASWTomlOptions RandomOptions(std::mt19937& generator);
 std::string RandomPieceText(std::mt19937& generator);
 std::string RandomValueText(std::mt19937& generator, std::size_t depth);
+TASWTomlValue RemovedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath const& path,
+    TASWTomlDocument const& edited);
+TASWTomlValue RenamedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath const& path, std::string const& newKey);
 TCorpusTextVector RoundTripCorpus();
 bool SameValue(std::string const& expected, TASWTomlValue const& value);
 std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range);
+TASWTomlValue* ValueAt(TASWTomlValue& root, ASWToml::TASWTomlPath const& path, std::size_t count);
 std::string ValuesDiffer(ASWUnitTests::TTomlTestFile const& file, TASWTomlValue const& root);
 std::string WithLineBreaks(std::string_view text, std::string_view lineBreak);
 
+//---------------------------------------------------------------------------
+/*
+    AddPaths
+
+    Adds to 'paths' the path of every value inside 'value', which is at 'path': each key of a table and each element
+    of an array, before the values inside it
+*/
+void AddPaths(TASWTomlValue const& value, ASWToml::TASWTomlPath const& path, TPathVector& paths)
+{
+    if (TASWTomlValue::TKeyValueVector const* const table = value.AsTable())
+    {
+        for (ASWToml::TASWTomlKeyValue const& item : *table)
+        {
+            ASWToml::TASWTomlPath child = path;
+            child.Append(item.Key);
+            paths.push_back(child);
+            AddPaths(item.Value, child, paths);
+        }
+    }
+    else if (TASWTomlValue::TValueVector const* const array = value.AsArray())
+    {
+        for (std::size_t i = 0; i < array->size(); ++i)
+        {
+            ASWToml::TASWTomlPath child = path;
+            child.Append(i);
+            paths.push_back(child);
+            AddPaths((*array)[i], child, paths);
+        }
+    }
+}
 //---------------------------------------------------------------------------
 /*
     CorpusEscaped
@@ -318,6 +358,20 @@ ASWToml::TASWTomlOptions DepthOptions(std::size_t maxDepth)
     options.Reading.MaxNestingDepth = maxDepth;
 
     return options;
+}
+//---------------------------------------------------------------------------
+/*
+    EditCorpus
+
+    The texts the edit tests edit: our round-trip corpus and toml-test's valid files (their expected values left out)
+*/
+TCorpusTextVector EditCorpus()
+{
+    TCorpusTextVector corpus = RoundTripCorpus();
+    for (TTomlTestFile const& file : TomlTestValidFiles())
+        corpus.push_back(TCorpusText{ std::string(file.Name), std::string(file.Text), TASWTomlValue() });
+
+    return corpus;
 }
 //---------------------------------------------------------------------------
 /*
@@ -508,6 +562,23 @@ bool IsInText(ASWToml::TASWTomlResult const& result, std::string_view text)
     std::string_view const line = text.substr(start, end == std::string_view::npos ? end : end - start);
 
     return result.Column <= ASWToml::Detail::CountCodePoints(line) + 1;
+}
+//---------------------------------------------------------------------------
+/*
+    IsSubsequence
+
+    Whether 'part' is 'whole' with some of its bytes left out (or none)
+*/
+bool IsSubsequence(std::string const& part, std::string const& whole)
+{
+    std::size_t matched = 0;
+    for (char const c : whole)
+    {
+        if (matched < part.size() && part[matched] == c)
+            ++matched;
+    }
+
+    return matched == part.size();
 }
 //---------------------------------------------------------------------------
 /*
@@ -825,6 +896,66 @@ std::string RandomValueText(std::mt19937& generator, std::size_t depth)
 }
 //---------------------------------------------------------------------------
 /*
+    RemovedValues
+
+    The values 'root' (of a document) should have after Remove() of 'path' (not the root) gave the document 'edited':
+    without the value at 'path', and without each table or array on the way that is left empty when 'edited' has
+    nothing there (a table that only dotted keys or longer headers made, or an array of tables, which nothing defines
+    any more)
+*/
+TASWTomlValue RemovedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath const& path,
+    TASWTomlDocument const& edited)
+{
+    TASWTomlValue expected = root;
+    ASWToml::TASWTomlPath::TPartVector const& parts = path.GetParts();
+
+    for (std::size_t count = parts.size(); count > 0; --count)
+    {
+        TASWTomlValue* const holder = ValueAt(expected, path, count - 1);
+        ASWToml::TASWTomlPathPart const& part = parts[count - 1];
+        if (part.IsKey())
+        {
+            holder->Remove(part.GetKey());
+        }
+        else
+        {
+            TASWTomlValue::TValueVector& array = *holder->AsArray();
+            array.erase(array.begin() + static_cast<std::ptrdiff_t>(part.GetIndex()));
+        }
+
+        ASWToml::TASWTomlPath holderPath;
+        for (std::size_t i = 0; i + 1 < count; ++i)
+            holderPath.Append(parts[i]);
+
+        bool const empty = holder->IsTable() ? holder->AsTable()->empty() : holder->AsArray()->empty();
+        if (count == 1 || !empty || edited.Find(holderPath) != nullptr)
+            break;
+    }
+
+    return expected;
+}
+//---------------------------------------------------------------------------
+/*
+    RenamedValues
+
+    'root' with the key at 'path' (in a table) renamed to 'newKey'
+*/
+TASWTomlValue RenamedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath const& path, std::string const& newKey)
+{
+    TASWTomlValue expected = root;
+    std::size_t const count = path.GetParts().size();
+    std::string const& key = path.GetParts().back().GetKey();
+
+    for (ASWToml::TASWTomlKeyValue& item : *ValueAt(expected, path, count - 1)->AsTable())
+    {
+        if (item.Key == key)
+            item.Key = newKey;
+    }
+
+    return expected;
+}
+//---------------------------------------------------------------------------
+/*
     RoundTripCorpus
 
     Texts of every layout the model keeps, each with the values it reads as
@@ -1138,6 +1269,26 @@ std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range)
         return "(out of the text)";
 
     return text.substr(range.Begin, range.End - range.Begin);
+}
+//---------------------------------------------------------------------------
+/*
+    ValueAt
+
+    The value at the first 'count' parts of 'path' in 'root', where there must be one
+*/
+TASWTomlValue* ValueAt(TASWTomlValue& root, ASWToml::TASWTomlPath const& path, std::size_t count)
+{
+    TASWTomlValue* value = &root;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        ASWToml::TASWTomlPathPart const& part = path.GetParts()[i];
+        if (part.IsKey())
+            value = value->Find(part.GetKey());
+        else
+            value = &(*value->AsArray())[part.GetIndex()];
+    }
+
+    return value;
 }
 //---------------------------------------------------------------------------
 /*
@@ -4419,10 +4570,133 @@ ASW_TEST(TTest_ASWToml_DocumentRename, Tables_EveryPlaceThatNamesThem)
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentEditFuzz
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentEditFuzz::TTest_ASWToml_DocumentEditFuzz()
+    : inherited("ASWToml_DocumentEditFuzz_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentEditFuzz::~TTest_ASWToml_DocumentEditFuzz()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentEditFuzz::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentEditFuzz::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentEditFuzz::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentEditFuzz::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryKeyRenamed)
+{
+    // Arrange
+    // A name no text of the corpus has
+    std::string const newKey = "renamed key";
+    std::size_t renames = 0;
+
+    for (TCorpusText const& source : EditCorpus())
+    {
+        TASWTomlDocument original;
+        CheckTrue(original.Parse(source.Text).IsOk(), source.Name + ": the text should parse");
+        std::string const text = original.ToText();
+        TPathVector paths;
+        AddPaths(original.GetRoot(), ASWToml::TASWTomlPath(), paths);
+
+        for (ASWToml::TASWTomlPath const& path : paths)
+        {
+            if (path.GetParts().back().IsIndex())
+                continue;
+
+            std::string const msg = source.Name + ", " + path.ToString();
+            TASWTomlDocument document = original;
+
+            // Act
+            ASWToml::TASWTomlResult const result = document.Rename(path, newKey);
+
+            // Assert
+            ++renames;
+            std::string const edited = document.ToText();
+            TASWTomlDocument reread;
+            CheckTrue(result.IsOk(), msg + ": it should be renamed: " + result.Message);
+            CheckTrue(ASWToml::Detail::IdenticalValues(document.GetRoot(),
+                RenamedValues(original.GetRoot(), path, newKey)), msg + ": the values with the key's new name");
+            CheckTrue(reread.Parse(edited).IsOk() &&
+                ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()),
+                msg + ": the text should read as the document's values");
+            CheckEquals(std::count(text.begin(), text.end(), '\n'), std::count(edited.begin(), edited.end(), '\n'),
+                msg + ": the lines stay");
+            CheckTrue(document.IsModified(), msg + ": the document is modified");
+        }
+    }
+
+    // Assert
+    CheckTrue(renames > 1000, "every key of every text renamed: " + std::to_string(renames));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryPathRemoved)
+{
+    // Arrange
+    std::size_t removals = 0;
+
+    for (TCorpusText const& source : EditCorpus())
+    {
+        TASWTomlDocument original;
+        CheckTrue(original.Parse(source.Text).IsOk(), source.Name + ": the text should parse");
+        std::string const text = original.ToText();
+        TPathVector paths;
+        AddPaths(original.GetRoot(), ASWToml::TASWTomlPath(), paths);
+
+        for (ASWToml::TASWTomlPath const& path : paths)
+        {
+            std::string const msg = source.Name + ", " + path.ToString();
+            TASWTomlDocument document = original;
+
+            // Act
+            bool const removed = document.Remove(path);
+
+            // Assert
+            ++removals;
+            std::string const edited = document.ToText();
+            TASWTomlDocument reread;
+            CheckTrue(removed, msg + ": it should be removed");
+            CheckTrue(ASWToml::Detail::IdenticalValues(document.GetRoot(),
+                RemovedValues(original.GetRoot(), path, document)), msg + ": the values without it");
+            CheckTrue(reread.Parse(edited).IsOk() &&
+                ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot()),
+                msg + ": the text should read as the document's values");
+            CheckTrue(IsSubsequence(edited, text), msg + ": the text with some of it left out");
+            CheckTrue(document.IsModified(), msg + ": the document is modified");
+        }
+    }
+
+    // Assert
+    CheckTrue(removals > 1000, "every path of every text removed: " + std::to_string(removals));
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentAppend, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentEditFuzz, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentErrors, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentFuzz, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentIndex, "Document")

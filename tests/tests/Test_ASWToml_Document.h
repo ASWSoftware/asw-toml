@@ -568,6 +568,32 @@ public:
     void TearDown_Test(ITestCase& testCase) override;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentEditFuzz
+//
+// Edits of the texts of our round-trip corpus and toml-test's valid files: each one does what it should, the text
+// reads as the document's values, and the rest of the text stays
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentEditFuzz : public TAutoTestGroup<TTest_ASWToml_DocumentEditFuzz>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentEditFuzz> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Corpus_EveryKeyRenamed();
+    void Test_Corpus_EveryPathRemoved();
+
+public:
+    TTest_ASWToml_DocumentEditFuzz();
+    ~TTest_ASWToml_DocumentEditFuzz() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
