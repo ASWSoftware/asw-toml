@@ -90,7 +90,8 @@ def flatten(path, value, lines):
 def literal_char(byte):
     """'byte' as it is written in an ASCII C++ string literal: printable ASCII as it is, except a backslash, a double
     quote and a question mark (so no trigraph can form), which are escaped; a tab, line feed and carriage return as
-    \\t, \\n and \\r; every other byte as a three-digit octal escape, which never takes a following digit with it."""
+    \\t, \\n and \\r; every other byte as a three-digit octal escape, which never takes a following digit with it (but
+    MSVC warns C4125 about a digit after one, so literal() splits the literal there)."""
     if byte == 0x5C:
         return '\\\\'
     if byte == 0x22:
@@ -110,13 +111,17 @@ def literal_char(byte):
 
 def literal(data, indent):
     """'data' (bytes) as a std::string_view literal: one quoted piece per line of the data (a long line split), each
-    on its own source line at 'indent', the last with the sv suffix."""
+    on its own source line at 'indent', the last with the sv suffix. A digit after an octal escape on the same line
+    starts a new literal there (" "), as MSVC warns C4125 "decimal digit terminates octal escape sequence" otherwise."""
     if len(data) > MAX_LITERAL_SIZE:
         raise ValueError('a literal of %d bytes, more than %d' % (len(data), MAX_LITERAL_SIZE))
     pieces = [[]]
     for byte in data:
         char = literal_char(byte)
+        if 0x30 <= byte <= 0x39 and pieces[-1] and len(pieces[-1][-1]) == 4 and pieces[-1][-1][0] == '\\':
+            char = '" "' + char
         if sum(len(c) for c in pieces[-1]) + len(char) > MAX_PIECE_SIZE:
+            char = literal_char(byte)  # A new line starts a new literal anyway
             pieces.append([])
         pieces[-1].append(char)
         if byte == 0x0A:
