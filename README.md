@@ -14,9 +14,12 @@ types (`ASWToml_Value.h`), and the reading and writing of TOML's strings, number
 and times. And it reads whole TOML 1.1 documents: `TASWTomlDocument` (`ASWToml_Document.h`) keeps
 every byte of a text and writes it back unchanged, applies TOML's table rules, and gives each value
 by its path (`TASWTomlPath`, `ASWToml_Path.h`), checked against every file of toml-test's TOML 1.1
-list. Editing documents comes next, then the typed values, loading and saving files, and the
-settings binding. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The interface may change
-in any way until 1.0.0.
+list. And it edits them, changing only the text an edit needs: values set in place in their own
+form, new keys and tables where their table is written, keys, tables and elements removed and
+renamed, whole tables and arrays merged so only what differs changes, and the comments above keys
+and tables and at the end of their lines. The typed values come next, then loading and saving
+files, and the settings binding. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The
+interface may change in any way until 1.0.0.
 
 ## Design
 

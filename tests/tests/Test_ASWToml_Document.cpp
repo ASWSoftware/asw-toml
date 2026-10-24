@@ -40,6 +40,7 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_Scalars.h"
 #include "ASWToml_Utils.h"
 #include "ASWToml_Value.h"
+#include "ASWToml_Writer.h"
 #include "TomlTest_Corpus.h"
 //---------------------------------------------------------------------------
 
@@ -172,6 +173,37 @@ std::string const LookupText =
 constexpr std::uint32_t FuzzFirstSeed = 20261023;
 constexpr std::size_t FuzzTextCount = 4000;
 
+// The random edit tests: the seed of the first text's edits, how many edits are made one after another on each text,
+// and how many random texts are edited
+constexpr std::uint32_t EditFuzzFirstSeed = 20261024;
+constexpr std::size_t EditFuzzEditCount = 20;
+constexpr std::size_t EditFuzzTextCount = 500;
+
+// What the random edits use: keys (some of them the corpus's own, so keys meet), comments and trailing comments, and
+// strings
+constexpr char const* EditFuzzKeys[] = { "a", "b", "k", "name", "new key", "x.y", "", "\xC3\xA9", "1", "q\"r", "it's" };
+constexpr char const* EditFuzzComments[] = { "", "c", "a\nb", " note ", "a\r\n\r\nb\n", "#x", "\tt", "\xE2\x82\xAC" };
+constexpr char const* EditFuzzTrailing[] = { "", "t", " t ", "#", "a # b" };
+constexpr char const* EditFuzzStrings[] = {
+    "", "s", "with \"quotes\"", "C:\\path", "line\nbreak", "tab\there", "\xC3\xA9", "'''", "\"\"\"",
+};
+
+// The kinds of random edits
+enum class EFuzzEdit : int
+{
+    SetExisting = 0, // SetValue() of a value that is there, to a random value or to a variant of it (a merge)
+    SetNew = 1, // SetValue() of a new key of a table, at times with a missing table on the way
+    Append = 2, // Append() to an array, an array of tables or a new key
+    Remove = 3,
+    Rename = 4,
+    SetComment = 5,
+    SetTrailingComment = 6,
+    Same = 7, // A value, name, comment and trailing comment each set to what it is, which changes nothing
+};
+
+// The number of kinds of random edits
+constexpr std::size_t EditFuzzKindCount = 8;
+
 
 /////////////////////////////////////////////////////////////////////////////
 // TCorpusText
@@ -189,17 +221,38 @@ struct TCorpusText
 using TCorpusTextVector = std::vector<TCorpusText>;
 
 
+/////////////////////////////////////////////////////////////////////////////
+// TFuzzEdit
+//
+// A random edit of a document
+/////////////////////////////////////////////////////////////////////////////
+struct TFuzzEdit
+{
+    EFuzzEdit Kind = EFuzzEdit::SetExisting;
+    ASWToml::TASWTomlPath Path;
+    TASWTomlValue Value; // SetExisting, SetNew and Append: the value set or appended
+    std::string Text; // Rename: the new name; SetComment and SetTrailingComment: the comment
+};
+
+
 void AddPaths(TASWTomlValue const& value, ASWToml::TASWTomlPath const& path, TPathVector& paths);
+ASWToml::TASWTomlResult ApplyEdit(TASWTomlDocument& document, TFuzzEdit const& edit);
+std::size_t ChangedLineCount(std::string const& before, std::string const& after);
+std::string CodeLines(std::string const& text);
 std::string CommentAt(std::string const& text, ASWToml::TASWTomlPath const& path);
 std::string CorpusEscaped(std::string_view text);
 char const* CorpusType(TASWTomlValue const& value) noexcept;
 ASWToml::TASWTomlOptions DepthOptions(std::size_t maxDepth);
 TCorpusTextVector EditCorpus();
+std::string EditDescription(TFuzzEdit const& edit);
+std::string EditProblem(TFuzzEdit const& edit, ASWToml::TASWTomlResult const& result,
+    TASWTomlDocument const& before, TASWTomlDocument const& after);
 std::string Escaped(std::string const& text);
 TExpectedMap ExpectedValues(std::string_view expected);
 std::string FindFailure(TASWTomlDocument const& document, TASWTomlValue const& value,
     ASWToml::TASWTomlPath const& path);
 void FlattenValues(TASWTomlValue const& value, std::string const& path, TValueMap& values);
+bool HasOwnLine(std::string const& text, ASWToml::TASWTomlPath const& path);
 bool IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& right);
 bool IsInText(ASWToml::TASWTomlResult const& result, std::string_view text);
 bool IsSubsequence(std::string const& part, std::string const& whole);
@@ -211,22 +264,29 @@ std::string NestedArraysOfTables(std::size_t count);
 std::string NestedInlineTables(std::size_t depth);
 std::size_t NestingDepth(TASWTomlValue const& value) noexcept;
 ASWToml::Detail::TIndexNode const& NodeAt(TDocIndex const& index, std::string const& path);
+std::string NormalizedComment(std::string_view text);
 std::string RandomDocumentText(std::mt19937& generator);
+TFuzzEdit RandomEdit(std::mt19937& generator, TASWTomlDocument const& document);
 std::string RandomKey(std::mt19937& generator);
 ASWToml::TASWTomlOptions RandomOptions(std::mt19937& generator);
 std::string RandomPieceText(std::mt19937& generator);
+TASWTomlValue RandomTable(std::mt19937& generator, std::size_t depth);
+TASWTomlValue RandomValue(std::mt19937& generator, std::size_t depth);
 std::string RandomValueText(std::mt19937& generator, std::size_t depth);
 TASWTomlValue RemovedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath const& path,
     TASWTomlDocument const& edited);
 TASWTomlValue RenamedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath const& path, std::string const& newKey);
 TCorpusTextVector RoundTripCorpus();
 bool SameValue(std::string const& expected, TASWTomlValue const& value);
+bool SetAt(TASWTomlValue& root, ASWToml::TASWTomlPath const& path, TASWTomlValue const& value);
 std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range);
+TStringVector TextLines(std::string const& text);
 std::string TrailingCommentAt(std::string const& text, ASWToml::TASWTomlPath const& path);
 TASWTomlValue* ValueAt(TASWTomlValue& root, ASWToml::TASWTomlPath const& path, std::size_t count);
 std::string ValuesDiffer(ASWUnitTests::TTomlTestFile const& file, TASWTomlValue const& root);
 TArray Variants(TASWTomlValue const& value);
 std::string WithLineBreaks(std::string_view text, std::string_view lineBreak);
+std::string WithoutBlanks(std::string const& text);
 
 //---------------------------------------------------------------------------
 /*
@@ -257,6 +317,107 @@ void AddPaths(TASWTomlValue const& value, ASWToml::TASWTomlPath const& path, TPa
             AddPaths((*array)[i], child, paths);
         }
     }
+}
+//---------------------------------------------------------------------------
+/*
+    ApplyEdit
+
+    Makes 'edit' on 'document' and gives its result (for Remove(), Ok or, when it returns false, NotFound); for a
+    no-op edit, the first that fails of the value set to itself, the key (not an element) renamed to its own name, and
+    the comment and the trailing comment set to themselves (which fail with InvalidArgument, taken as Ok, for what has
+    no line of its own)
+*/
+ASWToml::TASWTomlResult ApplyEdit(TASWTomlDocument& document, TFuzzEdit const& edit)
+{
+    ASWToml::TASWTomlResult result;
+    if (edit.Kind == EFuzzEdit::SetExisting || edit.Kind == EFuzzEdit::SetNew)
+        return document.SetValue(edit.Path, edit.Value);
+
+    if (edit.Kind == EFuzzEdit::Append)
+        return document.Append(edit.Path, edit.Value);
+
+    if (edit.Kind == EFuzzEdit::Remove)
+    {
+        if (!document.Remove(edit.Path))
+            result.Code = ETomlCode::NotFound;
+
+        return result;
+    }
+
+    if (edit.Kind == EFuzzEdit::Rename)
+        return document.Rename(edit.Path, edit.Text);
+
+    if (edit.Kind == EFuzzEdit::SetComment)
+        return document.SetComment(edit.Path, edit.Text);
+
+    if (edit.Kind == EFuzzEdit::SetTrailingComment)
+        return document.SetTrailingComment(edit.Path, edit.Text);
+
+    TASWTomlValue const value = *document.Find(edit.Path);
+    result = document.SetValue(edit.Path, value);
+    if (result.IsOk() && !edit.Path.IsRoot() && edit.Path.GetParts().back().IsKey())
+        result = document.Rename(edit.Path, edit.Path.GetParts().back().GetKey());
+
+    if (result.IsOk())
+    {
+        std::string const comment = document.GetComment(edit.Path);
+        result = document.SetComment(edit.Path, comment);
+        if (result.Code == ETomlCode::InvalidArgument)
+            result = ASWToml::TASWTomlResult();
+    }
+
+    if (result.IsOk())
+    {
+        std::string const trailing = document.GetTrailingComment(edit.Path);
+        result = document.SetTrailingComment(edit.Path, trailing);
+        if (result.Code == ETomlCode::InvalidArgument)
+            result = ASWToml::TASWTomlResult();
+    }
+
+    return result;
+}
+//---------------------------------------------------------------------------
+/*
+    ChangedLineCount
+
+    How many lines of 'after' differ from the line of 'before' at the same place (see TextLines());
+    std::string::npos when the two texts don't have as many lines
+*/
+std::size_t ChangedLineCount(std::string const& before, std::string const& after)
+{
+    TStringVector const beforeLines = TextLines(before);
+    TStringVector const afterLines = TextLines(after);
+    if (beforeLines.size() != afterLines.size())
+        return std::string::npos;
+
+    std::size_t changed = 0;
+    for (std::size_t i = 0; i < beforeLines.size(); ++i)
+    {
+        if (beforeLines[i] != afterLines[i])
+            ++changed;
+    }
+
+    return changed;
+}
+//---------------------------------------------------------------------------
+/*
+    CodeLines
+
+    The lines of 'text' (see TextLines()) that aren't blank lines or comment lines (blanks, then a '#'), one after
+    another; a byte order mark at its start is left out, so the first line is seen as it is
+*/
+std::string CodeLines(std::string const& text)
+{
+    std::string code;
+    bool const hasBom = text.compare(0, Bom.size(), Bom) == 0;
+    for (std::string const& line : TextLines(hasBom ? text.substr(Bom.size()) : text))
+    {
+        std::size_t const first = line.find_first_not_of(" \t\r\n");
+        if (first != std::string::npos && line[first] != '#')
+            code += line;
+    }
+
+    return code;
 }
 //---------------------------------------------------------------------------
 /*
@@ -393,6 +554,190 @@ TCorpusTextVector EditCorpus()
 }
 //---------------------------------------------------------------------------
 /*
+    EditDescription
+
+    'edit' for a message, e.g. "Rename of a.b to \"k\""
+*/
+std::string EditDescription(TFuzzEdit const& edit)
+{
+    char const* const names[] = {
+        "SetValue of an existing value", "SetValue of a new key", "Append", "Remove", "Rename", "SetComment",
+        "SetTrailingComment", "A no-op edit",
+    };
+
+    std::string description = names[static_cast<std::size_t>(edit.Kind)];
+    description += " of " + (edit.Path.IsRoot() ? std::string("the root") : edit.Path.ToString());
+    if (edit.Kind == EFuzzEdit::Rename || edit.Kind == EFuzzEdit::SetComment ||
+        edit.Kind == EFuzzEdit::SetTrailingComment)
+    {
+        description += " to \"" + Escaped(edit.Text) + "\"";
+    }
+
+    // The value, on one line
+    ASWToml::Detail::TWriteStyle style;
+    style.MaxDepth = ASWToml::TASWTomlReadingOptions::MaxNestingDepthLimit;
+    std::string written;
+    bool const hasValue = edit.Kind == EFuzzEdit::SetExisting || edit.Kind == EFuzzEdit::SetNew ||
+        edit.Kind == EFuzzEdit::Append;
+    if (hasValue && ASWToml::Detail::WriteValue(edit.Value, style, written).IsOk())
+        description += " with " + Escaped(written);
+
+    return description;
+}
+//---------------------------------------------------------------------------
+/*
+    EditProblem
+
+    What is wrong with 'edit', which gave 'result' and made the document 'before' into 'after': whether it should
+    have failed (InvalidArgument for a path through a value that isn't a table, an Append() to what isn't an array, a
+    comment of what has no line of its own or a rename of an element; AlreadyExists for a rename onto a key the table
+    has; NestingTooDeep for values nested too deep), the values it should give (the same edit of the values of
+    'before'), the comment it should give, and the text it may change (a removal only removes text; a new key or
+    element only adds text, but for blanks; a comment changes only comment and blank lines; a trailing comment only
+    its line; a rename only adds no line); "" when nothing is
+*/
+std::string EditProblem(TFuzzEdit const& edit, ASWToml::TASWTomlResult const& result,
+    TASWTomlDocument const& before, TASWTomlDocument const& after)
+{
+    std::string const beforeText = before.ToText();
+    std::string const afterText = after.ToText();
+    TASWTomlValue expected = before.GetRoot();
+    bool const sameValues = ASWToml::Detail::IdenticalValues(after.GetRoot(), before.GetRoot());
+
+    switch (edit.Kind)
+    {
+        case EFuzzEdit::SetExisting:
+        case EFuzzEdit::SetNew:
+        case EFuzzEdit::Append:
+        {
+            // The same edit of the values: an element added at the end of an array, an array of the one value for a
+            // missing key, or the value set
+            bool fits = true;
+            bool const exists = before.Find(edit.Path) != nullptr;
+            if (edit.Kind == EFuzzEdit::Append && exists)
+            {
+                TArray* const elements = ValueAt(expected, edit.Path, edit.Path.GetParts().size())->AsArray();
+                fits = elements != nullptr;
+                if (fits)
+                    elements->push_back(edit.Value);
+            }
+            else if (edit.Kind == EFuzzEdit::Append)
+            {
+                fits = SetAt(expected, edit.Path, TASWTomlValue(TArray{ edit.Value }));
+            }
+            else
+            {
+                fits = SetAt(expected, edit.Path, edit.Value);
+            }
+
+            // The root isn't counted in the depth
+            ETomlCode code = ETomlCode::Ok;
+            if (!fits)
+                code = ETomlCode::InvalidArgument;
+            else if (NestingDepth(expected) > after.GetOptions().Reading.MaxNestingDepth + 1)
+                code = ETomlCode::NestingTooDeep;
+
+            if (result.Code != code)
+            {
+                return "it should give " + std::string(ASWToml::ToString(code)) + ", not " +
+                    ASWToml::ToString(result.Code) + ": " + result.Message;
+            }
+
+            if (code != ETomlCode::Ok)
+                return std::string();
+
+            if (!ASWToml::Detail::IdenticalValues(after.GetRoot(), expected))
+                return "the values aren't those of the same edit of the values";
+
+            // A new key or element only adds text, but an empty array's or inline table's blanks may go
+            bool const adds = edit.Kind == EFuzzEdit::Append || !exists;
+            if (adds && !IsSubsequence(WithoutBlanks(beforeText), WithoutBlanks(afterText)))
+                return "text was changed or removed, not only added";
+
+            return std::string();
+        }
+
+        case EFuzzEdit::Remove:
+            if (edit.Path.IsRoot())
+                return result.IsOk() ? "the root table can't be removed" : std::string();
+
+            if (!result.IsOk())
+                return "it should be removed";
+
+            if (!ASWToml::Detail::IdenticalValues(after.GetRoot(), RemovedValues(before.GetRoot(), edit.Path, after)))
+                return "the values aren't those without the value removed";
+
+            return IsSubsequence(afterText, beforeText) ? std::string() : "text was changed, not only removed";
+
+        case EFuzzEdit::Rename:
+        {
+            ASWToml::TASWTomlPath::TPartVector const& parts = edit.Path.GetParts();
+            if (parts.empty() || parts.back().IsIndex())
+                return result.Code == ETomlCode::InvalidArgument ? std::string() : "only a key can be renamed";
+
+            TASWTomlValue const* const table = ValueAt(expected, edit.Path, parts.size() - 1);
+            if (parts.back().GetKey() != edit.Text && table->Find(edit.Text) != nullptr)
+                return result.Code == ETomlCode::AlreadyExists ? std::string() : "it should fail with AlreadyExists";
+
+            if (!result.IsOk())
+                return "it should be renamed: " + result.Message;
+
+            if (!ASWToml::Detail::IdenticalValues(after.GetRoot(),
+                RenamedValues(before.GetRoot(), edit.Path, edit.Text)))
+            {
+                return "the values aren't those with the key renamed";
+            }
+
+            if (ChangedLineCount(beforeText, afterText) == std::string::npos)
+                return "lines were added or removed";
+
+            return std::string();
+        }
+
+        case EFuzzEdit::SetComment:
+            if (result.Code == ETomlCode::InvalidArgument && !edit.Path.IsRoot() && before.GetComment(edit.Path).empty())
+                return std::string();
+
+            if (!result.IsOk())
+                return "it should be set: " + result.Message;
+
+            if (after.GetComment(edit.Path) != NormalizedComment(edit.Text))
+                return "the comment reads \"" + Escaped(after.GetComment(edit.Path)) + "\"";
+
+            if (!sameValues)
+                return "the values changed";
+
+            if (CodeLines(beforeText) != CodeLines(afterText))
+                return "lines that aren't blank or comment lines changed";
+
+            return std::string();
+
+        case EFuzzEdit::SetTrailingComment:
+            if (result.Code == ETomlCode::InvalidArgument && before.GetTrailingComment(edit.Path).empty())
+                return std::string();
+
+            if (!result.IsOk())
+                return "it should be set: " + result.Message;
+
+            if (after.GetTrailingComment(edit.Path) != NormalizedComment(edit.Text))
+                return "the trailing comment reads \"" + Escaped(after.GetTrailingComment(edit.Path)) + "\"";
+
+            if (!sameValues)
+                return "the values changed";
+
+            return ChangedLineCount(beforeText, afterText) <= 1 ? std::string() : "more than one line changed";
+
+        case EFuzzEdit::Same:
+            if (!result.IsOk())
+                return "it should succeed: " + result.Message;
+
+            return afterText == beforeText ? std::string() : "the text changed";
+    }
+
+    return "an unknown edit";
+}
+//---------------------------------------------------------------------------
+/*
     Escaped
 
     'text' for a message, with line breaks, tabs and other control characters as escapes
@@ -498,6 +843,34 @@ void FlattenValues(TASWTomlValue const& value, std::string const& path, TValueMa
         for (std::size_t i = 0; i < array->size(); ++i)
             FlattenValues((*array)[i], path + "[" + std::to_string(i) + "]", values);
     }
+}
+//---------------------------------------------------------------------------
+/*
+    HasOwnLine
+
+    Whether the value at 'path' in a document of 'text' (which parses with the default options) has a line of its
+    own, which its comment is above and its trailing comment at the end of: the key line of a key (not one inside an
+    array or inline table), the header of a table or an element of an array of tables, and an array of tables' first
+    element's header; the root table has none
+*/
+bool HasOwnLine(std::string const& text, ASWToml::TASWTomlPath const& path)
+{
+    TDocModel model;
+    TDocIndex index;
+    TASWTomlValue root;
+    if (!ASWToml::Detail::ParseDocument(text, ASWToml::TASWTomlReadingOptions(), model).IsOk())
+        return false;
+
+    std::string_view const body = std::string_view(text).substr(model.HasBom ? Bom.size() : 0);
+    std::size_t const maxDepth = ASWToml::TASWTomlReadingOptions::DefaultMaxNestingDepth;
+    if (!ASWToml::Detail::BuildIndex(model, body, maxDepth, index, root).IsOk())
+        return false;
+
+    std::size_t const node = ASWToml::Detail::FindNode(index, path);
+    if (node == NoIndex || node == 0)
+        return false;
+
+    return index.Nodes[node].Kind == ENodeKind::ArrayOfTables || index.Nodes[node].Line != NoIndex;
 }
 //---------------------------------------------------------------------------
 /*
@@ -788,6 +1161,50 @@ ASWToml::Detail::TIndexNode const& NodeAt(TDocIndex const& index, std::string co
 }
 //---------------------------------------------------------------------------
 /*
+    NormalizedComment
+
+    The comment SetComment() of 'text' gives: the lines of 'text' (split at LF, CRLF or CR, one at its end starting no
+    line), each without the blanks around it, joined with "\n"
+*/
+std::string NormalizedComment(std::string_view text)
+{
+    std::string unified;
+    for (std::size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n')
+            continue;
+
+        unified += text[i] == '\r' ? '\n' : text[i];
+    }
+
+    if (!unified.empty() && unified.back() == '\n')
+        unified.pop_back();
+
+    std::string normalized;
+    std::size_t begin = 0;
+    while (!unified.empty())
+    {
+        std::size_t const end = std::min(unified.find('\n', begin), unified.size());
+        std::size_t first = begin;
+        while (first < end && (unified[first] == ' ' || unified[first] == '\t'))
+            ++first;
+
+        std::size_t last = end;
+        while (last > first && (unified[last - 1] == ' ' || unified[last - 1] == '\t'))
+            --last;
+
+        normalized += unified.substr(first, last - first);
+        if (end == unified.size())
+            break;
+
+        normalized += '\n';
+        begin = end + 1;
+    }
+
+    return normalized;
+}
+//---------------------------------------------------------------------------
+/*
     RandomDocumentText
 
     A random TOML text of up to 11 lines: blank and comment lines, headers, headers of arrays of tables, and keys
@@ -832,6 +1249,96 @@ std::string RandomDocumentText(std::mt19937& generator)
     }
 
     return text;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomEdit
+
+    A random edit of 'document' (see EFuzzEdit): of one of its paths (the root included), of a new key of one of its
+    tables (at times with a new table on the way), or of one of its arrays; with a random value (see RandomValue()),
+    a variant of the value there (see Variants()), a key of EditFuzzKeys, or a comment of EditFuzzComments or
+    EditFuzzTrailing
+*/
+TFuzzEdit RandomEdit(std::mt19937& generator, TASWTomlDocument const& document)
+{
+    // The paths of the document, the root first, and those of its tables, arrays and keys
+    TPathVector paths(1, ASWToml::TASWTomlPath());
+    AddPaths(document.GetRoot(), ASWToml::TASWTomlPath(), paths);
+    TPathVector tables;
+    TPathVector arrays;
+    TPathVector keys;
+    for (ASWToml::TASWTomlPath const& path : paths)
+    {
+        TASWTomlValue const* const value = document.Find(path);
+        if (value->IsTable())
+            tables.push_back(path);
+        else if (value->IsArray())
+            arrays.push_back(path);
+
+        if (!path.IsRoot() && path.GetParts().back().IsKey())
+            keys.push_back(path);
+    }
+
+    std::size_t const keyCount = sizeof(EditFuzzKeys) / sizeof(EditFuzzKeys[0]);
+    TFuzzEdit edit;
+    edit.Kind = static_cast<EFuzzEdit>(generator() % EditFuzzKindCount);
+    edit.Path = paths[generator() % paths.size()];
+    bool const appendToNewKey = edit.Kind == EFuzzEdit::Append && (arrays.empty() || generator() % 4 == 0);
+
+    if (edit.Kind == EFuzzEdit::SetExisting)
+    {
+        // A variant of a table or array, so they are merged, or a random value (the root only takes a table)
+        TArray const variants = Variants(*document.Find(edit.Path));
+        if (!variants.empty() && generator() % 2 == 0)
+            edit.Value = variants[generator() % variants.size()];
+        else if (edit.Path.IsRoot())
+            edit.Value = RandomTable(generator, 0);
+        else
+            edit.Value = RandomValue(generator, 0);
+    }
+    else if (edit.Kind == EFuzzEdit::SetNew || appendToNewKey)
+    {
+        edit.Path = tables[generator() % tables.size()];
+        edit.Path.Append(EditFuzzKeys[generator() % keyCount]);
+        if (generator() % 4 == 0)
+            edit.Path.Append(EditFuzzKeys[generator() % keyCount]);
+
+        edit.Value = RandomValue(generator, 0);
+    }
+    else if (edit.Kind == EFuzzEdit::Append)
+    {
+        edit.Path = arrays[generator() % arrays.size()];
+        edit.Value = RandomValue(generator, 0);
+    }
+    else if (edit.Kind == EFuzzEdit::Rename)
+    {
+        if (!keys.empty())
+            edit.Path = keys[generator() % keys.size()];
+
+        edit.Text = EditFuzzKeys[generator() % keyCount];
+    }
+    else if (edit.Kind == EFuzzEdit::SetComment)
+    {
+        edit.Text = EditFuzzComments[generator() % (sizeof(EditFuzzComments) / sizeof(EditFuzzComments[0]))];
+    }
+    else if (edit.Kind == EFuzzEdit::SetTrailingComment)
+    {
+        edit.Text = EditFuzzTrailing[generator() % (sizeof(EditFuzzTrailing) / sizeof(EditFuzzTrailing[0]))];
+    }
+
+    // What is appended to an array of only tables (which may be an array of tables, a new key's too) is a table
+    TASWTomlValue const* const target = edit.Kind == EFuzzEdit::Append ? document.Find(edit.Path) : nullptr;
+    if (target != nullptr && target->IsArray() && !target->AsArray()->empty())
+    {
+        bool tablesOnly = true;
+        for (TASWTomlValue const& element : *target->AsArray())
+            tablesOnly = tablesOnly && element.IsTable();
+
+        if (tablesOnly)
+            edit.Value = RandomTable(generator, 0);
+    }
+
+    return edit;
 }
 //---------------------------------------------------------------------------
 /*
@@ -889,6 +1396,86 @@ std::string RandomPieceText(std::mt19937& generator)
         text += pieces[generator() % (sizeof(pieces) / sizeof(pieces[0]))];
 
     return text;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomTable
+
+    A random table of up to three keys of EditFuzzKeys, each with a random value (see RandomValue()) 'depth' + 1 deep
+*/
+TASWTomlValue RandomTable(std::mt19937& generator, std::size_t depth)
+{
+    TASWTomlValue table;
+    std::size_t const count = generator() % 4;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        // The key first, so every compiler draws the numbers in the same order
+        std::string const key = EditFuzzKeys[generator() % (sizeof(EditFuzzKeys) / sizeof(EditFuzzKeys[0]))];
+        table.Set(key, RandomValue(generator, depth + 1));
+    }
+
+    return table;
+}
+//---------------------------------------------------------------------------
+/*
+    RandomValue
+
+    A random value: a string of EditFuzzStrings, an integer, a float (-0.0, the infinities and NaN among them), a
+    boolean, a date, a time (second 60 included) or a date-time, or below a 'depth' of 3, a table (see RandomTable()),
+    an array of up to three random values, or an array of one or two tables
+*/
+TASWTomlValue RandomValue(std::mt19937& generator, std::size_t depth)
+{
+    std::int64_t const integers[] = {
+        0, -1, 255, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max(),
+    };
+    double const floats[] = {
+        0.5, -0.0, 1e300, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
+        std::numeric_limits<double>::quiet_NaN(),
+    };
+    std::chrono::year_month_day const date{ std::chrono::year{ 2024 }, std::chrono::February, std::chrono::day{ 29 } };
+    ASWToml::TASWTomlLocalTime const time{ std::chrono::hours{ 23 }, std::chrono::minutes{ 59 },
+        std::chrono::seconds{ 60 }, std::chrono::nanoseconds{ 5 } };
+
+    std::uint32_t const kind = static_cast<std::uint32_t>(generator() % (depth < 3 ? 12 : 9));
+    if (kind < 2)
+        return EditFuzzStrings[generator() % (sizeof(EditFuzzStrings) / sizeof(EditFuzzStrings[0]))];
+
+    if (kind == 2)
+        return integers[generator() % (sizeof(integers) / sizeof(integers[0]))];
+
+    if (kind == 3)
+        return floats[generator() % (sizeof(floats) / sizeof(floats[0]))];
+
+    if (kind == 4)
+        return generator() % 2 == 0;
+
+    if (kind == 5)
+        return date;
+
+    if (kind == 6)
+        return time;
+
+    if (kind == 7)
+        return ASWToml::TASWTomlLocalDateTime{ date, time };
+
+    if (kind == 8)
+        return ASWToml::TASWTomlOffsetDateTime{ date, time, std::chrono::minutes{ -450 } };
+
+    if (kind == 9)
+        return RandomTable(generator, depth);
+
+    TArray elements;
+    std::size_t const count = kind == 10 ? generator() % 4 : 1 + generator() % 2;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (kind == 10)
+            elements.push_back(RandomValue(generator, depth + 1));
+        else
+            elements.push_back(RandomTable(generator, depth + 1));
+    }
+
+    return elements;
 }
 //---------------------------------------------------------------------------
 /*
@@ -1304,6 +1891,58 @@ bool SameValue(std::string const& expected, TASWTomlValue const& value)
 }
 //---------------------------------------------------------------------------
 /*
+    SetAt
+
+    Sets the value at 'path' in 'root' to 'value', as TASWTomlDocument::SetValue() sets a value: a table is made for
+    each missing key on the way, and the root only takes a table. False when 'path' goes through a value that isn't
+    a table or an index past the end of an array, or names the root for a value that isn't a table ('root' may then
+    have new tables).
+*/
+bool SetAt(TASWTomlValue& root, ASWToml::TASWTomlPath const& path, TASWTomlValue const& value)
+{
+    if (path.IsRoot())
+    {
+        if (!value.IsTable())
+            return false;
+
+        root = value;
+        return true;
+    }
+
+    ASWToml::TASWTomlPath::TPartVector const& parts = path.GetParts();
+    TASWTomlValue* holder = &root;
+    for (std::size_t i = 0; i < parts.size(); ++i)
+    {
+        bool const last = i + 1 == parts.size();
+        if (parts[i].IsIndex())
+        {
+            TArray* const array = holder->AsArray();
+            if (array == nullptr || parts[i].GetIndex() >= array->size())
+                return false;
+
+            holder = &(*array)[parts[i].GetIndex()];
+            if (last)
+                *holder = value;
+
+            continue;
+        }
+
+        if (!holder->IsTable())
+            return false;
+
+        TASWTomlValue* next = holder->Find(parts[i].GetKey());
+        if (last)
+            next = holder->Set(parts[i].GetKey(), value);
+        else if (next == nullptr)
+            next = holder->Set(parts[i].GetKey(), TASWTomlValue(TTable()));
+
+        holder = next;
+    }
+
+    return true;
+}
+//---------------------------------------------------------------------------
+/*
     Slice
 
     The bytes of 'text' in 'range'; "(out of the text)" when the range isn't inside it
@@ -1314,6 +1953,25 @@ std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range)
         return "(out of the text)";
 
     return text.substr(range.Begin, range.End - range.Begin);
+}
+//---------------------------------------------------------------------------
+/*
+    TextLines
+
+    The lines of 'text', each with its line break (the last one without one when the text doesn't end with one)
+*/
+TStringVector TextLines(std::string const& text)
+{
+    TStringVector lines;
+    std::size_t begin = 0;
+    while (begin < text.size())
+    {
+        std::size_t const end = std::min(text.find('\n', begin), text.size() - 1) + 1;
+        lines.push_back(text.substr(begin, end - begin));
+        begin = end;
+    }
+
+    return lines;
 }
 //---------------------------------------------------------------------------
 /*
@@ -1451,6 +2109,23 @@ std::string WithLineBreaks(std::string_view text, std::string_view lineBreak)
     }
 
     return converted;
+}
+//---------------------------------------------------------------------------
+/*
+    WithoutBlanks
+
+    'text' without its spaces and tabs
+*/
+std::string WithoutBlanks(std::string const& text)
+{
+    std::string kept;
+    for (char const c : text)
+    {
+        if (c != ' ' && c != '\t')
+            kept += c;
+    }
+
+    return kept;
 }
 //---------------------------------------------------------------------------
 
@@ -5331,6 +6006,85 @@ TTest_ASWToml_DocumentEditFuzz::~TTest_ASWToml_DocumentEditFuzz()
 {
 }
 //---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentEditFuzz::CheckCounts(TCountVector const& changes, TResultCountMap const& results,
+    bool nestingTooDeep, std::source_location loc)
+{
+    for (std::size_t kind = 0; kind < EditFuzzKindCount; ++kind)
+    {
+        TFuzzEdit edit;
+        edit.Kind = static_cast<EFuzzEdit>(kind);
+        std::string const name = EditDescription(edit) + ": " + std::to_string(changes[kind]) + " texts changed";
+        if (edit.Kind == EFuzzEdit::Same)
+            CheckEquals(std::size_t(0), changes[kind], name + ", none should", loc);
+        else
+            CheckTrue(changes[kind] > 0, name + ", some should", loc);
+    }
+
+    TResultCountMap expected = { { ETomlCode::Ok, 0 }, { ETomlCode::InvalidArgument, 0 },
+        { ETomlCode::AlreadyExists, 0 } };
+    if (nestingTooDeep)
+        expected[ETomlCode::NestingTooDeep] = 0;
+
+    for (TResultCountMap::value_type const& item : expected)
+    {
+        TResultCountMap::const_iterator const found = results.find(item.first);
+        CheckTrue(found != results.end() && found->second > 0,
+            "some edits should give " + std::string(ASWToml::ToString(item.first)), loc);
+    }
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentEditFuzz::CheckRandomEdits(std::string const& text, TASWTomlOptions const& options,
+    std::uint32_t seed, std::string const& name, TCountVector& changes, TResultCountMap& results,
+    std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text, options);
+    CheckTrue(parsed.IsOk(), name + ": the text should parse: " + parsed.Message, loc);
+
+    std::mt19937 generator(seed);
+    for (std::size_t step = 0; parsed.IsOk() && step < EditFuzzEditCount; ++step)
+    {
+        TFuzzEdit const edit = RandomEdit(generator, document);
+        TASWTomlDocument const before = document;
+        document.ClearModified();
+
+        ASWToml::TASWTomlResult const result = ApplyEdit(document, edit);
+
+        // Checked with if, as the checks run thousands of times
+        std::string const beforeText = before.ToText();
+        std::string const afterText = document.ToText();
+        bool const comment = edit.Kind == EFuzzEdit::SetComment || edit.Kind == EFuzzEdit::SetTrailingComment;
+        bool const changed = afterText != beforeText;
+        bool const sameValues = ASWToml::Detail::IdenticalValues(document.GetRoot(), before.GetRoot());
+        TASWTomlDocument reread;
+        bool const readsBack = reread.Parse(afterText, options).IsOk() &&
+            ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot());
+        std::string problem;
+        if (!result.IsOk() && (changed || document.IsModified()))
+            problem = "it failed, but changed the text or the modified flag";
+        else if (document.IsModified() != changed)
+            problem = "the modified flag should say whether the text changed";
+        else if (!readsBack)
+            problem = "the text should read as the document's values";
+        else if (!comment && sameValues && changed)
+            problem = "the values stay as they were, so the text should too";
+        else
+            problem = EditProblem(edit, result, before, document);
+
+        if (!problem.empty())
+        {
+            CheckTrue(false, name + ", seed " + std::to_string(seed) + ", edit " + std::to_string(step + 1) + ", " +
+                EditDescription(edit) + ": " + problem + "\nbefore: " + Escaped(beforeText) + "\nafter: " +
+                Escaped(afterText), loc);
+            return;
+        }
+
+        ++results[result.Code];
+        if (changed)
+            ++changes[static_cast<std::size_t>(edit.Kind)];
+    }
+}
+//---------------------------------------------------------------------------
 void TTest_ASWToml_DocumentEditFuzz::SetUp_Group()
 {
 }
@@ -5350,6 +6104,100 @@ void TTest_ASWToml_DocumentEditFuzz::TearDown_Test(ITestCase& /*testCase*/)
 
 // /////// Begin tests after this line ///////////////////////
 
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryCommentSet)
+{
+    // Arrange
+    std::string const comment = "corpus comment\n\nsecond line";
+    std::string const trailing = "corpus trailing";
+    std::size_t sets = 0;
+
+    for (TCorpusText const& source : EditCorpus())
+    {
+        TASWTomlDocument original;
+        CheckTrue(original.Parse(source.Text).IsOk(), source.Name + ": the text should parse");
+        std::string const text = original.ToText();
+        TPathVector paths(1, ASWToml::TASWTomlPath());
+        AddPaths(original.GetRoot(), ASWToml::TASWTomlPath(), paths);
+
+        TStringVector names;
+        TStringVector comments;
+        TStringVector trailings;
+        for (ASWToml::TASWTomlPath const& path : paths)
+        {
+            names.push_back(path.ToString());
+            comments.push_back(original.GetComment(path));
+            trailings.push_back(original.GetTrailingComment(path));
+        }
+
+        for (std::size_t i = 0; i < paths.size(); ++i)
+        {
+            ASWToml::TASWTomlPath const& path = paths[i];
+            bool const hasLine = HasOwnLine(text, path);
+            for (int edit = 0; edit < 4; ++edit)
+            {
+                // The comment set, then removed; the trailing comment set, then removed
+                bool const isTrailing = edit >= 2;
+                bool const removes = edit % 2 == 1;
+                std::string const expected = removes ? std::string() : (isTrailing ? trailing : comment);
+                std::string const msg = source.Name + ", " + names[i] + (isTrailing ? ", trailing" : "") +
+                    (removes ? ", removed" : ", set");
+
+                // Only what has a line of its own, and the root (the file comment), has a comment
+                bool const commented = hasLine || (!isTrailing && path.IsRoot());
+                TASWTomlDocument document = original;
+                if (removes)
+                {
+                    ASWToml::TASWTomlResult const set =
+                        isTrailing ? document.SetTrailingComment(path, trailing) : document.SetComment(path, comment);
+                    CheckEquals(commented, set.IsOk(), msg + ": the comment to remove should be set");
+                }
+
+                std::string const before = document.ToText();
+
+                // Act
+                ASWToml::TASWTomlResult const result =
+                    isTrailing ? document.SetTrailingComment(path, expected) : document.SetComment(path, expected);
+
+                // Assert
+                ++sets;
+                if (!commented)
+                {
+                    CheckEquals(ETomlCode::InvalidArgument, result.Code, msg + ": it has no line of its own");
+                    CheckEquals(before, document.ToText(), msg + ": the text should be kept");
+                    continue;
+                }
+
+                TASWTomlDocument reread;
+                std::string const read = isTrailing ? document.GetTrailingComment(path) : document.GetComment(path);
+                CheckTrue(result.IsOk(), msg + ": it should be set: " + result.Message);
+                CheckEquals(Escaped(expected), Escaped(read), msg + ": the comment");
+                CheckTrue(reread.Parse(document.ToText()).IsOk() &&
+                    ASWToml::Detail::IdenticalValues(reread.GetRoot(), original.GetRoot()) &&
+                    (isTrailing ? reread.GetTrailingComment(path) : reread.GetComment(path)) == expected,
+                    msg + ": the text should read as the values and the comment");
+                if (removes)
+                    CheckTrue(IsSubsequence(document.ToText(), before), msg + ": the text with the comment left out");
+
+                // No other comment changed, but those of an array of tables and its first element, which are one
+                std::string changed;
+                for (std::size_t j = 0; j < paths.size() && changed.empty(); ++j)
+                {
+                    bool const same = j == i || names[j] == names[i] + "[0]" || names[i] == names[j] + "[0]";
+                    if (!(same && !isTrailing) && document.GetComment(paths[j]) != comments[j])
+                        changed = "the comment of " + names[j];
+                    else if (!(same && isTrailing) && document.GetTrailingComment(paths[j]) != trailings[j])
+                        changed = "the trailing comment of " + names[j];
+                }
+
+                CheckEquals(std::string(), changed, msg + ": no other comment should change");
+            }
+        }
+    }
+
+    // Assert
+    CheckTrue(sets > 5000, "every comment of every text set and removed: " + std::to_string(sets));
+}
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryKeyRenamed)
 {
@@ -5498,6 +6346,56 @@ ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryTableAndArraySet)
 
     // Assert
     CheckTrue(sets > 2000, "every table and array of every text set: " + std::to_string(sets));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentEditFuzz, RandomEdits_CorpusTexts)
+{
+    // Arrange
+    TCorpusTextVector const corpus = EditCorpus();
+    TCountVector changes(EditFuzzKindCount, 0);
+    TResultCountMap results;
+
+    // Act & Assert
+    for (std::size_t i = 0; i < corpus.size(); ++i)
+    {
+        std::uint32_t const seed = EditFuzzFirstSeed + static_cast<std::uint32_t>(i);
+        CheckRandomEdits(corpus[i].Text, TASWTomlOptions(), seed, corpus[i].Name, changes, results);
+    }
+
+    // Assert
+    CheckCounts(changes, results, false);
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentEditFuzz, RandomEdits_RandomTexts)
+{
+    // Arrange
+    // Random texts that parse (many have keys defined twice, and don't), one in four with a Reading.MaxNestingDepth
+    // of 1 to 4, so edits nest values too deep
+    TCountVector changes(EditFuzzKindCount, 0);
+    TResultCountMap results;
+    std::size_t edited = 0;
+    std::size_t shallow = 0;
+
+    for (std::uint32_t seed = EditFuzzFirstSeed; edited < EditFuzzTextCount; ++seed)
+    {
+        std::mt19937 generator(seed);
+        std::string const text = RandomDocumentText(generator);
+        TASWTomlOptions const options = RandomOptions(generator);
+        TASWTomlDocument document;
+        if (!document.Parse(text, options).IsOk())
+            continue;
+
+        // Act & Assert
+        ++edited;
+        if (options.Reading.MaxNestingDepth < ASWToml::TASWTomlReadingOptions::DefaultMaxNestingDepth)
+            ++shallow;
+
+        CheckRandomEdits(text, options, seed, "a random text", changes, results);
+    }
+
+    // Assert
+    CheckCounts(changes, results, true);
+    CheckTrue(shallow > EditFuzzTextCount / 8, "some texts with a low nesting limit: " + std::to_string(shallow));
 }
 //---------------------------------------------------------------------------
 

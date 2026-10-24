@@ -16,8 +16,11 @@ SPDX-License-Identifier: MIT
 #define Test_ASWToml_DocumentH
 //---------------------------------------------------------------------------
 #include <cstddef>
+#include <cstdint>
+#include <map>
 #include <source_location>
 #include <string>
+#include <vector>
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_TestBase.h"
 //---------------------------------------------------------------------------
@@ -677,10 +680,36 @@ class TTest_ASWToml_DocumentEditFuzz : public TAutoTestGroup<TTest_ASWToml_Docum
 private:
     typedef TAutoTestGroup<TTest_ASWToml_DocumentEditFuzz> inherited;
 
+    // How many edits of each kind (EFuzzEdit) changed a text
+    using TCountVector = std::vector<std::size_t>;
+
+    // How many edits gave each code
+    using TResultCountMap = std::map<ASWToml::ETomlCode, std::size_t>;
+
+private:
+    // Checks that each kind of edit but the no-op one changed some texts in 'changes', so its checks ran, and that
+    // the no-op one changed none; and that some edits in 'results' succeeded and some failed with InvalidArgument and
+    // AlreadyExists, and with 'nestingTooDeep', NestingTooDeep, so the checks of those failures ran
+    void CheckCounts(TCountVector const& changes, TResultCountMap const& results, bool nestingTooDeep,
+        std::source_location loc = std::source_location::current());
+
+    // Makes EditFuzzEditCount random edits (see RandomEdit()) one after another on a document of 'text' parsed with
+    // 'options' (named 'name' in messages), with a generator seeded with 'seed', and checks each: that it does what it
+    // should (see EditProblem()), that a failed one changes nothing, that the modified flag says whether the text
+    // changed, that the text reads as the document's values, and that an edit that leaves the values as they were
+    // leaves the text so too (but a comment's). Adds the edits that changed the text to 'changes', and the code of
+    // each to 'results'. The first problem ends the edits.
+    void CheckRandomEdits(std::string const& text, ASWToml::TASWTomlOptions const& options, std::uint32_t seed,
+        std::string const& name, TCountVector& changes, TResultCountMap& results,
+        std::source_location loc = std::source_location::current());
+
 public: // Test methods, each defined with ASW_TEST
+    void Test_Corpus_EveryCommentSet();
     void Test_Corpus_EveryKeyRenamed();
     void Test_Corpus_EveryPathRemoved();
     void Test_Corpus_EveryTableAndArraySet();
+    void Test_RandomEdits_CorpusTexts();
+    void Test_RandomEdits_RandomTexts();
 
 public:
     TTest_ASWToml_DocumentEditFuzz();
