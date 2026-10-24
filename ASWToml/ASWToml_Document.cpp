@@ -66,6 +66,14 @@ struct TSplice
     std::size_t Begin = 0;
     std::size_t End = 0;
     std::string Text;
+
+    // Whether Text is new headers with their lines, which go after the other text inserted at the same place (key
+    // lines there would else belong to the last of the headers)
+    bool Block = false;
+
+    // Whether Text is new lines at the end of a text whose last line has no line break, which TEditor::Finish() gives
+    // it first, unless that line is removed
+    bool EndLines = false;
 };
 
 // The changes of an edit
@@ -181,7 +189,7 @@ private:
 
     // Adds 'block', headers and their lines (with the blank line before them that BlankLineBefore() asks for), at
     // 'offset', with a blank line after it when it goes before a line that isn't blank and
-    // Writing.BlankLineBeforeNewTable is on
+    // Writing.BlankLineBeforeNewTable is on; after the other text inserted there (see TSplice::Block)
     void InsertBlock(std::size_t offset, std::string block);
 
     // Adds 'item', a new element of the array 'container', before its element 'before', in its layout: on a line of
@@ -189,7 +197,7 @@ private:
     void InsertItem(std::size_t container, std::size_t before, std::string const& item);
 
     // Adds 'lines', which end with a line break, at 'offset', the start of a line or the end of the text (where a
-    // line break comes first when the last line has none)
+    // line break comes first when the last line has none and stays, see TSplice::EndLines)
     void InsertLines(std::size_t offset, std::string lines);
 
     // Whether the edit removes the value 'node' (of a key line, or an element or entry)
@@ -968,11 +976,18 @@ void RemoveValue(TASWTomlValue& root, Detail::TDocIndex const& index, TASWTomlPa
     SpliceBefore
 
     Whether 'left' comes before 'right' in the text: it starts before it, or at the same place and ends before it (so
-    an insertion comes before a change that starts where it is)
+    an insertion comes before a change that starts where it is), or is an insertion there of other text than headers
+    and 'right' is one of headers (see TSplice::Block)
 */
 bool SpliceBefore(TSplice const& left, TSplice const& right) noexcept
 {
-    return left.Begin < right.Begin || (left.Begin == right.Begin && left.End < right.End);
+    if (left.Begin != right.Begin)
+        return left.Begin < right.Begin;
+
+    if (left.End != right.End)
+        return left.End < right.End;
+
+    return !left.Block && right.Block;
 }
 //---------------------------------------------------------------------------
 /*
@@ -1304,6 +1319,35 @@ void TEditor::Finish()
     // Last, as it moves new lines inside the lines it removes
     RemoveLines(m_RemovedLines);
     std::stable_sort(m_Splices.begin(), m_Splices.end(), SpliceBefore);
+
+    // New headers right after other new lines at the same place (which come before them, see SpliceBefore()) get the
+    // blank line before them that Writing.BlankLineBeforeNewTable asks for, which they were written without when the
+    // other lines weren't there yet
+    for (std::size_t i = 1; m_Style.BlankLineBeforeTable && i < m_Splices.size(); ++i)
+    {
+        TSplice& block = m_Splices[i];
+        TSplice const& lines = m_Splices[i - 1];
+        if (!block.Block || lines.Begin != block.Begin)
+            continue;
+
+        // Unless the other lines end with a blank line, or the headers start with one
+        std::string_view const last(lines.Text);
+        bool const blankAtEnd = last.size() >= 2 * m_LineBreak.size() &&
+            last.substr(last.size() - 2 * m_LineBreak.size()) == m_LineBreak + m_LineBreak;
+        if (!blankAtEnd && block.Text.compare(0, m_LineBreak.size(), m_LineBreak) != 0)
+            block.Text.insert(0, m_LineBreak);
+    }
+
+    // A last line without a line break gets one before the new lines after it, unless it is removed (and the line
+    // before keeps its own)
+    for (TSplice& splice : m_Splices)
+    {
+        if (splice.EndLines && !m_RemovedLines.back())
+        {
+            splice.Text.insert(0, m_LineBreak);
+            break;
+        }
+    }
 }
 //---------------------------------------------------------------------------
 bool TEditor::Holds(std::size_t node, TASWTomlValue const& value) const
@@ -1353,6 +1397,7 @@ void TEditor::InsertBlock(std::size_t offset, std::string block)
     }
 
     InsertLines(offset, std::move(block));
+    m_Splices.back().Block = true;
 }
 //---------------------------------------------------------------------------
 void TEditor::InsertItem(std::size_t container, std::size_t before, std::string const& item)
@@ -1391,10 +1436,8 @@ void TEditor::InsertItem(std::size_t container, std::size_t before, std::string 
 //---------------------------------------------------------------------------
 void TEditor::InsertLines(std::size_t offset, std::string lines)
 {
-    if (offset == m_Text.size() && !m_Text.empty() && m_Text.back() != '\n')
-        lines.insert(0, m_LineBreak);
-
     Insert(offset, std::move(lines));
+    m_Splices.back().EndLines = offset == m_Text.size() && !m_Text.empty() && m_Text.back() != '\n';
 }
 //---------------------------------------------------------------------------
 bool TEditor::IsEmpty() const noexcept
@@ -2277,9 +2320,18 @@ void TEditor::RemoveLines(TFlagVector const& lines)
         std::size_t from = m_Index.Lines[begin].Text.Begin;
         std::size_t const to = end < count ? m_Index.Lines[end].Text.Begin : m_Text.size();
 
-        // A text that doesn't end with a line break keeps that: the line before loses its line break instead
-        if (!touched && to == m_Text.size() && !m_Text.empty() && m_Text.back() != '\n' && begin > kept)
-            from = m_Index.Lines[begin - 1].Text.End;
+        // A text that doesn't end with a line break keeps that: the line before loses its line break instead, unless
+        // new lines go after it (at the start of a blank line before the run), which then end the text
+        std::size_t const lineEnd = begin > 0 ? m_Index.Lines[begin - 1].Text.End : 0;
+        bool endsText = !touched && to == m_Text.size() && !m_Text.empty() && m_Text.back() != '\n' && begin > kept;
+        for (TSplice const& splice : m_Splices)
+        {
+            if (splice.Begin == splice.End && splice.Begin >= lineEnd && splice.Begin <= to)
+                endsText = false;
+        }
+
+        if (endsText)
+            from = lineEnd;
 
         Erase(from, to);
         kept = end;

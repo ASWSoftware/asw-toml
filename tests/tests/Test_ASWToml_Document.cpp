@@ -4886,6 +4886,31 @@ ASW_TEST(TTest_ASWToml_DocumentMerge, BlankLines_StayInShape)
     CheckMerges("[a.b]\nx = 1\n", "a", TTable{}, "[a]\n", "a table only a longer header made, emptied");
     CheckMerges("a = 1\nb = 2", "", TTable{ { "a", 1 }, { "c", 3 } }, "a = 1\nc = 3\n",
         "after a last line without a line break");
+    CheckMerges("b = 1\n\n[s]", "s", 5, "b = 1\ns = 5\n",
+        "a table that ends a text without a line break, after a blank line, becomes a key line");
+    CheckMerges("[a]\nb = 1\n\n# c\n[[a.s]]\nx = 1", "a.s[0]", 5, "[a]\nb = 1\ns = [5]\n",
+        "the same for an array of tables");
+    CheckMerges("b = 1\n[s]", "", TTable{ { "b", 1 }, { "t", TTable{ { "x", 1 } } } }, "b = 1\n\n[t]\nx = 1\n",
+        "a new table at the end, where a last line without a line break is removed, after one blank line");
+    CheckMerges("b = 1\n[s]\ny = 2", "", TTable{ { "b", 1 }, { "t", TTable{ { "x", 1 } } } }, "b = 1\n\n[t]\nx = 1\n",
+        "the same with a key line last");
+    CheckMerges("w = 0\nx = 1", "", TTable{ { "w", 0 }, { "x", 1 }, { "k", 2 }, { "t", TTable{ { "y", 1 } } } },
+        "w = 0\nx = 1\nk = 2\n\n[t]\ny = 1\n",
+        "a key line and a table after a last line without a line break, which gets one");
+
+    // Arrange
+    TASWTomlOptions noBlankLine;
+    noBlankLine.Writing.BlankLineBeforeNewTable = false;
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("[a.b]\nx = 1\n", noBlankLine).IsOk(), "the text should parse");
+
+    // Act
+    ASWToml::TASWTomlResult const result = document.SetValue("", TTable{ { "k", 2 }, { "a", TTable{ { "c", 1 } } } });
+
+    // Assert
+    CheckTrue(result.IsOk(), "the root should be set: " + result.Message);
+    CheckEquals("k = 2\n[a]\nc = 1\n"s, document.ToText(),
+        "no blank line before a new header after new key lines without Writing.BlankLineBeforeNewTable");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentMerge, InlineTables_KeepTheirLayout)
@@ -4978,6 +5003,17 @@ ASW_TEST(TTest_ASWToml_DocumentMerge, Tables_KeysSetRemovedAndAdded)
     CheckMerges("a = 1\nb = 2\n\n[t]\nx = 1\n", "", TTable{ { "b", 2 } }, "b = 2\n", "the root, mostly removed");
     CheckMerges("a = 1e2\nb = 1\n", "", TTable{ { "a", 100.0 }, { "b", 2 } }, "a = 1e2\nb = 2\n",
         "a key that is the same keeps its text");
+    CheckMerges("[a.b]\nx = 1\n", "", TTable{ { "a", TTable{ { "c", 1 } } }, { "k", 2 } }, "k = 2\n\n[a]\nc = 1\n",
+        "a new key of the root goes before a new header at the same place");
+    CheckMerges("[a.b]\nx = 1\n", "", TTable{ { "k", 2 }, { "a", TTable{ { "c", 1 } } } }, "k = 2\n\n[a]\nc = 1\n",
+        "the keys the other way round");
+    CheckMerges("# f\n\n[a.a.a]\n\nk = []\n# c\n", "", TTable{ { "a", TTable{ { "n", false } } }, { "n", 1 } },
+        "# f\n\nn = 1\n\n[a]\nn = false\n", "a key of the root and of a table of the same name");
+    CheckMerges("[a.b]\nx = 1\n", "", TTable{ { "k", 2 }, { "a", TTable{ { "c", 1 }, { "b", TTable{ { "x", 1 } } } } } },
+        "k = 2\n\n[a]\nc = 1\n\n[a.b]\nx = 1\n", "one blank line between them when the key lines end with one");
+    CheckMerges("x = 1\n[a.b]\ny = 1\n", "",
+        TTable{ { "x", 1 }, { "k", 2 }, { "a", TTable{ { "c", 1 }, { "b", TTable{ { "y", 1 } } } } } },
+        "x = 1\nk = 2\n\n[a]\nc = 1\n\n[a.b]\ny = 1\n", "or when the header starts with one");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentMerge, Tables_ToAnotherType)
