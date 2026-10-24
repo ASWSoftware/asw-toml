@@ -28,6 +28,7 @@ SPDX-License-Identifier: MIT
 #include <string_view>
 #include <vector>
 //---------------------------------------------------------------------------
+#include "ASWToml_Index.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
@@ -247,12 +248,26 @@ class TASWTomlDocument
 {
 private:
     Detail::TDocModel m_Model;
+    Detail::TDocIndex m_Index; // The index of m_Model
     TASWTomlOptions m_Options; // Valid (TASWTomlOptions::Validate() accepts them)
     TASWTomlValue m_Root; // The values of m_Model, as GetRoot() describes
+    bool m_Modified = false; // See IsModified()
+
+    // The model's text without a byte order mark, each line break as it is (what ToText() writes with the default
+    // writing options, but for the byte order mark)
+    std::string BodyText() const;
+
+    // Reads 'text' (a whole document, with or without a byte order mark) into 'model', 'index' and 'root' with the
+    // reading options of 'options', as Parse() describes; on failure, they are left as they were
+    static TASWTomlResult ReadText(std::string_view text, TASWTomlOptions const& options, Detail::TDocModel& model,
+        Detail::TDocIndex& index, TASWTomlValue& root);
 
 public:
     // An empty document with the default options: no keys, tables or byte order mark, so ToText() is empty
     TASWTomlDocument();
+
+    // Clears the modified flag (see IsModified()), e.g. after the text was saved
+    void ClearModified() noexcept;
 
     // The value at 'path': a table, an array, an element of an array (of an array of tables, e.g. products[1], or of
     // an array value, e.g. ports[0]) or the value of a key; the root table for the root path. nullptr when there is no
@@ -275,6 +290,10 @@ public:
     // Whether the text that was read started with a UTF-8 byte order mark
     bool HasBom() const noexcept;
 
+    // Whether an edit changed the text since the document was made, parsed or reset, or the flag was cleared
+    // (ClearModified()). An edit that changes nothing leaves the flag as it was.
+    bool IsModified() const noexcept;
+
     // Reads 'text', a TOML 1.1 document (UTF-8, with or without a byte order mark; lines end with LF or CRLF), into
     // this document, replacing what it held, and keeps 'options' for ToText() and the edits. Fails on the first error,
     // and then nothing changes: InvalidOptions (see TASWTomlOptions::Validate()), UnsupportedEncoding (a UTF-16 or
@@ -288,9 +307,21 @@ public:
     // tables) is reported only when the text has no other error. An error in the text has its Line and Column (both
     // 1-based, the column in characters, a byte order mark not counted); DuplicateKey's are those of the second
     // definition's first key part, and its message gives the path and the line of the first, e.g. The table server is
-    // already defined on line 3. Reading.MaxFileSize limits only the files a load reads. Throws only std::bad_alloc,
-    // and then nothing changes either.
+    // already defined on line 3. Reading.MaxFileSize limits only the files a load reads. On success, the modified flag
+    // is cleared (see IsModified()). Throws only std::bad_alloc, and then nothing changes either.
     TASWTomlResult Parse(std::string_view text, TASWTomlOptions const& options = TASWTomlOptions());
+
+    // Empties the document, as a new one is, and gives it 'options', so ToText() is empty, GetRoot() an empty table
+    // and the modified flag clear. Fails with InvalidOptions (see TASWTomlOptions::Validate()), and then nothing
+    // changes. Throws only std::bad_alloc, and then nothing changes either.
+    TASWTomlResult Reset(TASWTomlOptions const& options);
+
+    // Gives the document 'options', which may be its own, and reads its text again with them, as Parse() does, so the
+    // reading options apply to it. The text doesn't change, nor do the byte order mark (HasBom()) or the modified
+    // flag. Fails with InvalidOptions (see TASWTomlOptions::Validate()), or with what Parse() reports for a text the
+    // new reading options refuse (e.g. NestingTooDeep for a lower MaxNestingDepth); then nothing changes. Throws only
+    // std::bad_alloc, and then nothing changes either.
+    TASWTomlResult SetOptions(TASWTomlOptions const& options);
 
     // The document as text, as its writing options say: a UTF-8 byte order mark (with EBomMode::Auto, when the text
     // that was read had one), then the text. With ELineEnding::Auto every line break stays as it was; LF, CRLF and

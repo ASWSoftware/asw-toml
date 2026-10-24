@@ -22,6 +22,7 @@ SPDX-License-Identifier: MIT
 #include "ASWUnitTests_TestBase.h"
 //---------------------------------------------------------------------------
 #include "ASWToml_Document.h"
+#include "ASWToml_Index.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
@@ -81,12 +82,17 @@ private:
 
 public: // Test methods, each defined with ASW_TEST
     void Test_Default_IsEmpty();
+    void Test_Modified_ClearUntilAnEditChangesTheText();
     void Test_Parse_AcceptsEveryConstruct();
     void Test_Parse_FailureChangesNothing();
     void Test_Parse_KeepsBomLineBreakAndOptions();
     void Test_Parse_RejectsInvalidOptions();
     void Test_Parse_RejectsInvalidUtf8BeforeSyntax();
     void Test_Parse_RejectsUtf16AndUtf32();
+    void Test_Reset_EmptiesTheDocument();
+    void Test_Reset_RejectsInvalidOptions();
+    void Test_SetOptions_FailureChangesNothing();
+    void Test_SetOptions_ReadsTheTextAgain();
 
 public:
     TTest_ASWToml_DocumentParse();
@@ -179,6 +185,41 @@ public: // Test methods, each defined with ASW_TEST
 public:
     TTest_ASWToml_DocumentFuzz();
     ~TTest_ASWToml_DocumentFuzz() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentIndex
+//
+// Detail::BuildIndex() and FindNode(): the tree of tables with where each piece is written, which the edits use
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentIndex : public TAutoTestGroup<TTest_ASWToml_DocumentIndex>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentIndex> inherited;
+
+private:
+    // Checks that 'text' parses into a model and that its index builds, into 'index'
+    void CheckIndexes(std::string const& text, ASWToml::Detail::TDocIndex& index, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_BuildIndex_FailureLeavesTheIndexAsItWas();
+    void Test_FindNode_FindsNodesByPath();
+    void Test_Lines_KindsAndRanges();
+    void Test_Lines_StartEachBlock();
+    void Test_Names_EveryKeyPartThatNamesANode();
+    void Test_Nodes_TheLinesAndBlocksTheyAreDefinedIn();
+    void Test_Values_ItemsAndClosingBrackets();
+
+public:
+    TTest_ASWToml_DocumentIndex();
+    ~TTest_ASWToml_DocumentIndex() override;
 
     void SetUp_Group() override;
     void SetUp_Test(ITestCase& testCase) override;

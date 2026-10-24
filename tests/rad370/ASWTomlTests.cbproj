@@ -106,6 +106,10 @@
             <DependentOn>..\..\ASWToml\ASWToml_File.h</DependentOn>
             <BuildOrder>21</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Index.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Index.h</DependentOn>
+            <BuildOrder>36</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_Options.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Options.h</DependentOn>
             <BuildOrder>19</BuildOrder>

@@ -123,6 +123,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Writing.Bom` adds or removes the byte order mark, and `Writing.LineEnding` writes every line
   break as LF, CRLF or the platform's, in comments and multi-line strings too. `HasBom()`,
   `GetLineBreak()` (the text's most common line break, the platform's when it has none) and
-  `GetOptions()` tell what was read. A document is copyable; it isn't thread-safe.
+  `GetOptions()` tell what was read. `Reset(options)` empties the document and gives it new
+  options; `SetOptions(options)` gives it new options and reads its text again with them, changing
+  nothing when the new reading options refuse the text (e.g. a lower `MaxNestingDepth`).
+  `IsModified()` tells whether an edit changed the text; `Parse()`, `Reset()` and `ClearModified()`
+  clear it. A document is copyable; it isn't thread-safe.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

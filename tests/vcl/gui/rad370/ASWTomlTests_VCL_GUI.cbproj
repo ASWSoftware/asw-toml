@@ -124,6 +124,10 @@
             <DependentOn>..\..\..\..\ASWToml\ASWToml_File.h</DependentOn>
             <BuildOrder>53</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Index.cpp">
+            <DependentOn>..\..\..\..\ASWToml\ASWToml_Index.h</DependentOn>
+            <BuildOrder>68</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Options.cpp">
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Options.h</DependentOn>
             <BuildOrder>51</BuildOrder>

@@ -35,6 +35,7 @@ SPDX-License-Identifier: MIT
 #include <utility>
 #include <vector>
 //---------------------------------------------------------------------------
+#include "ASWToml_Index.h"
 #include "ASWToml_Parser.h"
 #include "ASWToml_Scalars.h"
 #include "ASWToml_Utils.h"
@@ -57,9 +58,13 @@ using ASWToml::TASWTomlDocument;
 using ASWToml::TASWTomlOptions;
 using ASWToml::TASWTomlValue;
 using ASWToml::Detail::EEntryKind;
+using ASWToml::Detail::ELineKind;
+using ASWToml::Detail::ENodeKind;
 using ASWToml::Detail::EValueKind;
+using ASWToml::Detail::NoIndex;
 using ASWToml::Detail::TDocBlock;
 using ASWToml::Detail::TDocEntry;
+using ASWToml::Detail::TDocIndex;
 using ASWToml::Detail::TDocKeyPart;
 using ASWToml::Detail::TDocModel;
 using ASWToml::Detail::TDocValue;
@@ -193,9 +198,11 @@ bool IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& right);
 bool IsInText(ASWToml::TASWTomlResult const& result, std::string_view text);
 std::string KeyList(TASWTomlValue const& value);
 std::string MutatedText(std::mt19937& generator, std::string_view source);
+std::string NamesAt(std::string const& text, TDocIndex const& index, std::string const& path);
 std::string NestedArrays(std::size_t depth);
 std::string NestedArraysOfTables(std::size_t count);
 std::string NestedInlineTables(std::size_t depth);
+ASWToml::Detail::TIndexNode const& NodeAt(TDocIndex const& index, std::string const& path);
 std::string RandomDocumentText(std::mt19937& generator);
 std::string RandomKey(std::mt19937& generator);
 ASWToml::TASWTomlOptions RandomOptions(std::mt19937& generator);
@@ -203,6 +210,7 @@ std::string RandomPieceText(std::mt19937& generator);
 std::string RandomValueText(std::mt19937& generator, std::size_t depth);
 TCorpusTextVector RoundTripCorpus();
 bool SameValue(std::string const& expected, TASWTomlValue const& value);
+std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range);
 std::string ValuesDiffer(ASWUnitTests::TTomlTestFile const& file, TASWTomlValue const& root);
 std::string WithLineBreaks(std::string_view text, std::string_view lineBreak);
 
@@ -587,6 +595,21 @@ std::string MutatedText(std::mt19937& generator, std::string_view source)
 }
 //---------------------------------------------------------------------------
 /*
+    NamesAt
+
+    The names of the node of 'index' at 'path' (see NodeAt()): each one's text in 'text', '@' and its offset, and a
+    blank
+*/
+std::string NamesAt(std::string const& text, TDocIndex const& index, std::string const& path)
+{
+    std::string names;
+    for (ASWToml::Detail::TTextRange const& range : NodeAt(index, path).Names)
+        names += Slice(text, range) + "@" + std::to_string(range.Begin) + " ";
+
+    return names;
+}
+//---------------------------------------------------------------------------
+/*
     NestedArrays
 
     a = [[...[1]...]] with 'depth' arrays
@@ -632,6 +655,20 @@ std::string NestedInlineTables(std::size_t depth)
         text += " }";
 
     return text + "\n";
+}
+//---------------------------------------------------------------------------
+/*
+    NodeAt
+
+    The node of 'index' at 'path'; a default node (no names, lines or ranges) when there is none, so a test that
+    expects one fails instead of crashing
+*/
+ASWToml::Detail::TIndexNode const& NodeAt(TDocIndex const& index, std::string const& path)
+{
+    static ASWToml::Detail::TIndexNode const none;
+    std::size_t const node = ASWToml::Detail::FindNode(index, path);
+
+    return node == NoIndex ? none : index.Nodes[node];
 }
 //---------------------------------------------------------------------------
 /*
@@ -1091,6 +1128,19 @@ bool SameValue(std::string const& expected, TASWTomlValue const& value)
 }
 //---------------------------------------------------------------------------
 /*
+    Slice
+
+    The bytes of 'text' in 'range'; "(out of the text)" when the range isn't inside it
+*/
+std::string Slice(std::string const& text, ASWToml::Detail::TTextRange range)
+{
+    if (range.Begin > range.End || range.End > text.size())
+        return "(out of the text)";
+
+    return text.substr(range.Begin, range.End - range.Begin);
+}
+//---------------------------------------------------------------------------
+/*
     ValuesDiffer
 
     How the values 'root' holds differ from the expected values of the toml-test file 'file', one sentence per path
@@ -1537,6 +1587,23 @@ ASW_TEST(TTest_ASWToml_DocumentParse, Default_IsEmpty)
     CheckEquals(ASWToml::Detail::NativeLineBreak(), document.GetLineBreak(), "the platform's line break");
     CheckEquals(ASWToml::ELineEnding::Auto, document.GetOptions().Writing.LineEnding, "the default options");
     CheckEquals(std::size_t(100), document.GetOptions().Reading.MaxNestingDepth, "the default reading options");
+    CheckFalse(document.IsModified(), "a new document isn't modified");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentParse, Modified_ClearUntilAnEditChangesTheText)
+{
+    // Arrange
+    TASWTomlDocument document;
+
+    // Act
+    ASWToml::TASWTomlResult const parsed = document.Parse("a = 1\n");
+    bool const afterParse = document.IsModified();
+    document.ClearModified();
+
+    // Assert
+    CheckTrue(parsed.IsOk(), "the text should parse: " + parsed.Message);
+    CheckFalse(afterParse, "a parsed document isn't modified");
+    CheckFalse(document.IsModified(), "clearing a clear flag leaves it clear");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentParse, Parse_AcceptsEveryConstruct)
@@ -1688,6 +1755,118 @@ ASW_TEST(TTest_ASWToml_DocumentParse, Parse_RejectsUtf16AndUtf32)
         CheckContains(result.Message, "UTF-16 or UTF-32 byte order mark", Escaped(mark) + ": the message");
         CheckEquals(std::size_t(0), result.Line, Escaped(mark) + ": not about a place in the text");
     }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentParse, Reset_EmptiesTheDocument)
+{
+    // Arrange
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(Bom + "a = 1\r\n[t]\r\n").IsOk(), "the text should parse");
+    TASWTomlOptions options;
+    options.Writing.CommentPrefix = "#";
+
+    // Act
+    ASWToml::TASWTomlResult const result = document.Reset(options);
+
+    // Assert
+    CheckTrue(result.IsOk(), "the document should be reset: " + result.Message);
+    CheckEquals(""s, document.ToText(), "no text");
+    CheckTrue(document.GetRoot() == TASWTomlValue(), "an empty root table");
+    CheckTrue(document.Find("a") == nullptr, "no keys");
+    CheckFalse(document.HasBom(), "no byte order mark");
+    CheckEquals(ASWToml::Detail::NativeLineBreak(), document.GetLineBreak(), "the platform's line break");
+    CheckEquals("#"s, document.GetOptions().Writing.CommentPrefix, "the options given");
+    CheckFalse(document.IsModified(), "not modified");
+
+    // Act
+    ASWToml::TASWTomlResult const again = document.Reset(document.GetOptions());
+
+    // Assert
+    CheckTrue(again.IsOk(), "its own options should do: " + again.Message);
+    CheckEquals("#"s, document.GetOptions().Writing.CommentPrefix, "its own options kept");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentParse, Reset_RejectsInvalidOptions)
+{
+    // Arrange
+    TASWTomlDocument document;
+    CheckTrue(document.Parse("a = 1\n").IsOk(), "the text should parse");
+    TASWTomlOptions invalid;
+    invalid.Writing.CommentPrefix = ";";
+
+    // Act
+    ASWToml::TASWTomlResult const result = document.Reset(invalid);
+
+    // Assert
+    CheckEquals(ETomlCode::InvalidOptions, result.Code, "options that aren't valid");
+    CheckEquals("a = 1\n"s, document.ToText(), "the text should be kept");
+    CheckTrue(document.Find("a") != nullptr, "the values too");
+    CheckEquals("# "s, document.GetOptions().Writing.CommentPrefix, "and the options");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentParse, SetOptions_FailureChangesNothing)
+{
+    // Arrange
+    std::string const text = Bom + "a = [[[1]]]\r\n";
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), "the text should parse");
+    TASWTomlOptions shallow;
+    shallow.Reading.MaxNestingDepth = 2;
+    shallow.Writing.CommentPrefix = "#";
+    TASWTomlOptions invalid;
+    invalid.Reading.MaxNestingDepth = 0;
+
+    // Act
+    ASWToml::TASWTomlResult const tooDeep = document.SetOptions(shallow);
+    ASWToml::TASWTomlResult const notValid = document.SetOptions(invalid);
+
+    // Assert
+    CheckEquals(ETomlCode::NestingTooDeep, tooDeep.Code, "the text is nested deeper than the new options allow");
+    CheckEquals(std::size_t(1), tooDeep.Line, "the place in the text");
+    CheckEquals(std::size_t(7), tooDeep.Column, "the third array, the byte order mark not counted");
+    CheckEquals(ETomlCode::InvalidOptions, notValid.Code, "options that aren't valid");
+    CheckEquals(text, document.ToText(), "the text should be kept");
+    CheckTrue(document.Find("a[0][0][0]") != nullptr, "the values too");
+    CheckEquals("# "s, document.GetOptions().Writing.CommentPrefix, "and the options");
+    CheckEquals(std::size_t(100), document.GetOptions().Reading.MaxNestingDepth, "the reading options too");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentParse, SetOptions_ReadsTheTextAgain)
+{
+    // Arrange
+    std::string const text = Bom + "a = [[1]] # x\r\nb = 2\n";
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), "the text should parse");
+    TASWTomlOptions options;
+    options.Reading.MaxNestingDepth = 2;
+    options.Writing.LineEnding = ELineEnding::LF;
+
+    // Act
+    ASWToml::TASWTomlResult const result = document.SetOptions(options);
+
+    // Assert
+    CheckTrue(result.IsOk(), "the options should be set: " + result.Message);
+    CheckEquals(std::size_t(2), document.GetOptions().Reading.MaxNestingDepth, "the new reading options");
+    CheckEquals(Bom + "a = [[1]] # x\nb = 2\n", document.ToText(), "the new writing options apply to the text");
+    CheckTrue(document.HasBom(), "the byte order mark is kept");
+    CheckEquals(ELineBreak::CRLF, document.GetLineBreak(), "the line break new lines get (the first in a tie)");
+    // (TArray{ TArray{ 1 } } would be a copy of the inner array, not an array holding it)
+    TASWTomlValue const inner = TArray{ 1 };
+    CheckTrue(document.GetRoot() == TASWTomlValue(TTable{ { "a", TArray{ inner } }, { "b", 2 } }),
+        "the values read again");
+    CheckFalse(document.IsModified(), "the modified flag is kept");
+
+    // Act
+    ASWToml::TASWTomlResult const own = document.SetOptions(document.GetOptions());
+
+    // Assert
+    CheckTrue(own.IsOk(), "its own options should do: " + own.Message);
+    CheckEquals(std::size_t(2), document.GetOptions().Reading.MaxNestingDepth, "its own options kept");
+
+    // Arrange & Act & Assert
+    TASWTomlDocument empty;
+    CheckTrue(empty.SetOptions(options).IsOk(), "a new document takes options");
+    CheckEquals(""s, empty.ToText(), "and stays empty");
 }
 //---------------------------------------------------------------------------
 
@@ -2191,6 +2370,267 @@ ASW_TEST(TTest_ASWToml_DocumentFuzz, RandomTexts_AreTheSameEverywhere)
     CheckTrue(tenThousandth == 4123659995u, "std::mt19937 should give the numbers the standard defines");
     CheckEquals(text, sameSeed, "the same seed should give the same text");
     CheckFalse(text == nextSeed, "another seed should give another text");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentIndex
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentIndex::TTest_ASWToml_DocumentIndex()
+    : inherited("ASWToml_DocumentIndex_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentIndex::~TTest_ASWToml_DocumentIndex()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentIndex::CheckIndexes(std::string const& text, TDocIndex& index, std::string const& msg,
+    std::source_location loc)
+{
+    TDocModel model;
+    ASWToml::TASWTomlResult result = ASWToml::Detail::ParseDocument(text, ASWToml::TASWTomlReadingOptions(), model);
+    CheckTrue(result.IsOk(), msg + ": the text should parse: " + result.Message, loc);
+
+    TASWTomlValue root;
+    result = ASWToml::Detail::BuildIndex(model, text, 100, index, root);
+    CheckTrue(result.IsOk(), msg + ": the index should build: " + result.Message, loc);
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentIndex::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentIndex::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentIndex::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentIndex::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentIndex, BuildIndex_FailureLeavesTheIndexAsItWas)
+{
+    // Arrange
+    TDocIndex index;
+    CheckIndexes("a = 1\n[t]\nb = 2\n", index, "the first text");
+    TDocModel model;
+    CheckTrue(ASWToml::Detail::ParseDocument("x = 1\nx = 2\n", ASWToml::TASWTomlReadingOptions(), model).IsOk(),
+        "the second text should parse");
+    TASWTomlValue root = TASWTomlValue(TTable{ { "kept", true } });
+
+    // Act
+    ASWToml::TASWTomlResult const result = ASWToml::Detail::BuildIndex(model, "x = 1\nx = 2\n", 100, index, root);
+
+    // Assert
+    CheckEquals(ETomlCode::DuplicateKey, result.Code, "a key defined twice");
+    CheckEquals(std::size_t(2), result.Line, "the line of the second definition");
+    CheckEquals(std::size_t(4), index.Nodes.size(), "the nodes should be the first text's");
+    CheckEquals(std::size_t(3), index.Lines.size(), "the lines too");
+    CheckTrue(root == TASWTomlValue(TTable{ { "kept", true } }), "the root should be left as it was");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentIndex, FindNode_FindsNodesByPath)
+{
+    // Arrange
+    TDocIndex index;
+    CheckIndexes("a = [1, [2, 3]]\n[t.u]\nx = { y = 1 }\n[[s]]\n[[s]]\nz = 1\n", index, "the text");
+
+    // Act & Assert
+    CheckEquals(std::size_t(0), ASWToml::Detail::FindNode(index, ""), "the root path is the root");
+    CheckEquals("a"s, index.Nodes[ASWToml::Detail::FindNode(index, "a")].Key, "a key");
+    CheckTrue(index.Nodes[ASWToml::Detail::FindNode(index, "a[1][0]")].Kind == ENodeKind::Scalar, "an element");
+    CheckTrue(index.Nodes[ASWToml::Detail::FindNode(index, "t")].Kind == ENodeKind::ImplicitTable,
+        "a table only a longer header made");
+    CheckEquals("y"s, index.Nodes[ASWToml::Detail::FindNode(index, "t.u.x.y")].Key, "a key of an inline table");
+    CheckTrue(index.Nodes[ASWToml::Detail::FindNode(index, "s")].Kind == ENodeKind::ArrayOfTables,
+        "an array of tables");
+    CheckEquals("z"s, index.Nodes[ASWToml::Detail::FindNode(index, "s[1].z")].Key, "a key of its second element");
+
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(index, "b"), "a missing key");
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(index, "a[2]"), "an index past the end");
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(index, "a[0][0]"), "an index into a scalar");
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(index, "t[0]"), "an index into a table");
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(index, "t.u.x[0]"), "an index into an inline table");
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(index, "a.b"), "a key of an array");
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(index, "s.z"), "a key of an array of tables");
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(index, "a..b"), "a path that isn't valid");
+    CheckEquals(NoIndex, ASWToml::Detail::FindNode(TDocIndex(), ""), "an index that wasn't built");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentIndex, Lines_KindsAndRanges)
+{
+    // Arrange
+    std::string const text = "# file\n\ntitle = \"x\" # note\r\n[server] # s\nports = [\n  80, # web\n  443,\n]\n"
+        "  \"a b\".c = 1\n  [[srv]]\nname = \"one\"";
+    TDocIndex index;
+
+    // Act
+    CheckIndexes(text, index, "the text");
+
+    // Assert
+    struct TLine
+    {
+        ELineKind Kind;
+        std::string Text;
+        std::string Trailing;
+        std::size_t Block;
+        std::size_t Entry;
+        std::string Path; // Of its node; "-" for none
+    };
+    std::vector<TLine> const expected = {
+        { ELineKind::Comment, "# file", "", 0, 0, "-" },
+        { ELineKind::Blank, "", "", 0, 1, "-" },
+        { ELineKind::KeyValue, "title = \"x\" # note", " # note", 0, 2, "title" },
+        { ELineKind::Header, "[server] # s", " # s", 1, NoIndex, "server" },
+        { ELineKind::KeyValue, "ports = [\n  80, # web\n  443,\n]", "", 1, 0, "server.ports" },
+        { ELineKind::KeyValue, "  \"a b\".c = 1", "", 1, 1, "server.\"a b\".c" },
+        { ELineKind::Header, "  [[srv]]", "", 2, NoIndex, "srv[0]" },
+        { ELineKind::KeyValue, "name = \"one\"", "", 2, 0, "srv[0].name" },
+    };
+
+    CheckEquals(expected.size(), index.Lines.size(), "the number of lines");
+    for (std::size_t i = 0; i < expected.size() && i < index.Lines.size(); ++i)
+    {
+        ASWToml::Detail::TIndexLine const& line = index.Lines[i];
+        std::string const name = "line " + std::to_string(i);
+        std::size_t const node = expected[i].Path == "-" ? NoIndex : ASWToml::Detail::FindNode(index, expected[i].Path);
+
+        CheckTrue(line.Kind == expected[i].Kind, name + ": its kind");
+        CheckEquals(expected[i].Text, Slice(text, line.Text), name + ": its text");
+        CheckEquals(expected[i].Trailing, Slice(text, line.Trailing), name + ": the text after its value or header");
+        CheckEquals(line.Text.End, line.Trailing.End, name + ": the trailing text ends the line");
+        CheckEquals(expected[i].Block, line.Block, name + ": its block");
+        CheckEquals(expected[i].Entry, line.Entry, name + ": its entry");
+        CheckEquals(node, line.Node, name + ": its node");
+    }
+
+    // A line break of LF or CRLF, or none at the end
+    CheckEquals(index.Lines[0].Text.End + 1, index.Lines[0].Next, "after a LF");
+    CheckEquals(index.Lines[2].Text.End + 2, index.Lines[2].Next, "after a CRLF");
+    CheckEquals(text.size(), index.Lines.back().Next, "the last line without a line break");
+    CheckEquals(index.Lines[3].Next, index.Lines[4].Text.Begin, "each line starts where the one before it ends");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentIndex, Lines_StartEachBlock)
+{
+    // Arrange
+    std::string const text = "[a]\n[b]\nx = 1\n\n[[c]]\n# c\n";
+    TDocIndex index;
+
+    // Act
+    CheckIndexes(text, index, "the text");
+
+    // Assert
+    // The root block is empty, so its first line is the next block's
+    CheckTrue(index.BlockLines == ASWToml::Detail::TIndexVector{ 0, 0, 1, 4 }, "the first line of each block");
+    CheckEquals("[b]"s, Slice(text, index.Lines[index.BlockLines[2]].Text), "the third block starts with its header");
+
+    // Arrange & Act & Assert
+    CheckIndexes("", index, "an empty text");
+    CheckTrue(index.BlockLines == ASWToml::Detail::TIndexVector{ 0 }, "an empty text has one block");
+    CheckTrue(index.Lines.empty(), "and no lines");
+    CheckEquals(std::size_t(1), index.Nodes.size(), "and the root table only");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentIndex, Names_EveryKeyPartThatNamesANode)
+{
+    // Arrange
+    std::string const text = "title = 1\na.'b c'.d = 2\n[srv]\n[[ srv . list ]]\n[srv.list.tls]\n[[srv.list]]\n"
+        "p = { x = 1, y.z = 2 }\n";
+    TDocIndex index;
+
+    // Act
+    CheckIndexes(text, index, "the text");
+
+    // Assert
+    CheckEquals("title@0 "s, NamesAt(text, index, "title"), "the key of a key/value line");
+    CheckEquals("a@10 "s, NamesAt(text, index, "a"), "a dotted table");
+    CheckEquals("'b c'@12 "s, NamesAt(text, index, "a.\"b c\""), "a quoted part, with its quotes");
+    CheckEquals("d@18 "s, NamesAt(text, index, "a.\"b c\".d"), "the last part of a dotted key");
+    CheckEquals("srv@25 srv@33 srv@48 srv@64 "s, NamesAt(text, index, "srv"),
+        "a table: its header, and the headers that go through it");
+    CheckEquals("list@39 list@52 list@68 "s, NamesAt(text, index, "srv.list"),
+        "an array of tables: each [[...]] header, and its elements' sub-tables' headers");
+    CheckEquals(""s, NamesAt(text, index, "srv.list[0]"), "an element has no name");
+    CheckEquals("tls@57 "s, NamesAt(text, index, "srv.list[0].tls"), "a table under an element");
+    CheckEquals("p@75 "s, NamesAt(text, index, "srv.list[1].p"), "the key of an inline table");
+    CheckEquals("x@81 "s, NamesAt(text, index, "srv.list[1].p.x"), "a key of an inline table");
+    CheckEquals("y@88 "s, NamesAt(text, index, "srv.list[1].p.y"), "a dotted table in an inline table");
+    CheckEquals(""s, NamesAt(text, index, ""), "the root has no name");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentIndex, Nodes_TheLinesAndBlocksTheyAreDefinedIn)
+{
+    // Arrange
+    std::string const text = "a = 1\nb.c = 2\nd = { e = 3 }\n[t]\n[[s]]\n[s.u]\n[[s]]\nf = [4]\n";
+    TDocIndex index;
+
+    // Act
+    CheckIndexes(text, index, "the text");
+
+    // Assert
+    CheckEquals(std::size_t(0), NodeAt(index, "a").Line, "a key's line");
+    CheckEquals(NoIndex, NodeAt(index, "a").Block, "a key has no block of its own");
+    CheckEquals(NoIndex, NodeAt(index, "b").Line, "a dotted table has no line of its own");
+    CheckEquals(std::size_t(1), NodeAt(index, "b.c").Line, "the last part of a dotted key has its line");
+    CheckEquals(std::size_t(2), NodeAt(index, "d").Line, "an inline table's key line");
+    CheckEquals(NoIndex, NodeAt(index, "d.e").Line, "a key in an inline table has no line of its own");
+    CheckEquals(std::size_t(3), NodeAt(index, "t").Line, "a header table's header");
+    CheckEquals(std::size_t(1), NodeAt(index, "t").Block, "a header table's block");
+    CheckEquals(NoIndex, NodeAt(index, "s").Line, "an array of tables has no line of its own");
+    CheckEquals(std::size_t(4), NodeAt(index, "s[0]").Line, "an element's header");
+    CheckEquals(std::size_t(2), NodeAt(index, "s[0]").Block, "an element's block");
+    CheckEquals(std::size_t(3), NodeAt(index, "s[0].u").Block, "a table under an element");
+    CheckEquals(std::size_t(4), NodeAt(index, "s[1]").Block, "the second element's block");
+    CheckEquals(std::size_t(7), NodeAt(index, "s[1].f").Line, "a key of the second element");
+    CheckEquals(NoIndex, NodeAt(index, "s[1].f[0]").Line, "an element of an array has no line of its own");
+    CheckEquals(NoIndex, NodeAt(index, "").Line, "the root has no line");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentIndex, Values_ItemsAndClosingBrackets)
+{
+    // Arrange
+    std::string const text = "s = 'x'\nports = [\n  80, # web\n  443,\n]\np = { x = 1, y = 2 }\ne = []\nt = {}\n"
+        "n = [ [1], 2 ]\n";
+    TDocIndex index;
+
+    // Act
+    CheckIndexes(text, index, "the text");
+
+    // Assert
+    CheckEquals("'x'"s, Slice(text, NodeAt(index, "s").Value), "a scalar's text");
+    CheckEquals("[\n  80, # web\n  443,\n]"s, Slice(text, NodeAt(index, "ports").Value), "an array with its brackets");
+    CheckEquals("\n]"s, Slice(text, NodeAt(index, "ports").Close), "the text before its closing bracket, and it");
+    CheckEquals("80"s, Slice(text, NodeAt(index, "ports[0]").Value), "an element");
+    CheckEquals("\n  80,"s, Slice(text, NodeAt(index, "ports[0]").Item), "an element, the text before it, a comma");
+    CheckEquals(" # web\n  443,"s, Slice(text, NodeAt(index, "ports[1]").Item),
+        "the comment after the comma before it is in its text");
+    CheckEquals("{ x = 1, y = 2 }"s, Slice(text, NodeAt(index, "p").Value), "an inline table with its braces");
+    CheckEquals(" x = 1,"s, Slice(text, NodeAt(index, "p.x").Item), "an entry with its comma");
+    CheckEquals(" y = 2"s, Slice(text, NodeAt(index, "p.y").Item), "the last entry, without a comma");
+    CheckEquals("1"s, Slice(text, NodeAt(index, "p.x").Value), "an entry's value");
+    CheckEquals(" }"s, Slice(text, NodeAt(index, "p").Close), "an inline table's closing brace");
+    CheckEquals("[]"s, Slice(text, NodeAt(index, "e").Value), "an empty array");
+    CheckEquals("]"s, Slice(text, NodeAt(index, "e").Close), "its closing bracket");
+    CheckEquals("{}"s, Slice(text, NodeAt(index, "t").Value), "an empty inline table");
+    CheckEquals("}"s, Slice(text, NodeAt(index, "t").Close), "its closing brace");
+    CheckEquals("[1]"s, Slice(text, NodeAt(index, "n[0]").Value), "an array in an array");
+    CheckEquals(" [1],"s, Slice(text, NodeAt(index, "n[0]").Item), "its item");
+    CheckEquals("1"s, Slice(text, NodeAt(index, "n[0][0]").Item), "an element of the inner array");
+    CheckEquals(" 2"s, Slice(text, NodeAt(index, "n[1]").Item), "the last element");
+    CheckEquals(" ]"s, Slice(text, NodeAt(index, "n").Close), "the text after the last element");
 }
 //---------------------------------------------------------------------------
 
@@ -3084,6 +3524,7 @@ ASW_TEST(TTest_ASWToml_DocumentToText, RoundTrip_ByteForByte)
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentErrors, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentFuzz, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentIndex, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentLookups, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentModel, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentParse, "Document")
