@@ -231,8 +231,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ignored, or for an enum without names its number; each value is read into a new `T{}`, and the
   first key or value that fails fails the map, with the key in `Path`, e.g. `port` or
   `"host name"[0]`; a key that reads as one the map already has, such as `Red` and `red`, is
-  `InvalidValue`; a map is written in its order, and an unordered map with its keys sorted). An
-  application adds its own by specializing the template in namespace `ASWToml`, for one type or,
-  with a requires clause, for a group of types.
+  `InvalidValue`; a map is written in its order, and an unordered map with its keys sorted), and
+  structs, as tables, through a list of their fields that the application declares next to the
+  struct (`ASWTomlFields()`, found by argument-dependent lookup, returning a `std::tuple` of
+  `Field("port", &TServer::Port)` and `OptionalField(...)`; a member of a base class and, through a
+  friend, a private member can be a field; a struct is read into a copy of `out`, so a key an
+  optional field lacks keeps what `out` held, a `std::optional` member is `std::nullopt` when its
+  key is missing and isn't written then, a missing key of any other field is `NotFound` ("The table
+  has no key port."), and keys the list doesn't name are ignored; it is written with every field in
+  the list's order, and a key named twice in the list is `InvalidValue`; so a `std::vector` of a
+  struct is an array of tables). An application adds its own by specializing the template in
+  namespace `ASWToml`, for one type or, with a requires clause, for a group of types.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

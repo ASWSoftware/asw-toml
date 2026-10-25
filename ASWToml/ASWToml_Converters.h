@@ -12,8 +12,9 @@ float, double, enums (by name when the application gives the enum names,
 see TASWTomlEnumName, else as integers), the TOML date and time types, the
 std::chrono dates, time points and times of day, std::vector, std::array,
 std::set, std::unordered_set, std::pair and std::tuple (as arrays) of the
-types with converters, and std::map and std::unordered_map (as tables) of
-them, with string, integer or enum keys; an application adds its own by
+types with converters, std::map and std::unordered_map (as tables) of them,
+with string, integer or enum keys, and structs whose fields the application
+lists (see TASWTomlField, as tables); an application adds its own by
 specializing TASWTomlConverter for its type.
 
 Requires C++ 20 or higher.
@@ -117,6 +118,55 @@ struct TASWTomlEnumName
     std::string_view Name;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlField
+//
+// One field of a struct that is converted as a table (see TASWTomlConverter<structs with fields>): the key it is at,
+// the member of TStruct (the struct or a base class of it) that holds its value, and whether the table may lack the
+// key. Made by Field() and OptionalField(). The application declares a function ASWTomlFields() next to the struct, in
+// the struct's namespace (or as a friend in the struct, which reaches its private members), so argument-dependent
+// lookup finds it. Its argument only selects it, and it returns a std::tuple of the struct's fields:
+//
+//     struct TServer
+//     {
+//         std::string Host;
+//         std::uint16_t Port = 80;
+//         bool Enabled = true;
+//         std::optional<std::string> Comment;
+//     };
+//
+//     inline auto ASWTomlFields(TServer const&)
+//     {
+//         return std::tuple{ ASWToml::Field("host", &TServer::Host), ASWToml::Field("port", &TServer::Port),
+//             ASWToml::OptionalField("enabled", &TServer::Enabled), ASWToml::Field("comment", &TServer::Comment) };
+//     }
+/////////////////////////////////////////////////////////////////////////////
+template <typename TStruct, typename TMember>
+struct TASWTomlField
+{
+    std::string_view Key;
+    TMember TStruct::* Member;
+    bool Optional;
+};
+
+//---------------------------------------------------------------------------
+
+// The field of a struct at 'key' whose value 'member' holds (see TASWTomlField). A table must have the key, unless the
+// member is a std::optional.
+template <typename TStruct, typename TMember>
+constexpr TASWTomlField<TStruct, TMember> Field(std::string_view key, TMember TStruct::* member) noexcept
+{
+    return TASWTomlField<TStruct, TMember>{ key, member, false };
+}
+
+// As Field(), for a key a table may lack: the member then keeps the value it had (a std::optional is std::nullopt)
+template <typename TStruct, typename TMember>
+constexpr TASWTomlField<TStruct, TMember> OptionalField(std::string_view key, TMember TStruct::* member) noexcept
+{
+    return TASWTomlField<TStruct, TMember>{ key, member, true };
+}
+
 //---------------------------------------------------------------------------
 // Internals of the library: the helpers of the converters' templates. Not part of the public interface.
 //---------------------------------------------------------------------------
@@ -136,6 +186,13 @@ using TToValueResult = decltype(TASWTomlConverter<T>::ToValue(std::declval<T con
 template <typename T>
 using TEnumNamesResult = decltype(ASWTomlEnumNames(std::declval<T>()));
 
+// The type ASWTomlFields() returns for T, found by argument-dependent lookup (see TASWTomlField)
+template <typename T>
+using TFieldsResult = decltype(ASWTomlFields(std::declval<T const&>()));
+
+// The keys of a struct's fields, in the order listed (see RepeatedFieldKey())
+using TFieldKeyVector = std::vector<std::string_view>;
+
 // The names of an enum's values, as a message lists them
 using TNameVector = std::vector<std::string_view>;
 
@@ -152,6 +209,31 @@ struct TKeyConverter;
 
 // The longest part of a value's text a message shows (see ValueText())
 constexpr std::size_t MaxValueTextSize = 40;
+
+// Whether TFields is a std::tuple of TASWTomlFields whose members are of T or of a base class of it, which
+// ASWTomlFields() returns for a struct T (value)
+template <typename T, typename TFields>
+struct TIsFieldTuple : std::false_type
+{
+};
+
+template <typename T, typename ... TStruct, typename ... TMember>
+struct TIsFieldTuple<T, std::tuple<TASWTomlField<TStruct, TMember>...> >
+    : std::bool_constant<(std::is_base_of_v<TStruct, T> && ...)>
+{
+};
+
+// Whether T is a std::optional (value), and the type it holds (TItem)
+template <typename T>
+struct TIsOptional : std::false_type
+{
+};
+
+template <typename T>
+struct TIsOptional<std::optional<T> > : std::true_type
+{
+    using TItem = T;
+};
 
 // Whether T is one of the integer types TASWTomlConverter converts as TOML integers: an integral type of at most 64
 // bits, without const or volatile, other than bool, plain char and the wide and Unicode character types
@@ -173,6 +255,12 @@ concept EnumWithoutNames = std::is_enum_v<T> && std::same_as<T, std::remove_cv_t
 template <typename K>
 concept ConvertibleKey = std::same_as<K, std::string> || ConvertibleInteger<K> || EnumWithNames<K> ||
     EnumWithoutNames<K>;
+
+// Whether T is a class, without const or volatile, for which argument-dependent lookup finds ASWTomlFields() (see
+// TASWTomlField), returning a std::tuple of its fields
+template <typename T>
+concept StructWithFields = std::is_class_v<T> && std::same_as<T, std::remove_cv_t<T> > &&
+    requires { typename TFieldsResult<T>; } && TIsFieldTuple<T, std::remove_cvref_t<TFieldsResult<T> > >::value;
 
 // The ValueOutOfRange result of reading 'value', an offset date-time, a local date-time or a local time, as a type
 // that counts in 'unit' and can't hold it: the message gives the first and last values the unit's count holds, as far
@@ -220,6 +308,10 @@ TASWTomlResult KeyFailure(TASWTomlResult result, std::string_view key);
 // std::pair or a std::tuple): "The value [1, 2] has 2 elements, not 3."
 TASWTomlResult LengthMismatch(TASWTomlValue const& value, std::size_t length);
 
+// The NotFound result of a struct reading a table that lacks 'key', the key of a field that isn't optional: "The
+// table has no key port."
+TASWTomlResult MissingKey(std::string_view key);
+
 // The InvalidValue result of a set reading 'element', an element of an array that reads as an element the set already
 // has (e.g. 1 twice, or "red" after "Red" for an enum with names): "The value 1 reads as an element the set already
 // has."
@@ -231,6 +323,11 @@ TASWTomlResult RepeatedElement(TASWTomlValue const& element);
 // ASWTomlEnumNames()."), which names the same key whatever the table's order (an unordered map's isn't fixed): of
 // the first such keys, the second in byte order (red, after Red)
 TASWTomlResult RepeatedEnumKey(TASWTomlValue::TKeyValueVector const& table);
+
+// Checks 'keys', the keys of a struct's fields: Ok, or InvalidValue for the first key named twice, since a table can't
+// hold it twice ("The key port is named by two fields of the struct's ASWTomlFields(): each field needs a key of its
+// own.")
+TASWTomlResult RepeatedFieldKey(TFieldKeyVector const& keys);
 
 // The InvalidValue result of a map reading 'key', a key of a table that reads as a key the map already has (e.g. red
 // after Red for an enum with names): "The key red reads as a key the map already has."
@@ -303,6 +400,80 @@ TASWTomlResult ArrayToValue(TElements const& elements, TASWTomlValue& value, TAS
     value = TASWTomlValue(std::move(array));
 
     return TASWTomlResult();
+}
+
+// Reads the value of 'field', a field of the struct T (see TASWTomlField), in 'table' into its member of 'read' by
+// TASWTomlConverter (a std::optional<M> member as M): a key the table lacks leaves the member as it was for an
+// optional field, makes a std::optional member std::nullopt, and fails with NotFound for any other field (see
+// MissingKey()); a value that fails fails with the key in front of its Path (see KeyFailure())
+template <typename T, typename TStruct, typename TMember>
+TASWTomlResult FieldFromTable(TASWTomlField<TStruct, TMember> const& field, TASWTomlValue const& table, T& read,
+    TASWTomlValueOptions const& options)
+{
+    TMember& member = read.*field.Member;
+    TASWTomlValue const* const value = table.Find(field.Key);
+    TASWTomlResult result;
+    if constexpr (TIsOptional<TMember>::value)
+    {
+        if (value == nullptr)
+        {
+            member.reset();
+            return result;
+        }
+
+        // Read into the value it holds, so a struct keeps what the table lacks
+        if (!member)
+            member.emplace();
+
+        result = TASWTomlConverter<typename TIsOptional<TMember>::TItem>::FromValue(*value, *member, options);
+    }
+    else
+    {
+        if (value == nullptr)
+        {
+            if (field.Optional)
+                return result;
+
+            return KeyFailure(MissingKey(field.Key), field.Key);
+        }
+
+        result = TASWTomlConverter<TMember>::FromValue(*value, member, options);
+    }
+
+    if (!result.IsOk())
+        return KeyFailure(std::move(result), field.Key);
+
+    return result;
+}
+
+// Adds the key of 'field', a field of the struct T (see TASWTomlField), to 'table', with its member's value in 'in'
+// written by TASWTomlConverter (a std::optional<M> member as M, and not at all when it is std::nullopt), or fails as
+// TextToKey() for a key that isn't valid UTF-8, or as the value, with the key in front of its Path (see KeyFailure())
+template <typename T, typename TStruct, typename TMember>
+TASWTomlResult FieldToTable(TASWTomlField<TStruct, TMember> const& field, T const& in,
+    TASWTomlValue::TKeyValueVector& table, TASWTomlValueOptions const& options)
+{
+    TMember const& member = in.*field.Member;
+    if constexpr (TIsOptional<TMember>::value)
+    {
+        if (!member)
+            return TASWTomlResult();
+    }
+
+    TASWTomlKeyValue& entry = table.emplace_back();
+    TASWTomlResult result = TextToKey(field.Key, entry.Key);
+    if (!result.IsOk())
+        return result;
+
+    if constexpr (TIsOptional<TMember>::value)
+        result = TASWTomlConverter<typename TIsOptional<TMember>::TItem>::ToValue(*member, entry.Value, options);
+    else
+        result = TASWTomlConverter<TMember>::ToValue(member, entry.Value, options);
+
+    if (!result.IsOk())
+        return KeyFailure(std::move(result), field.Key);
+
+    return result;
 }
 
 // Reads 'value', a table, into 'read', an empty map, each key by TKeyConverter and its value into a new T{} by
@@ -1387,6 +1558,116 @@ struct TASWTomlConverter<std::vector<T, TAllocator> >
         TASWTomlValueOptions const& options)
     {
         return Detail::ArrayToValue<T>(in, value, options);
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<structs with fields>
+//
+// A class for which argument-dependent lookup finds ASWTomlFields() (see TASWTomlField), as a table of its fields'
+// keys, each member converted by its type's converter, which it must have (a compile error names a member type
+// without one), and a std::optional<M> member as M. So a std::vector of the struct is an array of tables. Reads a
+// table (any other type is TypeMismatch) into a copy of 'out', field by field in the order listed, and moves the copy
+// into 'out' when every field read: a key the table lacks leaves its member as 'out' held it for an optional field
+// (OptionalField()), makes a std::optional member std::nullopt, and is NotFound for any other field ("The table has no
+// key port.", with the key in Path). Keys the fields don't name are ignored, so a file a newer version wrote still
+// reads. The first field whose value fails fails the struct, with its key in front of its Path (port, or
+// servers[1].port for a field of an element of its value), and leaves 'out' as it was. Writes a table of every field
+// in the order listed, an optional one too, but not a std::optional member that is std::nullopt. A key named by two
+// fields is InvalidValue ("The key port is named by two fields of the struct's ASWTomlFields(): each field needs a key
+// of its own."), and so is a key that isn't valid UTF-8, without a Path. A class derived from one with
+// ASWTomlFields() uses that list, unless it declares its own.
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::StructWithFields T>
+struct TASWTomlConverter<T>
+{
+private:
+    using TFields = std::remove_cvref_t<Detail::TFieldsResult<T> >;
+
+    static constexpr std::size_t Size = std::tuple_size_v<TFields>;
+
+    // Adds the keys of 'fields' from the index I on to 'keys'
+    template <std::size_t I>
+    static void FieldKeys(TFields const& fields, Detail::TFieldKeyVector& keys)
+    {
+        if constexpr (I < Size)
+        {
+            keys.push_back(std::get<I>(fields).Key);
+            FieldKeys<I + 1>(fields, keys);
+        }
+    }
+
+    // Reads the fields of 'fields' from the index I on from 'table' into 'read', or fails as the first one that fails
+    template <std::size_t I>
+    static TASWTomlResult FieldsFromTable(TFields const& fields, TASWTomlValue const& table, T& read,
+        TASWTomlValueOptions const& options)
+    {
+        if constexpr (I == Size)
+        {
+            return TASWTomlResult();
+        }
+        else
+        {
+            TASWTomlResult result = Detail::FieldFromTable(std::get<I>(fields), table, read, options);
+            if (!result.IsOk())
+                return result;
+
+            return FieldsFromTable<I + 1>(fields, table, read, options);
+        }
+    }
+
+    // Adds the fields of 'fields' from the index I on of 'in' to 'table', or fails as the first one that fails
+    template <std::size_t I>
+    static TASWTomlResult FieldsToTable(TFields const& fields, T const& in, TASWTomlValue::TKeyValueVector& table,
+        TASWTomlValueOptions const& options)
+    {
+        if constexpr (I == Size)
+        {
+            return TASWTomlResult();
+        }
+        else
+        {
+            TASWTomlResult result = Detail::FieldToTable(std::get<I>(fields), in, table, options);
+            if (!result.IsOk())
+                return result;
+
+            return FieldsToTable<I + 1>(fields, in, table, options);
+        }
+    }
+
+public:
+    static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& options)
+    {
+        if (!value.IsTable())
+            return Detail::TypeMismatch(value, "a table");
+
+        // The fields read into a copy, so those the table lacks keep what 'out' held
+        T read = out;
+        TASWTomlResult result = FieldsFromTable<0>(ASWTomlFields(out), value, read, options);
+        if (result.IsOk())
+            out = std::move(read);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(T const& in, TASWTomlValue& value, TASWTomlValueOptions const& options)
+    {
+        auto const& fields = ASWTomlFields(in);
+        Detail::TFieldKeyVector keys;
+        keys.reserve(Size);
+        FieldKeys<0>(fields, keys);
+        TASWTomlResult result = Detail::RepeatedFieldKey(keys);
+        if (!result.IsOk())
+            return result;
+
+        TASWTomlValue::TKeyValueVector table;
+        table.reserve(Size);
+        result = FieldsToTable<0>(fields, in, table, options);
+        if (result.IsOk())
+            value = TASWTomlValue(std::move(table));
+
+        return result;
     }
 };
 

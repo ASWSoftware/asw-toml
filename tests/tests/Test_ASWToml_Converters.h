@@ -202,6 +202,35 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_StructConverters
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_StructConverters : public TAutoTestGroup<TTest_ASWToml_StructConverters>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_StructConverters> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_EveryType_RefusesWhatIsntATable();
+    void Test_Fields_OfABaseClassAndPrivateMembers();
+    void Test_FromValue_FailsAtTheFirstFieldThatFails();
+    void Test_FromValue_ReadsEachFieldIntoACopy();
+    void Test_OptionalStruct_ReadsIntoTheValueItHolds();
+    void Test_RoundTrip_EveryType_ThroughADocument();
+    void Test_ToValue_FailsForAKeyOrValueThatCantBeWritten();
+    void Test_ToValue_WritesEveryFieldInTheListsOrder();
+
+public:
+    TTest_ASWToml_StructConverters();
+    ~TTest_ASWToml_StructConverters() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_TableConverters
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_TableConverters : public TAutoTestGroup<TTest_ASWToml_TableConverters>

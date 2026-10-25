@@ -604,6 +604,11 @@ TASWTomlResult Detail::LengthMismatch(TASWTomlValue const& value, std::size_t le
     return ValueFailure(ETomlCode::InvalidValue, value, problem);
 }
 //---------------------------------------------------------------------------
+TASWTomlResult Detail::MissingKey(std::string_view key)
+{
+    return Failure(ETomlCode::NotFound, "The table has no key " + Shortened(KeyPart(key)) + ".");
+}
+//---------------------------------------------------------------------------
 TASWTomlResult Detail::RepeatedElement(TASWTomlValue const& element)
 {
     return ValueFailure(ETomlCode::InvalidValue, element, "reads as an element the set already has.");
@@ -631,6 +636,24 @@ TASWTomlResult Detail::RepeatedEnumKey(TASWTomlValue::TKeyValueVector const& tab
         {
             return FailedKey(ETomlCode::InvalidValue, keys[i].second, "names two values of the enum, which would read "
                 "back as one: each value needs a name of its own in ASWTomlEnumNames().");
+        }
+    }
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::RepeatedFieldKey(TFieldKeyVector const& keys)
+{
+    // A struct has a few fields, so each key is compared with those before it
+    for (std::size_t i = 1; i < keys.size(); ++i)
+    {
+        for (std::size_t j = 0; j < i; ++j)
+        {
+            if (keys[j] == keys[i])
+            {
+                return FailedKey(ETomlCode::InvalidValue, keys[i], "is named by two fields of the struct's "
+                    "ASWTomlFields(): each field needs a key of its own.");
+            }
         }
     }
 
