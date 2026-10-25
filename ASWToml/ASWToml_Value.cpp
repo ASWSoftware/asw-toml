@@ -19,6 +19,8 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <utility>
 //---------------------------------------------------------------------------
 
@@ -28,19 +30,77 @@ namespace ASWToml
 namespace
 {
 
+// The seconds from 1970-01-01T00:00:00 to the first and last seconds TOML writes: 0000-01-01T00:00:00 and
+// 9999-12-31T23:59:59
+constexpr std::int64_t FirstSecond = -62167219200;
+constexpr std::int64_t LastSecond = 253402300799;
+
 // The largest offset from UTC, in minutes: 23:59
 constexpr std::int64_t MaxOffsetMinutes = 23 * 60 + 59;
 
 constexpr std::int64_t NanosecondsPerSecond = 1000000000;
 constexpr std::int64_t SecondsPerDay = 24 * 60 * 60;
 
+bool CountFromSeconds(std::int64_t seconds, std::int64_t nanoseconds, Detail::TDurationUnit const& unit,
+    std::int64_t& count) noexcept;
 std::int64_t FloorDivide(std::int64_t value, std::int64_t divisor) noexcept;
 bool IsValidDate(std::chrono::year_month_day const& date) noexcept;
-std::optional<std::chrono::nanoseconds> SecondsToNanoseconds(std::int64_t seconds, std::int64_t fraction) noexcept;
-void SplitNanoseconds(std::int64_t nanoseconds, std::int64_t& seconds, std::int64_t& fraction) noexcept;
-void SplitSeconds(std::int64_t seconds, std::int64_t fraction, std::chrono::year_month_day& date,
+std::int64_t LocalSeconds(std::chrono::year_month_day const& date, TASWTomlLocalTime const& time) noexcept;
+bool SecondsFromCount(std::int64_t count, Detail::TDurationUnit const& unit, std::int64_t& seconds,
+    std::int64_t& nanoseconds) noexcept;
+bool SplitSeconds(std::int64_t seconds, std::int64_t nanoseconds, std::chrono::year_month_day& date,
     TASWTomlLocalTime& time) noexcept;
+TASWTomlLocalTime TimeOfDay(std::int64_t secondOfDay, std::int64_t nanoseconds) noexcept;
 
+//---------------------------------------------------------------------------
+/*
+    CountFromSeconds
+
+    Sets 'count' to 'seconds' plus 'nanoseconds' (0 to 999999999) since 1970 as a count of 'unit', rounded down; false
+    (and 'count' unchanged) when the count is outside the unit's range
+*/
+bool CountFromSeconds(std::int64_t seconds, std::int64_t nanoseconds, Detail::TDurationUnit const& unit,
+    std::int64_t& count) noexcept
+{
+    std::int64_t result = 0;
+    if (unit.Den == 1)
+    {
+        // A unit of whole seconds: the fraction (under a second) can't change the seconds rounded down to it
+        result = FloorDivide(seconds, unit.Num);
+    }
+    else
+    {
+        // A fraction of a second: seconds * Den plus the units in 'nanoseconds', if that is from Min to Max, worked
+        // out without overflowing
+        std::int64_t const units = nanoseconds / (NanosecondsPerSecond / unit.Den);
+        if (seconds >= 0)
+        {
+            std::int64_t const last = unit.Max / unit.Den;
+            if (seconds > last || (seconds == last && units > unit.Max % unit.Den))
+                return false;
+
+            result = seconds * unit.Den + units;
+        }
+        else
+        {
+            // Min is first * Den + Min % Den (a remainder from 1 - Den to 0), so the second before 'first' still fits
+            // when its units make up for the remainder
+            std::int64_t const first = unit.Min / unit.Den;
+            if (seconds < first - 1 || (seconds == first - 1 && units - unit.Min % unit.Den < unit.Den))
+                return false;
+
+            // From the second above, since seconds * Den itself may not fit
+            result = (seconds + 1) * unit.Den + (units - unit.Den);
+        }
+    }
+
+    if (result < unit.Min || result > unit.Max)
+        return false;
+
+    count = result;
+
+    return true;
+}
 //---------------------------------------------------------------------------
 /*
     FloorDivide
@@ -69,64 +129,92 @@ bool IsValidDate(std::chrono::year_month_day const& date) noexcept
 }
 //---------------------------------------------------------------------------
 /*
-    SecondsToNanoseconds
+    LocalSeconds
 
-    'seconds' plus 'fraction' nanoseconds (0 to 999999999) as one count of nanoseconds; std::nullopt if it doesn't fit
-    in std::chrono::nanoseconds
+    The seconds from 1970-01-01T00:00:00 to 'date' at 'time', a valid date and time (second 60 is the next minute's
+    second 0)
 */
-std::optional<std::chrono::nanoseconds> SecondsToNanoseconds(std::int64_t seconds, std::int64_t fraction) noexcept
+std::int64_t LocalSeconds(std::chrono::year_month_day const& date, TASWTomlLocalTime const& time) noexcept
 {
-    // The limits as whole seconds and a fraction, worked out without overflowing
-    std::int64_t maxSeconds = 0;
-    std::int64_t maxFraction = 0;
-    std::int64_t minSeconds = 0;
-    std::int64_t minFraction = 0;
-    SplitNanoseconds(std::chrono::nanoseconds::max().count(), maxSeconds, maxFraction);
-    SplitNanoseconds(std::chrono::nanoseconds::min().count(), minSeconds, minFraction);
+    // In 64 bits: std::chrono::days, hours and minutes count in 32 bits with libc++ and MSVC
+    std::int64_t const dayCount = static_cast<std::int64_t>(std::chrono::sys_days(date).time_since_epoch().count());
 
-    if (seconds > maxSeconds || (seconds == maxSeconds && fraction > maxFraction))
-        return std::nullopt;
-
-    if (seconds < minSeconds || (seconds == minSeconds && fraction < minFraction))
-        return std::nullopt;
-
-    // A negative count is built from the second above it, since minSeconds * 10^9 itself doesn't fit
-    if (seconds < 0)
-        return std::chrono::nanoseconds((seconds + 1) * NanosecondsPerSecond + (fraction - NanosecondsPerSecond));
-
-    return std::chrono::nanoseconds(seconds * NanosecondsPerSecond + fraction);
+    return dayCount * SecondsPerDay + static_cast<std::int64_t>(time.Hour.count()) * 3600 +
+        static_cast<std::int64_t>(time.Minute.count()) * 60 + static_cast<std::int64_t>(time.Second.count());
 }
 //---------------------------------------------------------------------------
 /*
-    SplitNanoseconds
+    SecondsFromCount
 
-    'nanoseconds' as whole seconds, rounded down, and the nanoseconds left over (0 to 999999999)
+    Sets 'seconds' and 'nanoseconds' (0 to 999999999) to the time 'count' units of 'unit' are, rounded down to whole
+    seconds, and what is left of it; false (and both unchanged) when the seconds don't fit in 64 bits
 */
-void SplitNanoseconds(std::int64_t nanoseconds, std::int64_t& seconds, std::int64_t& fraction) noexcept
+bool SecondsFromCount(std::int64_t count, Detail::TDurationUnit const& unit, std::int64_t& seconds,
+    std::int64_t& nanoseconds) noexcept
 {
-    seconds = nanoseconds / NanosecondsPerSecond;
-    fraction = nanoseconds % NanosecondsPerSecond;
-    if (fraction < 0)
+    if (unit.Den == 1)
     {
-        fraction += NanosecondsPerSecond;
-        --seconds;
+        if (count > std::numeric_limits<std::int64_t>::max() / unit.Num ||
+            count < std::numeric_limits<std::int64_t>::min() / unit.Num)
+        {
+            return false;
+        }
+
+        seconds = count * unit.Num;
+        nanoseconds = 0;
+
+        return true;
     }
+
+    // Without multiplying back (the seconds times Den may not fit)
+    std::int64_t whole = count / unit.Den;
+    std::int64_t rest = count % unit.Den;
+    if (rest < 0)
+    {
+        rest += unit.Den;
+        --whole;
+    }
+
+    seconds = whole;
+    nanoseconds = rest * (NanosecondsPerSecond / unit.Den);
+
+    return true;
 }
 //---------------------------------------------------------------------------
 /*
     SplitSeconds
 
-    The date and time of day 'seconds' plus 'fraction' nanoseconds after 1970-01-01T00:00:00
+    Sets 'date' and 'time' to the date and time of day 'seconds' plus 'nanoseconds' (0 to 999999999) after
+    1970-01-01T00:00:00; false (and both unchanged) when that is outside the years 0 to 9999
 */
-void SplitSeconds(std::int64_t seconds, std::int64_t fraction, std::chrono::year_month_day& date,
+bool SplitSeconds(std::int64_t seconds, std::int64_t nanoseconds, std::chrono::year_month_day& date,
     TASWTomlLocalTime& time) noexcept
 {
-    std::int64_t const dayCount = FloorDivide(seconds, SecondsPerDay);
-    std::int64_t const secondOfDay = seconds - dayCount * SecondsPerDay;
+    if (seconds < FirstSecond || seconds > LastSecond)
+        return false;
 
+    std::int64_t const dayCount = FloorDivide(seconds, SecondsPerDay);
     date = std::chrono::year_month_day(std::chrono::sys_days(
         std::chrono::days(static_cast<std::chrono::days::rep>(dayCount))));
-    time = TASWTomlLocalTime::FromDuration(std::chrono::seconds(secondOfDay) + std::chrono::nanoseconds(fraction));
+    time = TimeOfDay(seconds - dayCount * SecondsPerDay, nanoseconds);
+
+    return true;
+}
+//---------------------------------------------------------------------------
+/*
+    TimeOfDay
+
+    The time 'secondOfDay' (0 to 86399) plus 'nanoseconds' (0 to 999999999) after midnight
+*/
+TASWTomlLocalTime TimeOfDay(std::int64_t secondOfDay, std::int64_t nanoseconds) noexcept
+{
+    TASWTomlLocalTime time;
+    time.Hour = std::chrono::hours(static_cast<std::chrono::hours::rep>(secondOfDay / 3600));
+    time.Minute = std::chrono::minutes(static_cast<std::chrono::minutes::rep>(secondOfDay / 60 % 60));
+    time.Second = std::chrono::seconds(static_cast<std::chrono::seconds::rep>(secondOfDay % 60));
+    time.Fraction = std::chrono::nanoseconds(static_cast<std::chrono::nanoseconds::rep>(nanoseconds));
+
+    return time;
 }
 //---------------------------------------------------------------------------
 
@@ -224,6 +312,105 @@ bool Detail::IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& rig
     return left == right;
 }
 //---------------------------------------------------------------------------
+bool Detail::LocalDateTimeFromCount(std::int64_t count, TDurationUnit const& unit,
+    TASWTomlLocalDateTime& dateTime) noexcept
+{
+    std::int64_t seconds = 0;
+    std::int64_t nanoseconds = 0;
+    if (!SecondsFromCount(count, unit, seconds, nanoseconds))
+        return false;
+
+    TASWTomlLocalDateTime result;
+    if (!SplitSeconds(seconds, nanoseconds, result.Date, result.Time))
+        return false;
+
+    dateTime = result;
+
+    return true;
+}
+//---------------------------------------------------------------------------
+bool Detail::LocalDateTimeToCount(TASWTomlLocalDateTime const& dateTime, TDurationUnit const& unit,
+    std::int64_t& count) noexcept
+{
+    if (!dateTime.IsValid())
+        return false;
+
+    return CountFromSeconds(LocalSeconds(dateTime.Date, dateTime.Time),
+        static_cast<std::int64_t>(dateTime.Time.Fraction.count()), unit, count);
+}
+//---------------------------------------------------------------------------
+void Detail::LocalTimeFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalTime& time) noexcept
+{
+    std::int64_t secondOfDay = 0;
+    std::int64_t nanoseconds = 0;
+    if (unit.Den == 1)
+    {
+        // count * Num modulo a day, from the remainders of both, since the product itself may not fit
+        secondOfDay = count % SecondsPerDay * (unit.Num % SecondsPerDay) % SecondsPerDay;
+    }
+    else
+    {
+        // A fraction of a second always gives seconds that fit
+        std::int64_t seconds = 0;
+        static_cast<void>(SecondsFromCount(count, unit, seconds, nanoseconds));
+        secondOfDay = seconds % SecondsPerDay;
+    }
+
+    if (secondOfDay < 0)
+        secondOfDay += SecondsPerDay;
+
+    time = TimeOfDay(secondOfDay, nanoseconds);
+}
+//---------------------------------------------------------------------------
+bool Detail::LocalTimeToCount(TASWTomlLocalTime const& time, TDurationUnit const& unit, std::int64_t& count) noexcept
+{
+    if (!time.IsValid())
+        return false;
+
+    std::int64_t const seconds = static_cast<std::int64_t>(time.Hour.count()) * 3600 +
+        static_cast<std::int64_t>(time.Minute.count()) * 60 + static_cast<std::int64_t>(time.Second.count());
+
+    return CountFromSeconds(seconds, static_cast<std::int64_t>(time.Fraction.count()), unit, count);
+}
+//---------------------------------------------------------------------------
+bool Detail::OffsetDateTimeFromCount(std::int64_t count, TDurationUnit const& unit, std::chrono::minutes offset,
+    TASWTomlOffsetDateTime& dateTime) noexcept
+{
+    std::int64_t const offsetMinutes = static_cast<std::int64_t>(offset.count());
+    if (offsetMinutes < -MaxOffsetMinutes || offsetMinutes > MaxOffsetMinutes)
+        return false;
+
+    std::int64_t seconds = 0;
+    std::int64_t nanoseconds = 0;
+    if (!SecondsFromCount(count, unit, seconds, nanoseconds))
+        return false;
+
+    // Far outside the years 0 to 9999 even at the offset, which then can't overflow when it is added
+    if (seconds < FirstSecond - SecondsPerDay || seconds > LastSecond + SecondsPerDay)
+        return false;
+
+    TASWTomlOffsetDateTime result;
+    if (!SplitSeconds(seconds + offsetMinutes * 60, nanoseconds, result.Date, result.Time))
+        return false;
+
+    result.Offset = offset;
+    dateTime = result;
+
+    return true;
+}
+//---------------------------------------------------------------------------
+bool Detail::OffsetDateTimeToCount(TASWTomlOffsetDateTime const& dateTime, TDurationUnit const& unit,
+    std::int64_t& count) noexcept
+{
+    if (!dateTime.IsValid())
+        return false;
+
+    std::int64_t const seconds = LocalSeconds(dateTime.Date, dateTime.Time) -
+        static_cast<std::int64_t>(dateTime.Offset.count()) * 60;
+
+    return CountFromSeconds(seconds, static_cast<std::int64_t>(dateTime.Time.Fraction.count()), unit, count);
+}
+//---------------------------------------------------------------------------
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -231,38 +418,11 @@ bool Detail::IdenticalValues(TASWTomlValue const& left, TASWTomlValue const& rig
 /////////////////////////////////////////////////////////////////////////////
 
 //---------------------------------------------------------------------------
-TASWTomlLocalTime TASWTomlLocalTime::FromDuration(std::chrono::nanoseconds sinceMidnight) noexcept
-{
-    std::chrono::nanoseconds const day = std::chrono::hours(24);
-    std::chrono::nanoseconds rest = sinceMidnight % day;
-    if (rest < std::chrono::nanoseconds::zero())
-        rest += day;
-
-    TASWTomlLocalTime time;
-    time.Hour = std::chrono::duration_cast<std::chrono::hours>(rest);
-    rest -= time.Hour;
-    time.Minute = std::chrono::duration_cast<std::chrono::minutes>(rest);
-    rest -= time.Minute;
-    time.Second = std::chrono::duration_cast<std::chrono::seconds>(rest);
-    rest -= time.Second;
-    time.Fraction = rest;
-
-    return time;
-}
-//---------------------------------------------------------------------------
 bool TASWTomlLocalTime::IsValid() const noexcept
 {
     return Hour >= std::chrono::hours(0) && Hour <= std::chrono::hours(23) && Minute >= std::chrono::minutes(0) &&
         Minute <= std::chrono::minutes(59) && Second >= std::chrono::seconds(0) && Second <= std::chrono::seconds(60) &&
         Fraction >= std::chrono::nanoseconds(0) && Fraction < std::chrono::seconds(1);
-}
-//---------------------------------------------------------------------------
-std::optional<std::chrono::nanoseconds> TASWTomlLocalTime::ToDuration() const noexcept
-{
-    if (!IsValid())
-        return std::nullopt;
-
-    return Hour + Minute + Second + Fraction;
 }
 //---------------------------------------------------------------------------
 
@@ -272,37 +432,9 @@ std::optional<std::chrono::nanoseconds> TASWTomlLocalTime::ToDuration() const no
 /////////////////////////////////////////////////////////////////////////////
 
 //---------------------------------------------------------------------------
-TASWTomlLocalDateTime TASWTomlLocalDateTime::FromLocalTime(
-    std::chrono::local_time<std::chrono::nanoseconds> localTime) noexcept
-{
-    std::int64_t seconds = 0;
-    std::int64_t fraction = 0;
-    SplitNanoseconds(localTime.time_since_epoch().count(), seconds, fraction);
-
-    TASWTomlLocalDateTime dateTime;
-    SplitSeconds(seconds, fraction, dateTime.Date, dateTime.Time);
-
-    return dateTime;
-}
-//---------------------------------------------------------------------------
 bool TASWTomlLocalDateTime::IsValid() const noexcept
 {
     return IsValidDate(Date) && Time.IsValid();
-}
-//---------------------------------------------------------------------------
-std::optional<std::chrono::local_time<std::chrono::nanoseconds> > TASWTomlLocalDateTime::ToLocalTime() const noexcept
-{
-    if (!IsValid())
-        return std::nullopt;
-
-    std::int64_t const dayCount = std::chrono::local_days(Date).time_since_epoch().count();
-    std::int64_t const seconds = dayCount * SecondsPerDay + Time.Hour.count() * 3600 + Time.Minute.count() * 60 +
-        Time.Second.count();
-    std::optional<std::chrono::nanoseconds> const sinceEpoch = SecondsToNanoseconds(seconds, Time.Fraction.count());
-    if (!sinceEpoch)
-        return std::nullopt;
-
-    return std::chrono::local_time<std::chrono::nanoseconds>(*sinceEpoch);
 }
 //---------------------------------------------------------------------------
 
@@ -312,42 +444,10 @@ std::optional<std::chrono::local_time<std::chrono::nanoseconds> > TASWTomlLocalD
 /////////////////////////////////////////////////////////////////////////////
 
 //---------------------------------------------------------------------------
-std::optional<TASWTomlOffsetDateTime> TASWTomlOffsetDateTime::FromSysTime(
-    std::chrono::sys_time<std::chrono::nanoseconds> utc, std::chrono::minutes offset) noexcept
-{
-    if (offset.count() < -MaxOffsetMinutes || offset.count() > MaxOffsetMinutes)
-        return std::nullopt;
-
-    std::int64_t seconds = 0;
-    std::int64_t fraction = 0;
-    SplitNanoseconds(utc.time_since_epoch().count(), seconds, fraction);
-
-    TASWTomlOffsetDateTime dateTime;
-    SplitSeconds(seconds + offset.count() * 60, fraction, dateTime.Date, dateTime.Time);
-    dateTime.Offset = offset;
-
-    return dateTime;
-}
-//---------------------------------------------------------------------------
 bool TASWTomlOffsetDateTime::IsValid() const noexcept
 {
     return IsValidDate(Date) && Time.IsValid() && Offset.count() >= -MaxOffsetMinutes &&
         Offset.count() <= MaxOffsetMinutes;
-}
-//---------------------------------------------------------------------------
-std::optional<std::chrono::sys_time<std::chrono::nanoseconds> > TASWTomlOffsetDateTime::ToSysTime() const noexcept
-{
-    if (!IsValid())
-        return std::nullopt;
-
-    std::int64_t const dayCount = std::chrono::sys_days(Date).time_since_epoch().count();
-    std::int64_t const seconds = dayCount * SecondsPerDay + Time.Hour.count() * 3600 + Time.Minute.count() * 60 +
-        Time.Second.count() - Offset.count() * 60;
-    std::optional<std::chrono::nanoseconds> const sinceEpoch = SecondsToNanoseconds(seconds, Time.Fraction.count());
-    if (!sinceEpoch)
-        return std::nullopt;
-
-    return std::chrono::sys_time<std::chrono::nanoseconds>(*sinceEpoch);
 }
 //---------------------------------------------------------------------------
 

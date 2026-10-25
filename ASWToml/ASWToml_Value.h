@@ -31,6 +31,7 @@ SPDX-License-Identifier: MIT
 #include <chrono>
 #include <concepts>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -57,6 +58,94 @@ enum class ETomlType : int
     Table = 9, // TASWTomlValue::TKeyValueVector
 };
 
+struct TASWTomlLocalDateTime;
+struct TASWTomlLocalTime;
+struct TASWTomlOffsetDateTime;
+
+//---------------------------------------------------------------------------
+// Internals of the library: the conversions of the date and time types to and from std::chrono durations and time
+// points, which their templates call. Not part of the public interface.
+//---------------------------------------------------------------------------
+namespace Detail
+{
+
+// Whether T is a std::chrono::duration
+template <typename T>
+struct TIsDuration : std::false_type
+{
+};
+
+template <typename TRep, typename TPeriod>
+struct TIsDuration<std::chrono::duration<TRep, TPeriod> > : std::true_type
+{
+};
+
+// A duration the date and time types convert to and from: a std::chrono::duration with a signed integer count of at
+// most 64 bits, whose unit is a whole number of seconds (seconds, minutes, hours, days, weeks, years) or a second
+// divided by a number that divides 10^9 (milliseconds, microseconds, nanoseconds, or the 100 ns of MSVC's
+// system_clock)
+template <typename T>
+concept TomlDuration = TIsDuration<T>::value && std::signed_integral<typename T::rep> &&
+    (sizeof(typename T::rep) <= sizeof(std::int64_t)) &&
+    (T::period::den == 1 || (T::period::num == 1 && 1000000000 % T::period::den == 0));
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TDurationUnit
+//
+// The unit of a TomlDuration's count, Num / Den seconds (Den is 1, or Num is 1), and the range of its count
+/////////////////////////////////////////////////////////////////////////////
+struct TDurationUnit
+{
+    std::int64_t Num = 1;
+    std::int64_t Den = 1;
+    std::int64_t Min = 0; // The smallest count
+    std::int64_t Max = 0; // The largest count
+};
+
+// The unit and range of the count of 'Duration'
+template <TomlDuration Duration>
+constexpr TDurationUnit DurationUnit() noexcept
+{
+    TDurationUnit unit;
+    unit.Num = static_cast<std::int64_t>(Duration::period::num);
+    unit.Den = static_cast<std::int64_t>(Duration::period::den);
+    unit.Min = static_cast<std::int64_t>(std::numeric_limits<typename Duration::rep>::min());
+    unit.Max = static_cast<std::int64_t>(std::numeric_limits<typename Duration::rep>::max());
+
+    return unit;
+}
+
+// Sets 'dateTime' to the date and time 'count' units of 'unit' after 1970-01-01T00:00:00; false (and 'dateTime'
+// unchanged) when that is outside the years 0 to 9999
+bool LocalDateTimeFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalDateTime& dateTime) noexcept;
+
+// Sets 'count' to the units of 'unit' from 1970-01-01T00:00:00 to 'dateTime' (second 60 is the next minute's second
+// 0), rounded down; false (and 'count' unchanged) when 'dateTime' isn't valid or the count is outside the unit's range
+bool LocalDateTimeToCount(TASWTomlLocalDateTime const& dateTime, TDurationUnit const& unit,
+    std::int64_t& count) noexcept;
+
+// Sets 'time' to the time of day 'count' units of 'unit' after midnight, taken modulo 24 hours
+void LocalTimeFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalTime& time) noexcept;
+
+// Sets 'count' to the units of 'unit' from midnight to 'time' (second 60 is the next minute's second 0), rounded down;
+// false (and 'count' unchanged) when 'time' isn't valid or the count is outside the unit's range
+bool LocalTimeToCount(TASWTomlLocalTime const& time, TDurationUnit const& unit, std::int64_t& count) noexcept;
+
+// Sets 'dateTime' to the instant 'count' units of 'unit' after 1970-01-01T00:00:00Z, as a date and time at 'offset';
+// false (and 'dateTime' unchanged) when 'offset' is outside -23:59 to +23:59, or the date at the offset is outside
+// the years 0 to 9999
+bool OffsetDateTimeFromCount(std::int64_t count, TDurationUnit const& unit, std::chrono::minutes offset,
+    TASWTomlOffsetDateTime& dateTime) noexcept;
+
+// Sets 'count' to the units of 'unit' from 1970-01-01T00:00:00Z to the instant 'dateTime' is (second 60 is the next
+// minute's second 0), rounded down; false (and 'count' unchanged) when 'dateTime' isn't valid or the count is outside
+// the unit's range
+bool OffsetDateTimeToCount(TASWTomlOffsetDateTime const& dateTime, TDurationUnit const& unit,
+    std::int64_t& count) noexcept;
+
+} // namespace Detail
+
 
 /////////////////////////////////////////////////////////////////////////////
 // TASWTomlLocalTime
@@ -71,15 +160,33 @@ struct TASWTomlLocalTime
     std::chrono::seconds Second{ 0 }; // 0 to 60 (60 is a leap second)
     std::chrono::nanoseconds Fraction{ 0 }; // 0 to 999999999 nanoseconds
 
-    // The time of day of 'sinceMidnight', taken modulo 24 hours (so -1 hour is 23:00); its second is never 60
-    static TASWTomlLocalTime FromDuration(std::chrono::nanoseconds sinceMidnight) noexcept;
+    // The time of day of 'sinceMidnight', a duration of any unit from nanoseconds to years (see
+    // Detail::TomlDuration), taken modulo 24 hours (so -1 hour is 23:00); its second is never 60
+    template <Detail::TomlDuration Duration>
+    static TASWTomlLocalTime FromDuration(Duration sinceMidnight) noexcept
+    {
+        TASWTomlLocalTime time;
+        Detail::LocalTimeFromCount(static_cast<std::int64_t>(sinceMidnight.count()), Detail::DurationUnit<Duration>(),
+            time);
+
+        return time;
+    }
 
     // Whether each field is in its range
     bool IsValid() const noexcept;
 
-    // The time since midnight: the fields added up, so second 60 is the next minute's second 0; std::nullopt if the
-    // time isn't valid
-    std::optional<std::chrono::nanoseconds> ToDuration() const noexcept;
+    // The time since midnight as a 'Duration' (nanoseconds unless another is given, e.g.
+    // ToDuration<std::chrono::seconds>()), rounded down to its unit: the fields added up, so second 60 is the next
+    // minute's second 0; std::nullopt if the time isn't valid or 'Duration' can't count that far
+    template <Detail::TomlDuration Duration = std::chrono::nanoseconds>
+    std::optional<Duration> ToDuration() const noexcept
+    {
+        std::int64_t count = 0;
+        if (!Detail::LocalTimeToCount(*this, Detail::DurationUnit<Duration>(), count))
+            return std::nullopt;
+
+        return Duration(static_cast<typename Duration::rep>(count));
+    }
 
     bool operator==(TASWTomlLocalTime const& other) const = default;
 };
@@ -96,16 +203,36 @@ struct TASWTomlLocalDateTime
     std::chrono::year_month_day Date{ std::chrono::year{ 1970 }, std::chrono::January, std::chrono::day{ 1 } };
     TASWTomlLocalTime Time;
 
-    // The date and time of 'localTime' (its second is never 60)
-    static TASWTomlLocalDateTime FromLocalTime(std::chrono::local_time<std::chrono::nanoseconds> localTime) noexcept;
+    // The date and time of 'localTime', a time point of any unit from nanoseconds to years (see
+    // Detail::TomlDuration), e.g. std::chrono::local_seconds or local_days; its second is never 60. std::nullopt if it
+    // is outside the years 0 to 9999, which TOML writes.
+    template <Detail::TomlDuration Duration>
+    static std::optional<TASWTomlLocalDateTime> FromLocalTime(std::chrono::local_time<Duration> localTime) noexcept
+    {
+        std::int64_t const count = static_cast<std::int64_t>(localTime.time_since_epoch().count());
+        TASWTomlLocalDateTime dateTime;
+        if (!Detail::LocalDateTimeFromCount(count, Detail::DurationUnit<Duration>(), dateTime))
+            return std::nullopt;
+
+        return dateTime;
+    }
 
     // Whether the date is a real date with a year from 0 to 9999 (TOML's four digits) and the time is valid
     bool IsValid() const noexcept;
 
-    // The date and time as a std::chrono::local_time (second 60 is the next minute's second 0); std::nullopt if the
-    // value isn't valid or is outside what nanoseconds from 1970 can hold (1677-09-21T00:12:43.145224192 to
-    // 2262-04-11T23:47:16.854775807)
-    std::optional<std::chrono::local_time<std::chrono::nanoseconds> > ToLocalTime() const noexcept;
+    // The date and time as a std::chrono::local_time of 'Duration' (nanoseconds unless another is given, e.g.
+    // ToLocalTime<std::chrono::seconds>()), rounded down to its unit (second 60 is the next minute's second 0);
+    // std::nullopt if the value isn't valid or 'Duration' can't count from 1970 to it. Nanoseconds count only from
+    // 1677-09-21T00:12:43.145224192 to 2262-04-11T23:47:16.854775807; seconds count every date TOML can write.
+    template <Detail::TomlDuration Duration = std::chrono::nanoseconds>
+    std::optional<std::chrono::local_time<Duration> > ToLocalTime() const noexcept
+    {
+        std::int64_t count = 0;
+        if (!Detail::LocalDateTimeToCount(*this, Detail::DurationUnit<Duration>(), count))
+            return std::nullopt;
+
+        return std::chrono::local_time<Duration>(Duration(static_cast<typename Duration::rep>(count)));
+    }
 
     bool operator==(TASWTomlLocalDateTime const& other) const = default;
 };
@@ -124,19 +251,41 @@ struct TASWTomlOffsetDateTime
     TASWTomlLocalTime Time;
     std::chrono::minutes Offset{ 0 }; // From UTC: -23:59 to +23:59 (UTC+1 is 60 minutes)
 
-    // The instant 'utc' as a date and time at 'offset' (their second is never 60); std::nullopt if 'offset' is outside
-    // -23:59 to +23:59
-    static std::optional<TASWTomlOffsetDateTime> FromSysTime(std::chrono::sys_time<std::chrono::nanoseconds> utc,
-        std::chrono::minutes offset = std::chrono::minutes{ 0 }) noexcept;
+    // The instant 'utc', a time point of any unit from nanoseconds to years (see Detail::TomlDuration), e.g.
+    // std::chrono::system_clock::time_point or sys_seconds, as a date and time at 'offset' (their second is never 60);
+    // std::nullopt if 'offset' is outside -23:59 to +23:59, or the date at the offset is outside the years 0 to 9999,
+    // which TOML writes
+    template <Detail::TomlDuration Duration>
+    static std::optional<TASWTomlOffsetDateTime> FromSysTime(std::chrono::sys_time<Duration> utc,
+        std::chrono::minutes offset = std::chrono::minutes{ 0 }) noexcept
+    {
+        std::int64_t const count = static_cast<std::int64_t>(utc.time_since_epoch().count());
+        TASWTomlOffsetDateTime dateTime;
+        if (!Detail::OffsetDateTimeFromCount(count, Detail::DurationUnit<Duration>(), offset, dateTime))
+            return std::nullopt;
+
+        return dateTime;
+    }
 
     // Whether the date is a real date with a year from 0 to 9999, the time is valid and the offset is within
     // -23:59 to +23:59
     bool IsValid() const noexcept;
 
-    // The instant in UTC (second 60 is the next minute's second 0); std::nullopt if the value isn't valid or is outside
-    // what nanoseconds from 1970 can hold (1677-09-21T00:12:43.145224192Z to 2262-04-11T23:47:16.854775807Z). Two
-    // values with different offsets can be the same instant while operator== tells them apart.
-    std::optional<std::chrono::sys_time<std::chrono::nanoseconds> > ToSysTime() const noexcept;
+    // The instant in UTC as a std::chrono::sys_time of 'Duration' (nanoseconds unless another is given, e.g.
+    // ToSysTime<std::chrono::seconds>()), rounded down to its unit (second 60 is the next minute's second 0);
+    // std::nullopt if the value isn't valid or 'Duration' can't count from 1970 to it. Nanoseconds count only from
+    // 1677-09-21T00:12:43.145224192Z to 2262-04-11T23:47:16.854775807Z, and so does the system_clock of libstdc++ (GCC,
+    // MinGW); seconds count every instant TOML can write. Two values with different offsets can be the same instant
+    // while operator== tells them apart.
+    template <Detail::TomlDuration Duration = std::chrono::nanoseconds>
+    std::optional<std::chrono::sys_time<Duration> > ToSysTime() const noexcept
+    {
+        std::int64_t count = 0;
+        if (!Detail::OffsetDateTimeToCount(*this, Detail::DurationUnit<Duration>(), count))
+            return std::nullopt;
+
+        return std::chrono::sys_time<Duration>(Duration(static_cast<typename Duration::rep>(count)));
+    }
 
     bool operator==(TASWTomlOffsetDateTime const& other) const = default;
 };

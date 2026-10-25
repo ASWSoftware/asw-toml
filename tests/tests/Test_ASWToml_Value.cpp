@@ -25,6 +25,7 @@ SPDX-License-Identifier: MIT
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <ratio>
 #include <set>
 #include <string>
 #include <string_view>
@@ -44,6 +45,22 @@ static_assert(!std::is_constructible_v<ASWToml::TASWTomlValue, unsigned long lon
 static_assert(!std::is_constructible_v<ASWToml::TASWTomlValue, char>, "a char should not make a value");
 static_assert(!std::is_constructible_v<ASWToml::TASWTomlValue, char8_t>, "a char8_t should not make a value");
 
+// The durations the date and time types convert: a signed integer count, and a unit of whole seconds or a fraction of
+// a second that divides 10^9
+static_assert(ASWToml::Detail::TomlDuration<std::chrono::nanoseconds>, "nanoseconds should convert");
+static_assert(ASWToml::Detail::TomlDuration<std::chrono::days>, "days should convert");
+static_assert(ASWToml::Detail::TomlDuration<std::chrono::system_clock::duration>, "system_clock should convert");
+static_assert(ASWToml::Detail::TomlDuration<std::chrono::duration<std::int8_t> >, "an 8-bit count should convert");
+static_assert(!ASWToml::Detail::TomlDuration<std::chrono::duration<double> >, "a float count should not convert");
+static_assert(!ASWToml::Detail::TomlDuration<std::chrono::duration<unsigned> >, "an unsigned count should not");
+static_assert(!ASWToml::Detail::TomlDuration<std::chrono::duration<long long, std::ratio<1, 3> > >,
+    "a third of a second should not convert");
+static_assert(!ASWToml::Detail::TomlDuration<std::chrono::duration<long long, std::pico> >,
+    "picoseconds should not convert");
+static_assert(!ASWToml::Detail::TomlDuration<std::chrono::duration<long long, std::ratio<3, 2> > >,
+    "a second and a half should not convert");
+static_assert(!ASWToml::Detail::TomlDuration<long long>, "a number isn't a duration");
+
 namespace ASWUnitTests
 {
 
@@ -51,6 +68,7 @@ namespace
 {
 
 using namespace std::chrono_literals;
+using namespace std::string_literals;
 
 using ASWToml::ETomlType;
 using ASWToml::TASWTomlLocalDateTime;
@@ -61,8 +79,24 @@ using ASWToml::TASWTomlValue;
 using TNameSet = std::set<std::string>;
 using TTomlTypeVector = std::vector<ETomlType>;
 
+// Durations of other units and counts: a unit of 25 hours (n of them are n hours after a midnight), minutes counted
+// in 64 bits (libc++ and MSVC count std::chrono::minutes in 32), seconds counted in 8 and 32 bits, and the 100 ns of
+// MSVC's system_clock
+using TLongDays = std::chrono::duration<std::int64_t, std::ratio<90000> >;
+using TMinutes64 = std::chrono::duration<std::int64_t, std::ratio<60> >;
+using TSeconds8 = std::chrono::duration<std::int8_t>;
+using TSeconds32 = std::chrono::duration<std::int32_t>;
+using TTicks = std::chrono::duration<std::int64_t, std::ratio<1, 10000000> >;
+
 TTomlTypeVector AllTomlTypes();
+template <typename TRep, typename TPeriod>
+std::string CountText(std::optional<std::chrono::duration<TRep, TPeriod> > const& duration);
+template <typename TClock, typename TDuration>
+std::string CountText(std::optional<std::chrono::time_point<TClock, TDuration> > const& timePoint);
 std::chrono::year_month_day Date(int year, unsigned month, unsigned day);
+TASWTomlLocalDateTime LocalDateTime(std::chrono::year_month_day const& date, TASWTomlLocalTime const& time);
+TASWTomlOffsetDateTime OffsetDateTime(std::chrono::year_month_day const& date, TASWTomlLocalTime const& time,
+    int offsetMinutes);
 TASWTomlLocalTime Time(int hour, int minute, int second, std::int64_t fraction = 0);
 
 //---------------------------------------------------------------------------
@@ -88,6 +122,29 @@ TTomlTypeVector AllTomlTypes()
 }
 //---------------------------------------------------------------------------
 /*
+    CountText
+
+    The count of 'duration', or of 'timePoint' since its clock's epoch, in decimal; "none" when there is none
+*/
+template <typename TRep, typename TPeriod>
+std::string CountText(std::optional<std::chrono::duration<TRep, TPeriod> > const& duration)
+{
+    if (!duration.has_value())
+        return "none";
+
+    return std::to_string(static_cast<long long>(duration->count()));
+}
+
+template <typename TClock, typename TDuration>
+std::string CountText(std::optional<std::chrono::time_point<TClock, TDuration> > const& timePoint)
+{
+    if (!timePoint.has_value())
+        return "none";
+
+    return CountText(std::optional<TDuration>(timePoint->time_since_epoch()));
+}
+//---------------------------------------------------------------------------
+/*
     Date
 
     The date 'year'-'month'-'day'
@@ -95,6 +152,36 @@ TTomlTypeVector AllTomlTypes()
 std::chrono::year_month_day Date(int year, unsigned month, unsigned day)
 {
     return std::chrono::year_month_day(std::chrono::year(year), std::chrono::month(month), std::chrono::day(day));
+}
+//---------------------------------------------------------------------------
+/*
+    LocalDateTime
+
+    The local date-time 'date' at 'time'
+*/
+TASWTomlLocalDateTime LocalDateTime(std::chrono::year_month_day const& date, TASWTomlLocalTime const& time)
+{
+    TASWTomlLocalDateTime dateTime;
+    dateTime.Date = date;
+    dateTime.Time = time;
+
+    return dateTime;
+}
+//---------------------------------------------------------------------------
+/*
+    OffsetDateTime
+
+    The offset date-time 'date' at 'time', 'offsetMinutes' from UTC
+*/
+TASWTomlOffsetDateTime OffsetDateTime(std::chrono::year_month_day const& date, TASWTomlLocalTime const& time,
+    int offsetMinutes)
+{
+    TASWTomlOffsetDateTime dateTime;
+    dateTime.Date = date;
+    dateTime.Time = time;
+    dateTime.Offset = std::chrono::minutes(offsetMinutes);
+
+    return dateTime;
 }
 //---------------------------------------------------------------------------
 /*
@@ -163,6 +250,42 @@ ASW_TEST(TTest_ASWToml_DateTimes, LocalDateTime_DefaultsToEpoch)
     CheckTrue(dateTime.IsValid(), "the default should be valid");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimes, LocalDateTime_FromLocalTime_AnyDurationInTomlYears)
+{
+    // Arrange
+    // Built from seconds: with libc++ and MSVC, days and minutes count in 32 bits, so local_days + minutes overflows
+    // in year 9999
+    std::chrono::local_seconds const last = std::chrono::local_days(Date(9999, 12, 31)) + std::chrono::seconds(86399);
+    std::chrono::local_seconds const first = std::chrono::local_days(Date(0, 1, 1)) + std::chrono::seconds(0);
+
+    // Act
+    std::optional<TASWTomlLocalDateTime> const lastSecond = TASWTomlLocalDateTime::FromLocalTime(last);
+    std::optional<TASWTomlLocalDateTime> const firstSecond = TASWTomlLocalDateTime::FromLocalTime(first);
+    std::optional<TASWTomlLocalDateTime> const lastDay =
+        TASWTomlLocalDateTime::FromLocalTime(std::chrono::local_days(Date(9999, 12, 31)));
+    std::optional<TASWTomlLocalDateTime> const tick =
+        TASWTomlLocalDateTime::FromLocalTime(std::chrono::local_time<TTicks>(TTicks(-1)));
+
+    // Assert
+    CheckTrue(lastSecond == LocalDateTime(Date(9999, 12, 31), Time(23, 59, 59)), "the last second TOML writes");
+    CheckTrue(firstSecond == LocalDateTime(Date(0, 1, 1), Time(0, 0, 0)), "the first second TOML writes");
+    CheckTrue(lastDay == LocalDateTime(Date(9999, 12, 31), Time(0, 0, 0)), "local_days is the day's midnight");
+    CheckTrue(tick == LocalDateTime(Date(1969, 12, 31), Time(23, 59, 59, 999999900)),
+        "a count of 100 ns before 1970, exactly");
+    CheckFalse(TASWTomlLocalDateTime::FromLocalTime(last + std::chrono::seconds(1)).has_value(),
+        "year 10000 should not convert");
+    CheckFalse(TASWTomlLocalDateTime::FromLocalTime(first - std::chrono::seconds(1)).has_value(),
+        "year -1 should not convert");
+    CheckFalse(TASWTomlLocalDateTime::FromLocalTime(std::chrono::local_seconds::max()).has_value(),
+        "the largest count of seconds should not convert");
+    CheckFalse(TASWTomlLocalDateTime::FromLocalTime(std::chrono::local_time<std::chrono::hours>::min()).has_value(),
+        "the smallest count of hours should not convert");
+    CheckFalse(TASWTomlLocalDateTime::FromLocalTime(std::chrono::local_time<TLongDays>::max()).has_value(),
+        "nor a count whose seconds don't fit in 64 bits");
+    CheckFalse(TASWTomlLocalDateTime::FromLocalTime(std::chrono::local_time<TLongDays>::min()).has_value(),
+        "at either end");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DateTimes, LocalDateTime_FromLocalTime_SplitsDateAndTime)
 {
     // Arrange
@@ -172,14 +295,15 @@ ASW_TEST(TTest_ASWToml_DateTimes, LocalDateTime_FromLocalTime_SplitsDateAndTime)
         std::chrono::local_days(Date(1979, 5, 27)) + 7h + 32min + 1ns;
 
     // Act
-    TASWTomlLocalDateTime const early = TASWTomlLocalDateTime::FromLocalTime(before1970);
-    TASWTomlLocalDateTime const late = TASWTomlLocalDateTime::FromLocalTime(after1970);
+    std::optional<TASWTomlLocalDateTime> const early = TASWTomlLocalDateTime::FromLocalTime(before1970);
+    std::optional<TASWTomlLocalDateTime> const late = TASWTomlLocalDateTime::FromLocalTime(after1970);
 
     // Assert
-    CheckTrue(early.Date == Date(1969, 12, 31), "a time before 1970 should keep its date");
-    CheckTrue(early.Time == Time(23, 59, 59, 500000000), "a time before 1970 should keep its time");
-    CheckTrue(late.Date == Date(1979, 5, 27), "the date");
-    CheckTrue(late.Time == Time(7, 32, 0, 1), "the time, to the nanosecond");
+    AssertTrue(early.has_value() && late.has_value(), "both should convert");
+    CheckTrue(early->Date == Date(1969, 12, 31), "a time before 1970 should keep its date");
+    CheckTrue(early->Time == Time(23, 59, 59, 500000000), "a time before 1970 should keep its time");
+    CheckTrue(late->Date == Date(1979, 5, 27), "the date");
+    CheckTrue(late->Time == Time(7, 32, 0, 1), "the time, to the nanosecond");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DateTimes, LocalDateTime_IsValid_ChecksDateAndTime)
@@ -234,6 +358,32 @@ ASW_TEST(TTest_ASWToml_DateTimes, LocalDateTime_ToLocalTime_AddsDateAndTime)
         "a leap second should become the next day's first second");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimes, LocalDateTime_ToLocalTime_AnyDuration)
+{
+    // Arrange
+    TASWTomlLocalDateTime const last = LocalDateTime(Date(9999, 12, 31), Time(23, 59, 59, 999999999));
+    TASWTomlLocalDateTime const first = LocalDateTime(Date(0, 1, 1), Time(0, 0, 0));
+    TASWTomlLocalDateTime const beforeEpoch = LocalDateTime(Date(1969, 12, 31), Time(23, 59, 59, 500000000));
+    TASWTomlLocalDateTime const firstOf32Bits = LocalDateTime(Date(1901, 12, 13), Time(20, 45, 52));
+    TASWTomlLocalDateTime beforeFirstOf32Bits = firstOf32Bits;
+    beforeFirstOf32Bits.Time.Fraction = std::chrono::nanoseconds(-1);
+    TASWTomlLocalDateTime const lastBefore32Bits = LocalDateTime(Date(1901, 12, 13), Time(20, 45, 51, 999999999));
+
+    // Act & Assert
+    CheckEquals("253402300799"s, CountText(last.ToLocalTime<std::chrono::seconds>()), "9999 in seconds");
+    CheckEquals("253402300799999"s, CountText(last.ToLocalTime<std::chrono::milliseconds>()), "in milliseconds");
+    CheckEquals("2932896"s, CountText(last.ToLocalTime<std::chrono::days>()), "in days, rounded down");
+    CheckEquals("none"s, CountText(last.ToLocalTime()), "nanoseconds can't count to 9999");
+    CheckEquals("-62167219200"s, CountText(first.ToLocalTime<std::chrono::seconds>()), "year 0 in seconds");
+    CheckEquals("-1"s, CountText(beforeEpoch.ToLocalTime<std::chrono::seconds>()),
+        "half a second before 1970 rounds down to -1 s");
+    CheckEquals("-1"s, CountText(beforeEpoch.ToLocalTime<std::chrono::days>()), "and to the day before");
+    CheckEquals("-2147483648"s, CountText(firstOf32Bits.ToLocalTime<TSeconds32>()),
+        "the first second 32 bits count");
+    CheckEquals("none"s, CountText(lastBefore32Bits.ToLocalTime<TSeconds32>()), "the second before it");
+    CheckEquals("none"s, CountText(beforeFirstOf32Bits.ToLocalTime<TSeconds32>()), "an invalid fraction");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DateTimes, LocalDateTime_ToLocalTime_RefusesOutOfRange)
 {
     // Arrange
@@ -279,6 +429,28 @@ ASW_TEST(TTest_ASWToml_DateTimes, LocalTime_DefaultsToMidnight)
     CheckTrue(time.ToDuration() == std::optional<std::chrono::nanoseconds>(0ns), "midnight should be 0 since midnight");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimes, LocalTime_FromDuration_AnyDuration)
+{
+    // Act & Assert
+    // 2^63 - 1 seconds is 15:30:07 after a midnight, and -2^63 seconds 08:29:52; 2^63 - 1 units of 25 hours are 07:00
+    // after one, and -2^63 of them 16:00 (their product with 90000 s modulo a day, which wrapping 64-bit arithmetic
+    // would get wrong)
+    CheckTrue(TASWTomlLocalTime::FromDuration(std::chrono::days(3)) == Time(0, 0, 0), "whole days are midnight");
+    CheckTrue(TASWTomlLocalTime::FromDuration(std::chrono::minutes(-1)) == Time(23, 59, 0), "-1 minute is 23:59");
+    CheckTrue(TASWTomlLocalTime::FromDuration(std::chrono::hours(-25)) == Time(23, 0, 0), "-25 hours is 23:00");
+    CheckTrue(TASWTomlLocalTime::FromDuration(std::chrono::milliseconds(1)) == Time(0, 0, 0, 1000000),
+        "a millisecond");
+    CheckTrue(TASWTomlLocalTime::FromDuration(TTicks(-1)) == Time(23, 59, 59, 999999900), "-100 ns");
+    CheckTrue(TASWTomlLocalTime::FromDuration(std::chrono::seconds::max()) == Time(15, 30, 7),
+        "the largest count of seconds, without overflowing");
+    CheckTrue(TASWTomlLocalTime::FromDuration(std::chrono::seconds::min()) == Time(8, 29, 52),
+        "the smallest count of seconds");
+    CheckTrue(TASWTomlLocalTime::FromDuration(TLongDays(3)) == Time(3, 0, 0), "a unit longer than a day");
+    CheckTrue(TASWTomlLocalTime::FromDuration(TLongDays::max()) == Time(7, 0, 0),
+        "its largest count, whose seconds don't fit in 64 bits");
+    CheckTrue(TASWTomlLocalTime::FromDuration(TLongDays::min()) == Time(16, 0, 0), "and its smallest");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DateTimes, LocalTime_FromDuration_SplitsAndWraps)
 {
     CheckTrue(TASWTomlLocalTime::FromDuration(7h + 32min + 500ms) == Time(7, 32, 0, 500000000),
@@ -317,6 +489,24 @@ ASW_TEST(TTest_ASWToml_DateTimes, LocalTime_ToDuration_AddsFields)
         "second 60 should be the next minute's second 0");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimes, LocalTime_ToDuration_AnyDuration)
+{
+    // Arrange
+    TASWTomlLocalTime const time = Time(7, 32, 0, 900000000);
+
+    // Act & Assert
+    CheckEquals("27120"s, CountText(time.ToDuration<std::chrono::seconds>()), "in seconds, rounded down");
+    CheckEquals("27120900"s, CountText(time.ToDuration<std::chrono::milliseconds>()), "in milliseconds");
+    CheckEquals("452"s, CountText(time.ToDuration<std::chrono::minutes>()), "in minutes");
+    CheckEquals("7"s, CountText(time.ToDuration<std::chrono::hours>()), "in hours");
+    CheckEquals("0"s, CountText(time.ToDuration<std::chrono::days>()), "in days");
+    CheckEquals("271209000000"s, CountText(time.ToDuration<TTicks>()), "in 100 ns");
+    CheckEquals("86400"s, CountText(Time(23, 59, 60).ToDuration<std::chrono::seconds>()), "second 60 at 23:59");
+    CheckEquals("60"s, CountText(Time(0, 1, 0).ToDuration<TSeconds8>()), "a minute in 8 bits");
+    CheckEquals("none"s, CountText(time.ToDuration<TSeconds8>()), "but not 07:32");
+    CheckEquals("none"s, CountText(Time(24, 0, 0).ToDuration<std::chrono::seconds>()), "an invalid time");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DateTimes, OffsetDateTime_Equality_ComparesFields)
 {
     // Arrange
@@ -333,6 +523,43 @@ ASW_TEST(TTest_ASWToml_DateTimes, OffsetDateTime_Equality_ComparesFields)
     CheckTrue(pacific.ToSysTime() == utc.ToSysTime(), "both should be the same instant");
     CheckFalse(pacific == utc, "operator== should tell the two apart");
     CheckTrue(pacific == pacific, "a value should equal itself");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimes, OffsetDateTime_FromSysTime_AnyDurationInTomlYears)
+{
+    // Arrange
+    // Built from seconds (see LocalDateTime_FromLocalTime_AnyDurationInTomlYears)
+    std::chrono::sys_seconds const last = std::chrono::sys_days(Date(9999, 12, 31)) + std::chrono::seconds(86399);
+    std::chrono::sys_seconds const first = std::chrono::sys_days(Date(0, 1, 1)) + std::chrono::seconds(0);
+
+    // Act & Assert
+    CheckTrue(TASWTomlOffsetDateTime::FromSysTime(last) == OffsetDateTime(Date(9999, 12, 31), Time(23, 59, 59), 0),
+        "the last second TOML writes, in UTC");
+    CheckTrue(TASWTomlOffsetDateTime::FromSysTime(last, -1h) == OffsetDateTime(Date(9999, 12, 31), Time(22, 59, 59),
+        -60), "and an hour west of UTC");
+    CheckFalse(TASWTomlOffsetDateTime::FromSysTime(last, 1min).has_value(), "east of UTC it is in year 10000");
+    CheckFalse(TASWTomlOffsetDateTime::FromSysTime(last + std::chrono::seconds(1)).has_value(),
+        "year 10000 in UTC");
+    CheckTrue(TASWTomlOffsetDateTime::FromSysTime(first) == OffsetDateTime(Date(0, 1, 1), Time(0, 0, 0), 0),
+        "the first second TOML writes, in UTC");
+    CheckFalse(TASWTomlOffsetDateTime::FromSysTime(first, -1min).has_value(), "west of UTC it is in year -1");
+    CheckTrue(TASWTomlOffsetDateTime::FromSysTime(first - std::chrono::seconds(1), 1min) ==
+        OffsetDateTime(Date(0, 1, 1), Time(0, 0, 59), 1), "an instant in year -1 that is year 0 at its offset");
+    CheckTrue(TASWTomlOffsetDateTime::FromSysTime(std::chrono::sys_days(Date(9999, 12, 31))) ==
+        OffsetDateTime(Date(9999, 12, 31), Time(0, 0, 0), 0), "sys_days is the day's midnight");
+    CheckTrue(TASWTomlOffsetDateTime::FromSysTime(std::chrono::sys_time<TTicks>(TTicks(-1))) ==
+        OffsetDateTime(Date(1969, 12, 31), Time(23, 59, 59, 999999900), 0), "a count of 100 ns before 1970");
+    CheckFalse(TASWTomlOffsetDateTime::FromSysTime(std::chrono::sys_seconds::max(), 23h).has_value(),
+        "the largest count of seconds, at an offset east of UTC");
+    CheckFalse(TASWTomlOffsetDateTime::FromSysTime(std::chrono::sys_seconds::min(), -23h).has_value(),
+        "the smallest, west of UTC");
+    CheckFalse(TASWTomlOffsetDateTime::FromSysTime(std::chrono::sys_time<TMinutes64>::max(), 23h).has_value(),
+        "the largest 64-bit count of minutes, whose seconds don't fit in 64 bits");
+    CheckFalse(TASWTomlOffsetDateTime::FromSysTime(last, 24h).has_value(), "an offset of 24 hours");
+    CheckTrue(TASWTomlOffsetDateTime::FromSysTime(first, 23h + 59min) == OffsetDateTime(Date(0, 1, 1), Time(23, 59, 0),
+        1439), "the largest offset, +23:59");
+    CheckTrue(TASWTomlOffsetDateTime::FromSysTime(last, -(23h + 59min)) ==
+        OffsetDateTime(Date(9999, 12, 31), Time(0, 0, 59), -1439), "the smallest offset, -23:59");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DateTimes, OffsetDateTime_FromSysTime_AppliesOffset)
@@ -376,6 +603,50 @@ ASW_TEST(TTest_ASWToml_DateTimes, OffsetDateTime_IsValid_ChecksOffset)
     dateTime.Offset = 24h;
     CheckFalse(dateTime.IsValid(), "+24:00 should not be valid");
     CheckFalse(dateTime.ToSysTime().has_value(), "an invalid value should have no instant");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimes, OffsetDateTime_ToSysTime_AnyDuration)
+{
+    // Arrange
+    TASWTomlOffsetDateTime const last = OffsetDateTime(Date(9999, 12, 31), Time(23, 59, 59, 999999999), 0);
+    TASWTomlOffsetDateTime const neverExpires = OffsetDateTime(Date(9999, 12, 31), Time(23, 59, 59), 0);
+    TASWTomlOffsetDateTime const firstEast = OffsetDateTime(Date(0, 1, 1), Time(0, 30, 0), 60);
+    TASWTomlOffsetDateTime const beforeEpoch = OffsetDateTime(Date(1969, 12, 31), Time(23, 59, 59, 500000000), 0);
+    TASWTomlOffsetDateTime const lastOf32Bits = OffsetDateTime(Date(2038, 1, 19), Time(3, 14, 7, 999999999), 0);
+    TASWTomlOffsetDateTime const after32Bits = OffsetDateTime(Date(2038, 1, 19), Time(4, 14, 8), 60);
+    TASWTomlOffsetDateTime const today = OffsetDateTime(Date(2026, 10, 24), Time(0, 0, 0), 0);
+
+    // The counts of system_clock for today and for 9999-12-31T23:59:59Z, which nanoseconds (libstdc++'s unit) can't
+    // hold
+    // (a power of 10 per second, so as digits: the seconds and a 0 for each power of 10)
+    using TPeriod = std::chrono::system_clock::period;
+    std::string zeros;
+    for (std::intmax_t perSecond = TPeriod::den / TPeriod::num; perSecond > 1; perSecond /= 10)
+        zeros += '0';
+
+    std::string const todayClockCount = "1792800000" + zeros;
+    std::string farClockCount = "none";
+    if (!std::ratio_equal_v<TPeriod, std::nano>)
+        farClockCount = "253402300799" + zeros;
+
+
+    // Act & Assert
+    CheckEquals("253402300799"s, CountText(last.ToSysTime<std::chrono::seconds>()), "9999 in seconds");
+    CheckEquals("253402300799999"s, CountText(last.ToSysTime<std::chrono::milliseconds>()), "in milliseconds");
+    CheckEquals("253402300799999999"s, CountText(last.ToSysTime<std::chrono::microseconds>()), "in microseconds");
+    CheckEquals("2932896"s, CountText(last.ToSysTime<std::chrono::days>()), "in days, rounded down");
+    CheckEquals("none"s, CountText(last.ToSysTime()), "nanoseconds can't count to 9999");
+    CheckEquals(farClockCount, CountText(neverExpires.ToSysTime<std::chrono::system_clock::duration>()),
+        "system_clock holds 9999 unless it counts nanoseconds (libstdc++)");
+    CheckEquals(todayClockCount, CountText(today.ToSysTime<std::chrono::system_clock::duration>()),
+        "system_clock holds today on every library");
+    CheckEquals("-62167221000"s, CountText(firstEast.ToSysTime<std::chrono::seconds>()),
+        "year 0 at +01:00 is an instant in year -1");
+    CheckEquals("-1"s, CountText(beforeEpoch.ToSysTime<std::chrono::seconds>()), "rounded down before 1970");
+    CheckEquals("-500"s, CountText(beforeEpoch.ToSysTime<std::chrono::milliseconds>()), "in milliseconds");
+    CheckEquals("-1"s, CountText(beforeEpoch.ToSysTime<std::chrono::days>()), "in days");
+    CheckEquals("2147483647"s, CountText(lastOf32Bits.ToSysTime<TSeconds32>()), "the last second 32 bits count");
+    CheckEquals("none"s, CountText(after32Bits.ToSysTime<TSeconds32>()), "the second after it, at an offset");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DateTimes, OffsetDateTime_ToSysTime_SubtractsOffset)

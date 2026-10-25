@@ -69,11 +69,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   leap second, at any hour) and fraction, `TASWTomlLocalDateTime` a date and a time, and
   `TASWTomlOffsetDateTime` a date, a time and an offset from UTC, so two offsets of the same
   instant stay apart. `IsValid()` checks the parts (a real date with a year from 0 to 9999, an
-  offset within plus or minus 23:59), and `ToDuration()`, `ToLocalTime()` and `ToSysTime()`
-  convert to `std::chrono` durations and time points, giving `std::nullopt` for a value that
-  isn't valid or that nanoseconds from 1970 can't count (outside 1677-09-21T00:12:43.145224192 to
-  2262-04-11T23:47:16.854775807); `FromDuration()`, `FromLocalTime()` and `FromSysTime()` convert
-  back.
+  offset within plus or minus 23:59). `ToDuration()`, `ToLocalTime()` and `ToSysTime()` convert
+  to `std::chrono` durations and time points of any unit from nanoseconds to years (nanoseconds
+  unless one is given, e.g. `ToSysTime<std::chrono::seconds>()`), rounded down to it, giving
+  `std::nullopt` for a value that isn't valid or that the unit's count can't hold: nanoseconds
+  count only from 1677-09-21T00:12:43.145224192 to 2262-04-11T23:47:16.854775807, and so does
+  `std::chrono::system_clock::time_point` with libstdc++ (GCC, MinGW), while seconds hold every
+  date and time TOML writes (use `std::chrono::sys_seconds` for a date such as 9999-12-31).
+  `FromDuration()`, `FromLocalTime()` and `FromSysTime()` convert back from any of them;
+  `FromLocalTime()` and `FromSysTime()` give `std::nullopt` outside the years 0 to 9999.
 - The reading and writing of TOML's scalar values that the parser and the edits will use
   (`ASWToml_Scalars.cpp`, internal), as TOML 1.1.0 defines them. An error gives the line and column
   of the character at fault.

@@ -31,17 +31,23 @@ private:
 
 public: // Test methods, each defined with ASW_TEST
     void Test_LocalDateTime_DefaultsToEpoch();
+    void Test_LocalDateTime_FromLocalTime_AnyDurationInTomlYears();
     void Test_LocalDateTime_FromLocalTime_SplitsDateAndTime();
     void Test_LocalDateTime_IsValid_ChecksDateAndTime();
     void Test_LocalDateTime_ToLocalTime_AddsDateAndTime();
+    void Test_LocalDateTime_ToLocalTime_AnyDuration();
     void Test_LocalDateTime_ToLocalTime_RefusesOutOfRange();
     void Test_LocalTime_DefaultsToMidnight();
+    void Test_LocalTime_FromDuration_AnyDuration();
     void Test_LocalTime_FromDuration_SplitsAndWraps();
     void Test_LocalTime_IsValid_ChecksEachField();
     void Test_LocalTime_ToDuration_AddsFields();
+    void Test_LocalTime_ToDuration_AnyDuration();
     void Test_OffsetDateTime_Equality_ComparesFields();
+    void Test_OffsetDateTime_FromSysTime_AnyDurationInTomlYears();
     void Test_OffsetDateTime_FromSysTime_AppliesOffset();
     void Test_OffsetDateTime_IsValid_ChecksOffset();
+    void Test_OffsetDateTime_ToSysTime_AnyDuration();
     void Test_OffsetDateTime_ToSysTime_SubtractsOffset();
 
 public:
