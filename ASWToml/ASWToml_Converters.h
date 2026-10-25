@@ -228,7 +228,8 @@ TASWTomlResult RepeatedElement(TASWTomlValue const& element);
 // Checks the keys of 'table', the names a map whose key type is an enum with names writes its keys as: Ok, or
 // InvalidValue when two of them are the same name with the ASCII letters' case ignored, which would read back as one
 // key ("The key red names two values of the enum, which would read back as one: each value needs a name of its own in
-// ASWTomlEnumNames().")
+// ASWTomlEnumNames()."), which names the same key whatever the table's order (an unordered map's isn't fixed): of
+// the first such keys, the second in byte order (red, after Red)
 TASWTomlResult RepeatedEnumKey(TASWTomlValue::TKeyValueVector const& table);
 
 // The InvalidValue result of a map reading 'key', a key of a table that reads as a key the map already has (e.g. red

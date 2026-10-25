@@ -214,6 +214,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_EveryType_RefusesWhatIsntATable();
     void Test_FromValue_FailsAtTheFirstKeyThatFails();
     void Test_FromValue_ReadsAnyTable();
+    void Test_Helpers_RepeatedEnumKey();
     void Test_IntegerKeys_ReadAsDecimalDigits();
     void Test_IntegerKeys_RefuseWhatIsntANumberInRange();
     void Test_ReadsWithTheMapsOwnComparator();

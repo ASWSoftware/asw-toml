@@ -51,6 +51,9 @@ static_assert(FloatRoundingLimit - std::numeric_limits<float>::max() == 0x1p103,
 constexpr std::int64_t FirstDay = -719528;
 constexpr std::int64_t LastDay = 2932896;
 
+// The keys of a table, each with its ASCII letters in lower case first (see RepeatedEnumKey())
+using TFoldedKeyVector = std::vector<std::pair<std::string, std::string> >;
+
 // The TOML texts of the elements of an array, each with its element's index (see SortByText())
 using TTextVector = std::vector<std::pair<std::string, std::size_t> >;
 
@@ -608,17 +611,17 @@ TASWTomlResult Detail::RepeatedElement(TASWTomlValue const& element)
 //---------------------------------------------------------------------------
 TASWTomlResult Detail::RepeatedEnumKey(TASWTomlValue::TKeyValueVector const& table)
 {
-    // The keys with their letters in lower case, sorted with their indexes, so two that are the same are next to each
-    // other, the later one in the table second
-    TTextVector keys;
+    // The keys with their letters in lower case, each with the key itself, sorted, so two that are the same are next
+    // to each other in byte order, whatever the order of the table (an unordered map's isn't fixed)
+    TFoldedKeyVector keys;
     keys.reserve(table.size());
-    for (std::size_t i = 0; i < table.size(); ++i)
+    for (TASWTomlKeyValue const& entry : table)
     {
-        std::string key = table[i].Key;
-        for (char& c : key)
+        std::string folded = entry.Key;
+        for (char& c : folded)
             c = AsciiLower(c);
 
-        keys.emplace_back(std::move(key), i);
+        keys.emplace_back(std::move(folded), entry.Key);
     }
 
     std::sort(keys.begin(), keys.end());
@@ -626,8 +629,8 @@ TASWTomlResult Detail::RepeatedEnumKey(TASWTomlValue::TKeyValueVector const& tab
     {
         if (keys[i].first == keys[i - 1].first)
         {
-            return FailedKey(ETomlCode::InvalidValue, table[keys[i].second].Key, "names two values of the enum, which "
-                "would read back as one: each value needs a name of its own in ASWTomlEnumNames().");
+            return FailedKey(ETomlCode::InvalidValue, keys[i].second, "names two values of the enum, which would read "
+                "back as one: each value needs a name of its own in ASWTomlEnumNames().");
         }
     }
 

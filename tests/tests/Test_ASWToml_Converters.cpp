@@ -1236,7 +1236,9 @@ ASW_TEST(TTest_ASWToml_ArrayConverters, Pair_ReadsTwoElementsOfTheirOwnTypes)
 {
     // Arrange
     using TEndpoint = std::pair<std::string, std::uint16_t>;
-    TEndpoint const initial = { "kept", 1 };
+    // The numbers as std::uint16_t, so std::pair's constructor converts none
+    TEndpoint const initial = { "kept", std::uint16_t{ 1 } };
+    TEndpoint const expected = { "example.com", std::uint16_t{ 443 } };
     TEndpoint endpoint = initial;
 
     // Act
@@ -1244,9 +1246,8 @@ ASW_TEST(TTest_ASWToml_ArrayConverters, Pair_ReadsTwoElementsOfTheirOwnTypes)
         TASWTomlValueOptions());
 
     // Assert
-    CheckTrue(read.IsOk() && endpoint == TEndpoint{ "example.com", 443 }, "a pair should read: " + read.Message);
-    CheckEquals("[\"example.com\", 443]"s, Written(TEndpoint{ "example.com", 443 }),
-        "the first element should be written first");
+    CheckTrue(read.IsOk() && endpoint == expected, "a pair should read: " + read.Message);
+    CheckEquals("[\"example.com\", 443]"s, Written(expected), "the first element should be written first");
     CheckEmpty(ReadFailureProblem(TArray{ 443, "example.com" }, initial, ETomlCode::TypeMismatch,
         "The value 443 is an integer, not a string.", "[0]"), "each element should be read as its own type");
     CheckEmpty(ReadFailureProblem(TArray{ "example.com", 70000 }, initial, ETomlCode::ValueOutOfRange,
@@ -2985,6 +2986,8 @@ ASW_TEST(TTest_ASWToml_TableConverters, FromValue_FailsAtTheFirstKeyThatFails)
     std::map<std::string, int> const initial = { { "kept", 7 } };
     std::map<std::string, std::vector<int> > const initialLists = { { "kept", { 7 } } };
     std::map<std::string, std::map<std::string, int> > const initialNested = { { "kept", initial } };
+    // The byte as a std::uint8_t, so std::pair's constructor converts none
+    std::map<std::string, std::uint8_t> const initialBytes = { { "kept", std::uint8_t{ 7 } } };
     TASWTomlValue const list = TArray{ 1, "x" };
     TASWTomlValue const inner = TTable{ { "x", 1 }, { "y", "z" } };
 
@@ -2998,9 +3001,8 @@ ASW_TEST(TTest_ASWToml_TableConverters, FromValue_FailsAtTheFirstKeyThatFails)
         "The value \"x\" is a string, not an integer.", "\"host name\"[1]"), "with the place inside its value");
     CheckEmpty(ReadFailureProblem(TTable{ { "a", inner } }, initialNested, ETomlCode::TypeMismatch,
         "The value \"z\" is a string, not an integer.", "a.y"), "inside a nested map too");
-    CheckEmpty(ReadFailureProblem(TTable{ { "a", 300 } }, std::map<std::string, std::uint8_t>{ { "kept", 7 } },
-        ETomlCode::ValueOutOfRange, "The value 300 is out of range: it must be from 0 to 255.", "a"),
-        "with the value's code and message");
+    CheckEmpty(ReadFailureProblem(TTable{ { "a", 300 } }, initialBytes, ETomlCode::ValueOutOfRange,
+        "The value 300 is out of range: it must be from 0 to 255.", "a"), "with the value's code and message");
     CheckEmpty(ReadFailureProblem(TTable{ { "port", "x" } }, std::unordered_map<std::string, int>{ { "kept", 7 } },
         ETomlCode::TypeMismatch, "The value \"x\" is a string, not an integer.", "port"), "and an unordered map");
     CheckEmpty(ReadFailureProblem(TTable{ { "x", "y" } }, std::map<int, int>{ { 1, 7 } }, ETomlCode::InvalidValue,
@@ -3036,6 +3038,35 @@ ASW_TEST(TTest_ASWToml_TableConverters, FromValue_ReadsAnyTable)
     }
 
     CheckTrue(readEmpty.IsOk() && emptied.empty(), "an empty table should read as an empty map");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_TableConverters, Helpers_RepeatedEnumKey)
+{
+    // Arrange
+    std::string const problem = " names two values of the enum, which would read back as one: each value needs a "
+        "name of its own in ASWTomlEnumNames().";
+    TTable const upperFirst = { { "Twin", 1 }, { "Other", 2 }, { "twin", 3 } };
+    TTable const lowerFirst = { { "twin", 3 }, { "Other", 2 }, { "Twin", 1 } };
+    TTable const three = { { "TWIN", 1 }, { "twin", 2 }, { "Twin", 3 } };
+    TTable const same = { { "Red", 1 }, { "Red", 2 } };
+    TTable const different = { { "Red", 1 }, { "Green", 2 }, { "Re", 3 } };
+
+    // Act
+    TASWTomlResult const fromUpperFirst = ASWToml::Detail::RepeatedEnumKey(upperFirst);
+    TASWTomlResult const fromLowerFirst = ASWToml::Detail::RepeatedEnumKey(lowerFirst);
+    TASWTomlResult const fromThree = ASWToml::Detail::RepeatedEnumKey(three);
+    TASWTomlResult const fromSame = ASWToml::Detail::RepeatedEnumKey(same);
+    TASWTomlResult const fromDifferent = ASWToml::Detail::RepeatedEnumKey(different);
+
+    // Assert
+    CheckTrue(fromUpperFirst.Code == ETomlCode::InvalidValue && fromUpperFirst.Path.empty(),
+        "two keys that are one name with the case ignored should be refused, without a path");
+    CheckEquals("The key twin" + problem, fromUpperFirst.Message, "naming the second of them in byte order");
+    CheckEquals("The key twin" + problem, fromLowerFirst.Message, "whatever the table's order");
+    CheckEquals("The key Twin" + problem, fromThree.Message, "of three, the second in byte order");
+    CheckEquals("The key Red" + problem, fromSame.Message, "two keys that are the same should be refused too");
+    CheckTrue(fromDifferent.IsOk(), "keys that differ with the case ignored should be accepted");
+    CheckTrue(ASWToml::Detail::RepeatedEnumKey(TTable()).IsOk(), "and no keys");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_TableConverters, IntegerKeys_ReadAsDecimalDigits)
