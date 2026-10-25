@@ -8,8 +8,9 @@ TASWTomlConverter<T>, which converts a value of an application's type T to
 and from a TASWTomlValue, and the concept TomlConvertible, which says that a
 type has one. The library has converters for TASWTomlValue itself,
 std::string, std::u8string, std::filesystem::path, bool, the integer types,
-float and double; an application adds its own by specializing
-TASWTomlConverter for its type.
+float, double and enums (by name when the application gives the enum names,
+see TASWTomlEnumName, else as integers); an application adds its own by
+specializing TASWTomlConverter for its type.
 
 Requires C++ 20 or higher.
 
@@ -36,6 +37,7 @@ SPDX-License-Identifier: MIT
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Options.h"
 #include "ASWToml_Types.h"
@@ -71,6 +73,38 @@ namespace ASWToml
 template <typename T>
 struct TASWTomlConverter;
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlEnumName
+//
+// One name of a value of the enum T, in the names an application gives an enum so that it is converted by name (see
+// TASWTomlConverter<enums with names>). The application declares a function ASWTomlEnumNames() next to the enum, in
+// the enum's namespace (or, for an enum declared in a class, as a friend in that class), so argument-dependent lookup
+// finds it. Its argument only selects it, and it returns anything a range-based for loop can go over more than once
+// that gives TASWTomlEnumName<T>s: a reference to an array or a std::array, or a std::vector. A value may have several
+// names: the first one listed is written, and the others are read too (e.g. an old name). A name is compared with the
+// ASCII letters' case ignored; an empty one is skipped.
+//
+//     enum class EColor { Red, Green, Blue };
+//
+//     inline auto const& ASWTomlEnumNames(EColor)
+//     {
+//         static constexpr ASWToml::TASWTomlEnumName<EColor> names[] = {
+//             { EColor::Red, "Red" }, { EColor::Green, "Green" }, { EColor::Blue, "Blue" },
+//             { EColor::Green, "Lime" }, // Read as Green, never written
+//         };
+//
+//         return names;
+//     }
+/////////////////////////////////////////////////////////////////////////////
+template <typename T>
+requires std::is_enum_v<T>
+struct TASWTomlEnumName
+{
+    T Value;
+    std::string_view Name;
+};
+
 //---------------------------------------------------------------------------
 // Internals of the library: the helpers of the converters' templates. Not part of the public interface.
 //---------------------------------------------------------------------------
@@ -86,6 +120,13 @@ template <typename T>
 using TToValueResult = decltype(TASWTomlConverter<T>::ToValue(std::declval<T const&>(),
     std::declval<TASWTomlValue&>(), std::declval<TASWTomlValueOptions const&>()));
 
+// The type ASWTomlEnumNames() returns for T, found by argument-dependent lookup (see TASWTomlEnumName)
+template <typename T>
+using TEnumNamesResult = decltype(ASWTomlEnumNames(std::declval<T>()));
+
+// The names of an enum's values, as a message lists them
+using TNameVector = std::vector<std::string_view>;
+
 // The longest part of a value's text a message shows (see ValueText())
 constexpr std::size_t MaxValueTextSize = 40;
 
@@ -96,14 +137,34 @@ concept ConvertibleInteger = std::integral<T> && std::same_as<T, std::remove_cv_
     sizeof(T) <= sizeof(std::int64_t) && !std::same_as<T, bool> && !std::same_as<T, char> &&
     !std::same_as<T, wchar_t> && !std::same_as<T, char8_t> && !std::same_as<T, char16_t> && !std::same_as<T, char32_t>;
 
+// Whether T is an enum, without const or volatile, for which argument-dependent lookup finds ASWTomlEnumNames() (see
+// TASWTomlEnumName), or one for which it finds none
+template <typename T>
+concept EnumWithNames = std::is_enum_v<T> && std::same_as<T, std::remove_cv_t<T> > &&
+    requires { typename TEnumNamesResult<T>; };
+template <typename T>
+concept EnumWithoutNames = std::is_enum_v<T> && std::same_as<T, std::remove_cv_t<T> > && !EnumWithNames<T>;
+
 // 'result' (a failure of a part of a value) as the failure of the array that holds it as its element 'index':
 // "[index]" put in front of its Path, e.g. [2] or [2].port
 TASWTomlResult ElementFailure(TASWTomlResult result, std::size_t index);
+
+// Sets 'value' to 'name', the name an enum's value is written as, or leaves it as it was and fails with InvalidValue
+// when the name isn't valid UTF-8, which TOML needs
+TASWTomlResult EnumNameToValue(std::string_view name, TASWTomlValue& value);
 
 // Reads 'value' as an integer type with the range 'min' to 'max' reads it (see TASWTomlConverter<integer types>)
 // into 'out', which is left as it was on failure: TypeMismatch for a value that isn't an integer, ValueOutOfRange
 // outside the range, whose message gives it ('max' as at most INT64_MAX, the largest TOML integer)
 TASWTomlResult IntegerFromValue(TASWTomlValue const& value, std::int64_t min, std::uint64_t max, std::int64_t& out);
+
+// The InvalidValue result of an enum with names reading 'value', a string that is none of its names or an integer
+// that is no listed value's number (see TASWTomlConverter<enums with names>): the message lists 'names', the names the
+// enum's values are written as, e.g. "The value "Purple" isn't a name of the enum: it must be Red, Green or Blue."
+TASWTomlResult InvalidEnumName(TASWTomlValue const& value, TNameVector const& names);
+
+// Whether 'text' is 'name' with the ASCII letters' case ignored; never when 'name' is empty
+bool IsEnumName(std::string_view text, std::string_view name) noexcept;
 
 // 'result' (a failure of a part of a value) as the failure of the table that holds it at 'key': the key, bare when it
 // can be, else a basic string (each byte of it that isn't valid UTF-8 as '?'), put in front of its Path, e.g. port,
@@ -118,18 +179,58 @@ char const* TypeName(TASWTomlValue const& value) noexcept;
 // integer, not a string."
 TASWTomlResult TypeMismatch(TASWTomlValue const& value, std::string_view wanted);
 
+// The InvalidValue result of an enum with names writing a value that has no name, whose number is 'number': "The
+// value 7 has no name in the enum's ASWTomlEnumNames(), so it can't be written."
+TASWTomlResult UnnamedEnumValue(std::string_view number);
+
 // Sets 'value' to 'number' as an unsigned integer type writes it (see TASWTomlConverter<integer types>), or leaves it
 // as it was and fails with ValueOutOfRange when 'number' is above INT64_MAX, which a TOML integer can't hold
 TASWTomlResult UnsignedIntegerToValue(std::uint64_t number, TASWTomlValue& value);
 
 // A failed result with 'code' and the message "The value <text> <problem>", the text as ValueText() gives it, e.g.
-// ValueFailure(InvalidValue, value, "isn't one of the names: Red, Green, Blue.")
+// ValueFailure(InvalidValue, value, "isn't one word.")
 TASWTomlResult ValueFailure(ETomlCode code, TASWTomlValue const& value, std::string_view problem);
 
 // 'value' as messages show it: as TOML text on one line (a string as a basic string, its control characters escaped),
 // cut to at most MaxValueTextSize bytes (not inside a UTF-8 sequence) followed by "..." when it is longer; "of type
 // <type>" (e.g. of type String) for a value that can't be written, such as a string that isn't valid UTF-8
 std::string ValueText(TASWTomlValue const& value);
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TIntegerConverter
+//
+// Converts any integral type T as an integer, as TASWTomlConverter<integer types> describes, so bool and the character
+// types too: the integer converters are this one, and the enum converters use it for an enum's underlying type
+/////////////////////////////////////////////////////////////////////////////
+template <std::integral T>
+requires(sizeof(T) <= sizeof(std::int64_t))
+struct TIntegerConverter
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& /*options*/)
+    {
+        std::int64_t number = 0;
+        TASWTomlResult result = IntegerFromValue(value, static_cast<std::int64_t>(std::numeric_limits<T>::min()),
+            static_cast<std::uint64_t>(std::numeric_limits<T>::max()), number);
+        if (result.IsOk())
+            out = static_cast<T>(number);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(T const& in, TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
+    {
+        if constexpr (std::is_signed_v<T>)
+        {
+            value = TASWTomlValue(static_cast<std::int64_t>(in));
+            return TASWTomlResult();
+        }
+        else
+        {
+            return UnsignedIntegerToValue(static_cast<std::uint64_t>(in), value);
+        }
+    }
+};
 
 } // namespace Detail
 
@@ -185,6 +286,142 @@ struct TASWTomlConverter<double>
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<enums with names>
+//
+// An enum for which argument-dependent lookup finds ASWTomlEnumNames() (see TASWTomlEnumName). Reads a string that is
+// one of its names with the ASCII letters' case ignored (no blanks are trimmed: a TOML string's quotes end it), or an
+// integer that is the number of a value listed with a name, so a file that stored the number still reads. Another
+// string or integer is InvalidValue, with a message that lists the names; any other type is TypeMismatch. Writes the
+// first name listed for the value, as a string; a value with no name is InvalidValue, since it couldn't be read back.
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::EnumWithNames T>
+struct TASWTomlConverter<T>
+{
+private:
+    using TNumber = std::underlying_type_t<T>;
+
+    // The first name listed for 'value' in 'names' (empty when it has none), the one it is written as
+    template <typename TNames>
+    static std::string_view WrittenName(TNames const& names, T value) noexcept
+    {
+        for (auto const& name : names)
+        {
+            if (name.Value == value && !name.Name.empty())
+                return name.Name;
+        }
+
+        return std::string_view();
+    }
+
+    // The names the values in 'names' are written as, each value's once, in the order listed
+    template <typename TNames>
+    static Detail::TNameVector WrittenNames(TNames const& names)
+    {
+        Detail::TNameVector written;
+        for (auto const& name : names)
+        {
+            // Written unless an entry before it names the same value
+            bool first = !name.Name.empty();
+            for (auto const& earlier : names)
+            {
+                if (&earlier == &name)
+                    break;
+
+                if (earlier.Value == name.Value && !earlier.Name.empty())
+                    first = false;
+            }
+
+            if (first)
+                written.push_back(name.Name);
+        }
+
+        return written;
+    }
+
+public:
+    static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& options)
+    {
+        auto const& names = ASWTomlEnumNames(T());
+        std::string const* const text = value.AsString();
+        if (text != nullptr)
+        {
+            for (auto const& name : names)
+            {
+                if (Detail::IsEnumName(*text, name.Name))
+                {
+                    out = name.Value;
+                    return TASWTomlResult();
+                }
+            }
+        }
+        else if (value.IsInteger())
+        {
+            TNumber number = 0;
+            if (Detail::TIntegerConverter<TNumber>::FromValue(value, number, options).IsOk())
+            {
+                if (!WrittenName(names, static_cast<T>(number)).empty())
+                {
+                    out = static_cast<T>(number);
+                    return TASWTomlResult();
+                }
+            }
+        }
+        else
+        {
+            return Detail::TypeMismatch(value, "a string or an integer");
+        }
+
+        return Detail::InvalidEnumName(value, WrittenNames(names));
+    }
+
+    static TASWTomlResult ToValue(T const& in, TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
+    {
+        std::string_view const name = WrittenName(ASWTomlEnumNames(T()), in);
+        if (!name.empty())
+            return Detail::EnumNameToValue(name, value);
+
+        // The value's number, for the message
+        if constexpr (std::is_signed_v<TNumber>)
+            return Detail::UnnamedEnumValue(std::to_string(static_cast<std::int64_t>(in)));
+        else
+            return Detail::UnnamedEnumValue(std::to_string(static_cast<std::uint64_t>(in)));
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<enums without names>
+//
+// An enum for which argument-dependent lookup finds no ASWTomlEnumNames() converts as an integer of its underlying
+// type, as TASWTomlConverter<integer types> describes (an underlying bool or character type is an integer too),
+// whether the number is one of its enumerators or not (e.g. bit flags: 5 is the value 5), so std::byte is an integer
+// from 0 to 255
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::EnumWithoutNames T>
+struct TASWTomlConverter<T>
+{
+private:
+    using TNumber = std::underlying_type_t<T>;
+
+public:
+    static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& options)
+    {
+        TNumber number = 0;
+        TASWTomlResult result = Detail::TIntegerConverter<TNumber>::FromValue(value, number, options);
+        if (result.IsOk())
+            out = static_cast<T>(number);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(T const& in, TASWTomlValue& value, TASWTomlValueOptions const& options)
+    {
+        return Detail::TIntegerConverter<TNumber>::ToValue(static_cast<TNumber>(in), value, options);
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TASWTomlConverter<float>
 //
 // As TASWTomlConverter<double>, with float's range and precision. A TOML float (a double) reads as the nearest float,
@@ -213,31 +450,8 @@ struct TASWTomlConverter<float>
 // be written (ValueOutOfRange).
 /////////////////////////////////////////////////////////////////////////////
 template <Detail::ConvertibleInteger T>
-struct TASWTomlConverter<T>
+struct TASWTomlConverter<T> : Detail::TIntegerConverter<T>
 {
-    static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& /*options*/)
-    {
-        std::int64_t number = 0;
-        TASWTomlResult result = Detail::IntegerFromValue(value, static_cast<std::int64_t>(std::numeric_limits<T>::min()),
-            static_cast<std::uint64_t>(std::numeric_limits<T>::max()), number);
-        if (result.IsOk())
-            out = static_cast<T>(number);
-
-        return result;
-    }
-
-    static TASWTomlResult ToValue(T const& in, TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
-    {
-        if constexpr (std::is_signed_v<T>)
-        {
-            value = TASWTomlValue(static_cast<std::int64_t>(in));
-            return TASWTomlResult();
-        }
-        else
-        {
-            return Detail::UnsignedIntegerToValue(static_cast<std::uint64_t>(in), value);
-        }
-    }
 };
 
 

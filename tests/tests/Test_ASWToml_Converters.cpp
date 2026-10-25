@@ -19,6 +19,7 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
+#include <array>
 #include <bit>
 #include <chrono>
 #include <cmath>
@@ -74,6 +75,160 @@ struct TTestBox
     T Item{};
 
     bool operator==(TTestBox const& other) const = default;
+};
+
+// The enums of the enum converter tests. Those with names declare ASWTomlEnumNames() as an application does, next to
+// the enum.
+
+// Names in an array, as TASWTomlEnumName shows: Green has a second name, and Unlisted none
+enum class EColor
+{
+    Red = -1,
+    Green = 2,
+    Blue = 40,
+    Unlisted = 7,
+};
+
+auto const& ASWTomlEnumNames(EColor)
+{
+    static constexpr ASWToml::TASWTomlEnumName<EColor> names[] = {
+        { EColor::Red, "Red" }, { EColor::Green, "Green" }, { EColor::Blue, "Blue" }, { EColor::Green, "Lime" },
+    };
+
+    return names;
+}
+
+// No names at all
+enum class EEmpty
+{
+    Only,
+};
+
+std::vector<ASWToml::TASWTomlEnumName<EEmpty> > ASWTomlEnumNames(EEmpty)
+{
+    return std::vector<ASWToml::TASWTomlEnumName<EEmpty> >();
+}
+
+// A name that isn't valid UTF-8, so it can't be written
+enum class EInvalidName
+{
+    Bad,
+};
+
+auto const& ASWTomlEnumNames(EInvalidName)
+{
+    static constexpr ASWToml::TASWTomlEnumName<EInvalidName> names[] = { { EInvalidName::Bad, "B\xFF" "d" } };
+
+    return names;
+}
+
+// No ASWTomlEnumNames(), so converted as the underlying type: one for each kind of underlying type
+enum class EFlags : unsigned int
+{
+    None = 0,
+    Read = 1,
+    Write = 2,
+};
+
+enum class ESmall : std::int8_t
+{
+    Low = -128,
+    High = 127,
+};
+
+enum class ESwitch : bool
+{
+    Off = false,
+    On = true,
+};
+
+enum class EWide : char16_t
+{
+    First = 0,
+};
+
+enum class EHuge : std::uint64_t
+{
+    Top = 18446744073709551615u,
+};
+
+// Names in a std::vector, returned by value
+enum class EMode
+{
+    Off,
+    Auto,
+    Manual,
+};
+
+std::vector<ASWToml::TASWTomlEnumName<EMode> > ASWTomlEnumNames(EMode)
+{
+    return { { EMode::Off, "Off" }, { EMode::Auto, "Auto" }, { EMode::Manual, "Manual" } };
+}
+
+// An unscoped enum, with names in an array
+enum EPlain
+{
+    PlainOne = 1,
+    PlainTwo = 2,
+};
+
+auto const& ASWTomlEnumNames(EPlain)
+{
+    static constexpr ASWToml::TASWTomlEnumName<EPlain> names[] = { { PlainOne, "One" }, { PlainTwo, "Two" } };
+
+    return names;
+}
+
+// Names in a std::array, with an unsigned char underlying type: Medium's first entry has an empty name, so its second
+// one is written, and Huge's only entry has an empty one, so it isn't listed
+enum class ESize : unsigned char
+{
+    Small = 0,
+    Medium = 1,
+    Huge = 200,
+    Large = 255,
+};
+
+std::array<ASWToml::TASWTomlEnumName<ESize>, 5> const& ASWTomlEnumNames(ESize)
+{
+    static std::array<ASWToml::TASWTomlEnumName<ESize>, 5> const names = { {
+        { ESize::Small, "Small" }, { ESize::Medium, "" }, { ESize::Medium, "Medium" }, { ESize::Huge, "" },
+        { ESize::Large, "Large" },
+    } };
+
+    return names;
+}
+
+// A class that converts to an enum with names, but isn't an enum (never defined)
+struct TColorHolder
+{
+    operator EColor() const;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TWindow
+//
+// A class with an enum whose names are a friend function, which only argument-dependent lookup finds; Maximized has a
+// second name
+/////////////////////////////////////////////////////////////////////////////
+class TWindow
+{
+public:
+    enum class EState
+    {
+        Normal,
+        Maximized,
+    };
+
+    friend auto const& ASWTomlEnumNames(EState)
+    {
+        static constexpr ASWToml::TASWTomlEnumName<EState> names[] = {
+            { EState::Normal, "Normal" }, { EState::Maximized, "Maximized" }, { EState::Maximized, "Zoomed" },
+        };
+
+        return names;
+    }
 };
 
 } // namespace
@@ -168,6 +323,25 @@ static_assert(!ASWToml::TomlConvertible<int const> && !ASWToml::TomlConvertible<
     "an integer type with const or volatile should have no converter: it can't be read into");
 static_assert(!ASWToml::Detail::ConvertibleInteger<bool>, "bool should have its own converter, not the integers'");
 
+// Argument-dependent lookup finds ASWTomlEnumNames() wherever an application may declare it, and an enum without one
+// has no names but converts too, std::byte included
+static_assert(ASWToml::Detail::EnumWithNames<ASWUnitTests::EColor>, "names in an array should be found");
+static_assert(ASWToml::Detail::EnumWithNames<ASWUnitTests::ESize>, "names in a std::array should be found");
+static_assert(ASWToml::Detail::EnumWithNames<ASWUnitTests::EMode>, "names in a std::vector should be found");
+static_assert(ASWToml::Detail::EnumWithNames<ASWUnitTests::EEmpty>, "an empty std::vector of names should be found");
+static_assert(ASWToml::Detail::EnumWithNames<ASWUnitTests::EPlain>, "the names of an unscoped enum should be found");
+static_assert(ASWToml::Detail::EnumWithNames<ASWUnitTests::TWindow::EState>, "names in a friend should be found");
+static_assert(ASWToml::Detail::EnumWithoutNames<ASWUnitTests::EFlags>, "an enum without ASWTomlEnumNames()");
+static_assert(ASWToml::Detail::EnumWithoutNames<std::byte>, "std::byte has no names");
+static_assert(!ASWToml::Detail::EnumWithNames<ASWUnitTests::TColorHolder> &&
+    !ASWToml::Detail::EnumWithoutNames<ASWUnitTests::TColorHolder>, "a class that converts to an enum isn't an enum");
+static_assert(!ASWToml::Detail::EnumWithNames<int> && !ASWToml::Detail::EnumWithoutNames<int>, "int isn't an enum");
+static_assert(ASWToml::TomlConvertible<ASWUnitTests::EColor> && ASWToml::TomlConvertible<ASWUnitTests::EFlags> &&
+    ASWToml::TomlConvertible<std::byte>, "enums with and without names should have converters");
+static_assert(!ASWToml::TomlConvertible<ASWUnitTests::EColor const> &&
+    !ASWToml::TomlConvertible<ASWUnitTests::EFlags const>, "an enum with const should have no converter");
+static_assert(!ASWToml::TomlConvertible<ASWUnitTests::TColorHolder>, "nor should a class that converts to an enum");
+
 namespace ASWUnitTests
 {
 
@@ -188,6 +362,8 @@ using ASWToml::TomlConvertible;
 using TArray = TASWTomlValue::TValueVector;
 using TTable = TASWTomlValue::TKeyValueVector;
 
+template <TomlConvertible T>
+std::string EnumRoundTripProblem(std::initializer_list<T> values);
 std::string Escaped(std::string const& text);
 std::string FirstLine(std::string const& text);
 template <ASWToml::Detail::ConvertibleInteger T>
@@ -197,13 +373,48 @@ std::string IntegerRoundTripProblem();
 template <ASWToml::Detail::ConvertibleInteger T>
 std::int64_t LargestInteger();
 TArray OneOfEachType();
+template <typename T>
+std::string ReadProblem(TASWTomlValue const& value, T expected);
 template <TomlConvertible T>
 std::string RefusalProblem(T const& initial, std::initializer_list<ETomlType> accepted, std::string const& wanted);
+template <typename T>
+std::string RejectProblem(TASWTomlValue const& value, ETomlCode code);
 template <typename T>
 bool SameBits(T a, T b);
 template <TomlConvertible T>
 TASWTomlResult ThroughDocument(T const& in, T& out, std::string& text);
+template <TomlConvertible T>
+std::string Written(T const& in);
 
+//---------------------------------------------------------------------------
+/*
+    EnumRoundTripProblem
+
+    What is wrong with how 'values', an enum's, go through a document (see ThroughDocument()): each must be written as
+    Written() gives it and read back as itself; empty when nothing is wrong
+*/
+template <TomlConvertible T>
+std::string EnumRoundTripProblem(std::initializer_list<T> values)
+{
+    for (T const in : values)
+    {
+        // The other value, so a read that does nothing fails
+        T out = static_cast<T>(static_cast<long long>(in) == 0 ? 1 : 0);
+        std::string text;
+        std::string const written = Written(in);
+        TASWTomlResult const through = ThroughDocument(in, out, text);
+        if (!through.IsOk())
+            return written + ": " + through.Message;
+
+        if (out != in)
+            return written + " should read back as itself";
+
+        if (FirstLine(text) != "v = " + written)
+            return written + ": the text is " + Escaped(text);
+    }
+
+    return std::string();
+}
 //---------------------------------------------------------------------------
 /*
     Escaped
@@ -358,6 +569,33 @@ TArray OneOfEachType()
 }
 //---------------------------------------------------------------------------
 /*
+    ReadProblem
+
+    What is wrong with how TASWTomlConverter<T>::FromValue() reads 'value', an enum's: it must read it as 'expected',
+    into a T that is first the enum's value 0 and then its value 1 (so a read that does nothing fails one of them);
+    empty when nothing is wrong
+*/
+template <typename T>
+std::string ReadProblem(TASWTomlValue const& value, T expected)
+{
+    for (int const initial : { 0, 1 })
+    {
+        T out = static_cast<T>(initial);
+        TASWTomlResult const result = TASWTomlConverter<T>::FromValue(value, out, TASWTomlValueOptions());
+        if (!result.IsOk())
+            return ASWToml::Detail::ValueText(value) + " should read: " + result.Message;
+
+        if (out != expected)
+        {
+            return ASWToml::Detail::ValueText(value) + " should read as " +
+                std::to_string(static_cast<long long>(expected)) + ", not " + std::to_string(static_cast<long long>(out));
+        }
+    }
+
+    return std::string();
+}
+//---------------------------------------------------------------------------
+/*
     RefusalProblem
 
     What is wrong with how TASWTomlConverter<T>::FromValue() refuses each value of OneOfEachType() but those of the
@@ -395,6 +633,37 @@ std::string RefusalProblem(T const& initial, std::initializer_list<ETomlType> ac
 
         if (!(out == initial))
             return type + ": the value read into changed";
+    }
+
+    return std::string();
+}
+//---------------------------------------------------------------------------
+/*
+    RejectProblem
+
+    What is wrong with how TASWTomlConverter<T>::FromValue() refuses 'value', an enum's: it must fail with 'code', a
+    message that shows the value, no Path, and the T read into (first the enum's value 0, then its value 1) unchanged;
+    empty when nothing is wrong
+*/
+template <typename T>
+std::string RejectProblem(TASWTomlValue const& value, ETomlCode code)
+{
+    std::string const text = ASWToml::Detail::ValueText(value);
+    for (int const initial : { 0, 1 })
+    {
+        T out = static_cast<T>(initial);
+        TASWTomlResult const result = TASWTomlConverter<T>::FromValue(value, out, TASWTomlValueOptions());
+        if (result.Code != code)
+            return text + ": the code is " + ASWToml::ToString(result.Code);
+
+        if (result.Message.find("The value " + text + " ") != 0)
+            return text + ": the message is " + Escaped(result.Message);
+
+        if (!result.Path.empty())
+            return text + ": the path is " + result.Path;
+
+        if (out != static_cast<T>(initial))
+            return text + ": the value read into changed";
     }
 
     return std::string();
@@ -447,6 +716,24 @@ TASWTomlResult ThroughDocument(T const& in, T& out, std::string& text)
     }
 
     return TASWTomlConverter<T>::FromValue(*found, out, TASWTomlValueOptions());
+}
+//---------------------------------------------------------------------------
+/*
+    Written
+
+    'in' as TASWTomlConverter<T>::ToValue() writes it, into a value that is a table first: the value as TOML text (see
+    ValueText()), or "failed: " and the message, with "(changed)" after it when the table changed
+*/
+template <TomlConvertible T>
+std::string Written(T const& in)
+{
+    TASWTomlValue const table = TTable{ { "x", 1 } };
+    TASWTomlValue value = table;
+    TASWTomlResult const result = TASWTomlConverter<T>::ToValue(in, value, TASWTomlValueOptions());
+    if (result.IsOk())
+        return ASWToml::Detail::ValueText(value);
+
+    return "failed: " + result.Message + (value == table ? "" : " (changed)");
 }
 //---------------------------------------------------------------------------
 
@@ -539,6 +826,258 @@ ASW_TEST(TTest_ASWToml_BoolConverter, ToValue_ReplacesTheValue)
     // Assert
     CheckTrue(result.IsOk(), "writing a bool never fails");
     CheckTrue(value == TASWTomlValue(false), "the table should be replaced by the boolean");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_EnumConverters
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_EnumConverters::TTest_ASWToml_EnumConverters()
+    : inherited("ASWToml_EnumConverters_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_EnumConverters::~TTest_ASWToml_EnumConverters()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_EnumConverters::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_EnumConverters::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_EnumConverters::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_EnumConverters::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, FromValue_IgnoresTheCaseOfLetters)
+{
+    // Act & Assert
+    // The first and last letters, A and Z, included
+    CheckEmpty(ReadProblem("red", EColor::Red), "red");
+    CheckEmpty(ReadProblem("GREEN", EColor::Green), "GREEN");
+    CheckEmpty(ReadProblem("lIME", EColor::Green), "lIME, the second name");
+    CheckEmpty(ReadProblem("bLuE", EColor::Blue), "bLuE");
+    CheckEmpty(ReadProblem("auto", EMode::Auto), "auto");
+    CheckEmpty(ReadProblem("MANUAL", EMode::Manual), "MANUAL");
+    CheckEmpty(ReadProblem("maximized", TWindow::EState::Maximized), "maximized");
+    CheckEmpty(ReadProblem("zOOMED", TWindow::EState::Maximized), "zOOMED");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, FromValue_ReadsEveryName)
+{
+    // Act & Assert
+    // Every kind of names: an array (with a second name), a std::array (with an empty name), a std::vector, an
+    // unscoped enum's and a friend function
+    CheckEmpty(ReadProblem("Red", EColor::Red), "Red");
+    CheckEmpty(ReadProblem("Green", EColor::Green), "Green");
+    CheckEmpty(ReadProblem("Blue", EColor::Blue), "Blue");
+    CheckEmpty(ReadProblem("Lime", EColor::Green), "Lime");
+    CheckEmpty(ReadProblem("Small", ESize::Small), "Small");
+    CheckEmpty(ReadProblem("Medium", ESize::Medium), "Medium");
+    CheckEmpty(ReadProblem("Large", ESize::Large), "Large");
+    CheckEmpty(ReadProblem("Off", EMode::Off), "Off");
+    CheckEmpty(ReadProblem("Auto", EMode::Auto), "Auto");
+    CheckEmpty(ReadProblem("Manual", EMode::Manual), "Manual");
+    CheckEmpty(ReadProblem("One", PlainOne), "One");
+    CheckEmpty(ReadProblem("Two", PlainTwo), "Two");
+    CheckEmpty(ReadProblem("Normal", TWindow::EState::Normal), "Normal");
+    CheckEmpty(ReadProblem("Maximized", TWindow::EState::Maximized), "Maximized");
+    CheckEmpty(ReadProblem("Zoomed", TWindow::EState::Maximized), "Zoomed");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, FromValue_ReadsTheNumberOfAListedValue)
+{
+    // Act & Assert
+    CheckEmpty(ReadProblem(-1, EColor::Red), "-1, a negative one");
+    CheckEmpty(ReadProblem(2, EColor::Green), "2");
+    CheckEmpty(ReadProblem(40, EColor::Blue), "40");
+    CheckEmpty(ReadProblem(255, ESize::Large), "255, the largest of the underlying type");
+    CheckEmpty(ReadProblem(2, PlainTwo), "2 of an unscoped enum");
+    CheckEmpty(ReadProblem(1, TWindow::EState::Maximized), "1 of a friend function's");
+
+    // Medium's first entry has an empty name, but its second one lists it
+    CheckEmpty(ReadProblem(1, ESize::Medium), "1, Medium");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, FromValue_RefusesOtherValues)
+{
+    // Arrange
+    // Other names, names with more around them (blanks included: a TOML string's quotes end it), an enumerator that
+    // isn't listed, the numbers of values that aren't listed or are outside the underlying type, and a name with a
+    // letter that only matches outside ASCII
+    std::string const texts[] = { "", " ", "Purple", "Unlisted", "Re", "Reds", " Red", "Red ", "Re d", "Red,",
+        "Red Green", "\"Red\"", "7", "-1", std::string("Red\0", 4), "R\xC3\xA9" "d", "BL\xC3\x9A" "E" };
+    std::int64_t const numbers[] = { 7, 3, 0, 41, 99999999999, std::numeric_limits<std::int64_t>::min() };
+
+    // Act & Assert
+    for (std::string const& text : texts)
+        CheckEmpty(RejectProblem<EColor>(text, ETomlCode::InvalidValue), Escaped(text) + " should be refused");
+
+    for (std::int64_t const number : numbers)
+        CheckEmpty(RejectProblem<EColor>(number, ETomlCode::InvalidValue), std::to_string(number) + " should be too");
+
+    // A number outside the underlying type is InvalidValue too, not ValueOutOfRange, and so is the number of a value
+    // that is listed with an empty name only
+    CheckEmpty(RejectProblem<ESize>(-1, ETomlCode::InvalidValue), "-1, below unsigned char");
+    CheckEmpty(RejectProblem<ESize>(256, ETomlCode::InvalidValue), "256, above it");
+    CheckEmpty(RejectProblem<ESize>(2, ETomlCode::InvalidValue), "2, no value of the enum");
+    CheckEmpty(RejectProblem<ESize>(200, ETomlCode::InvalidValue), "200, a value with an empty name only");
+    CheckEmpty(RejectProblem<ESize>("", ETomlCode::InvalidValue), "an empty string, which no empty name matches");
+
+    // An enum without names reads nothing, its enumerator's number neither
+    CheckEmpty(RejectProblem<EEmpty>("Only", ETomlCode::InvalidValue), "Only, of an enum without names");
+    CheckEmpty(RejectProblem<EEmpty>(0, ETomlCode::InvalidValue), "0, of an enum without names");
+
+    // Every other TOML type
+    CheckEmpty(RefusalProblem(EColor::Blue, { ETomlType::String, ETomlType::Integer }, "a string or an integer"),
+        "every other type should be refused");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, Messages_NameTheProblem)
+{
+    // Arrange
+    EColor color = EColor::Red;
+    ESize size = ESize::Small;
+    TWindow::EState state = TWindow::EState::Normal;
+    EEmpty empty = EEmpty::Only;
+    EMode mode = EMode::Off;
+    TASWTomlValue value = "kept";
+
+    // Act
+    TASWTomlResult const colorRead = TASWTomlConverter<EColor>::FromValue("Purple", color, TASWTomlValueOptions());
+    TASWTomlResult const numberRead = TASWTomlConverter<EColor>::FromValue(7, color, TASWTomlValueOptions());
+    TASWTomlResult const sizeRead = TASWTomlConverter<ESize>::FromValue("Giant", size, TASWTomlValueOptions());
+    TASWTomlResult const stateRead = TASWTomlConverter<TWindow::EState>::FromValue("Min", state,
+        TASWTomlValueOptions());
+    TASWTomlResult const emptyRead = TASWTomlConverter<EEmpty>::FromValue("Only", empty, TASWTomlValueOptions());
+    TASWTomlResult const mismatch = TASWTomlConverter<EMode>::FromValue(true, mode, TASWTomlValueOptions());
+    TASWTomlResult const written = TASWTomlConverter<EColor>::ToValue(EColor::Unlisted, value, TASWTomlValueOptions());
+
+    // Assert
+    // The names listed are those written: a second name of a value, or an empty one, isn't
+    CheckEquals("The value \"Purple\" isn't a name of the enum: it must be Red, Green or Blue."s, colorRead.Message,
+        "the message should list the names written, without Lime");
+    CheckEquals("The value 7 isn't a name of the enum: it must be Red, Green or Blue."s, numberRead.Message,
+        "a number that isn't a listed value's should say the same");
+    CheckEquals("The value \"Giant\" isn't a name of the enum: it must be Small, Medium or Large."s, sizeRead.Message,
+        "the message should list each value's name once");
+    CheckEquals("The value \"Min\" isn't a name of the enum: it must be Normal or Maximized."s, stateRead.Message,
+        "the message should list two names with \"or\", without Zoomed");
+    CheckEquals("The value \"Only\" isn't a name of the enum: it has no names."s, emptyRead.Message,
+        "the message should say that the enum has no names");
+    CheckEquals("The value true is a boolean, not a string or an integer."s, mismatch.Message,
+        "another type should be a TypeMismatch that names both types it reads");
+    CheckEquals("The value 7 has no name in the enum's ASWTomlEnumNames(), so it can't be written."s, written.Message,
+        "the message should give the value's number");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, RoundTrip_EveryListedValue_ThroughADocument)
+{
+    // Act & Assert
+    CheckEmpty(EnumRoundTripProblem({ EColor::Red, EColor::Green, EColor::Blue }), "EColor");
+    CheckEmpty(EnumRoundTripProblem({ ESize::Small, ESize::Medium, ESize::Large }), "ESize");
+    CheckEmpty(EnumRoundTripProblem({ EMode::Off, EMode::Auto, EMode::Manual }), "EMode");
+    CheckEmpty(EnumRoundTripProblem({ PlainOne, PlainTwo }), "EPlain");
+    CheckEmpty(EnumRoundTripProblem({ TWindow::EState::Normal, TWindow::EState::Maximized }), "TWindow::EState");
+    CheckEmpty(EnumRoundTripProblem({ EFlags::None, EFlags::Write, static_cast<EFlags>(4294967295u) }), "EFlags");
+    CheckEmpty(EnumRoundTripProblem({ ESmall::Low, ESmall::High }), "ESmall");
+    CheckEmpty(EnumRoundTripProblem({ ESwitch::Off, ESwitch::On }), "ESwitch");
+    CheckEmpty(EnumRoundTripProblem({ std::byte{ 0 }, std::byte{ 255 } }), "std::byte");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, ToValue_RefusesWhatCantBeReadBack)
+{
+    // Act & Assert
+    // Enumerators that aren't listed or are listed with an empty name only, numbers that are no enumerator, and the
+    // enumerator of an enum without names; Written() starts from a table and says when it changed
+    CheckEquals("failed: The value 7 has no name in the enum's ASWTomlEnumNames(), so it can't be written."s,
+        Written(EColor::Unlisted), "an enumerator that isn't listed");
+    CheckContains(Written(static_cast<EColor>(-1000)), "failed: The value -1000 has no name"s, "a number");
+    CheckContains(Written(static_cast<ESize>(2)), "failed: The value 2 has no name"s, "a number of an unsigned type");
+    CheckContains(Written(ESize::Huge), "failed: The value 200 has no name"s, "an enumerator with an empty name");
+    CheckContains(Written(EEmpty::Only), "failed: The value 0 has no name"s, "an enum without names");
+
+    // A name that isn't valid UTF-8 can't be written as a TOML string
+    CheckEquals("failed: The string can't be written: it isn't valid UTF-8 (at byte 1), which TOML needs."s,
+        Written(EInvalidName::Bad), "a name that isn't valid UTF-8");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, ToValue_WritesTheFirstName)
+{
+    // Act & Assert
+    // Written() starts from a table, so these also check that it is replaced
+    CheckEquals("\"Red\""s, Written(EColor::Red), "Red");
+    CheckEquals("\"Green\""s, Written(EColor::Green), "Green, not its second name Lime");
+    CheckEquals("\"Blue\""s, Written(EColor::Blue), "Blue");
+    CheckEquals("\"Medium\""s, Written(ESize::Medium), "Medium, whose first entry has an empty name");
+    CheckEquals("\"Large\""s, Written(ESize::Large), "Large");
+    CheckEquals("\"Manual\""s, Written(EMode::Manual), "Manual, from a std::vector");
+    CheckEquals("\"Two\""s, Written(PlainTwo), "PlainTwo, of an unscoped enum");
+    CheckEquals("\"Maximized\""s, Written(TWindow::EState::Maximized), "Maximized, from a friend, not Zoomed");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, WithoutNames_ConvertsAsTheUnderlyingType)
+{
+    // Act & Assert
+    // Any number of the underlying type, an enumerator or not, as an integer (not as a character or a boolean)
+    CheckEmpty(ReadProblem(3, static_cast<EFlags>(3)), "3, flags that are no enumerator");
+    CheckEmpty(ReadProblem(4294967295, static_cast<EFlags>(4294967295u)), "the largest unsigned int");
+    CheckEmpty(ReadProblem(-128, ESmall::Low), "-128, the smallest std::int8_t");
+    CheckEmpty(ReadProblem(127, ESmall::High), "127, the largest");
+    CheckEmpty(ReadProblem(1, ESwitch::On), "1, a bool enum's true");
+    CheckEmpty(ReadProblem(0, ESwitch::Off), "0, its false");
+    CheckEmpty(ReadProblem(65535, static_cast<EWide>(65535)), "65535, the largest char16_t");
+    CheckEmpty(ReadProblem(255, std::byte{ 255 }), "255, the largest std::byte");
+    CheckEmpty(ReadProblem(9223372036854775807, static_cast<EHuge>(9223372036854775807u)),
+        "INT64_MAX, the largest a std::uint64_t enum reads");
+
+    CheckEquals("5"s, Written(static_cast<EFlags>(5)), "flags that are no enumerator");
+    CheckEquals("-128"s, Written(ESmall::Low), "a std::int8_t enum, as an integer");
+    CheckEquals("1"s, Written(ESwitch::On), "a bool enum, as an integer");
+    CheckEquals("65"s, Written(static_cast<EWide>(65)), "a char16_t enum, as an integer");
+    CheckEquals("171"s, Written(std::byte{ 0xAB }), "std::byte, as an integer");
+    CheckEquals("failed: The value 18446744073709551615 is out of range: it must be from 0 to 9223372036854775807."s,
+        Written(EHuge::Top), "a std::uint64_t enum above INT64_MAX can't be written");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_EnumConverters, WithoutNames_RefusesWhatTheUnderlyingTypeRefuses)
+{
+    // Arrange
+    ESwitch value = ESwitch::Off;
+
+    // Act
+    TASWTomlResult const result = TASWTomlConverter<ESwitch>::FromValue(2, value, TASWTomlValueOptions());
+
+    // Assert
+    // The enumerators' names aren't known, and a boolean isn't an integer
+    CheckEmpty(RejectProblem<EFlags>("Read", ETomlCode::TypeMismatch), "a name of an enum without names");
+    CheckEmpty(RejectProblem<ESwitch>(true, ETomlCode::TypeMismatch), "a boolean for a bool enum");
+    CheckEmpty(RefusalProblem(EFlags::Read, { ETomlType::Integer }, "an integer"), "every other type");
+
+    // The underlying type's range
+    CheckEmpty(RejectProblem<EFlags>(-1, ETomlCode::ValueOutOfRange), "-1 for an unsigned int");
+    CheckEmpty(RejectProblem<EFlags>(4294967296, ETomlCode::ValueOutOfRange), "4294967296 for an unsigned int");
+    CheckEmpty(RejectProblem<ESmall>(128, ETomlCode::ValueOutOfRange), "128 for a std::int8_t");
+    CheckEmpty(RejectProblem<ESwitch>(2, ETomlCode::ValueOutOfRange), "2 for a bool");
+    CheckEmpty(RejectProblem<EWide>(65536, ETomlCode::ValueOutOfRange), "65536 for a char16_t");
+    CheckEmpty(RejectProblem<std::byte>(256, ETomlCode::ValueOutOfRange), "256 for std::byte");
+    CheckEquals("The value 2 is out of range: it must be from 0 to 1."s, result.Message,
+        "the message should give the underlying type's range");
 }
 //---------------------------------------------------------------------------
 
@@ -1324,6 +1863,7 @@ ASW_TEST(TTest_ASWToml_TextConverters, Value_AsItIs)
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_BoolConverter, "Converters")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_EnumConverters, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_FloatConverters, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_IntegerConverters, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_TextConverters, "Converters")

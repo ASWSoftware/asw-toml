@@ -203,10 +203,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `INT64_MAX` can't be written), `float` and `double` (floats, and integers they hold exactly; inf
   and nan keep their sign; a float beyond the range of `float` is `ValueOutOfRange` for it, and a
   `float` is written as the double nearest its shortest text, so `0.1f` is written as `0.1` and
-  reads back the same), `std::string` and `std::u8string` (strings only; text that isn't valid UTF-8
-  can't be written) and `std::filesystem::path` (a string, the path in UTF-8 on every platform, so a
-  Windows path is written as `'C:\Users\me'`; a path that wouldn't read back the same can't be
-  written). An application adds its own by specializing the template in namespace `ASWToml`, for one
-  type or, with a requires clause, for a group of types.
+  reads back the same), enums (by name when the application declares `ASWTomlEnumNames()` next to
+  the enum, returning its `TASWTomlEnumName<T>`s: a string that is a name with the ASCII letters'
+  case ignored, or the number of a value listed with a name, reads; the first name listed for a
+  value is written, and a value without one can't be; an enum without names converts as an integer
+  of its underlying type, so `std::byte` is an integer from 0 to 255), `std::string` and
+  `std::u8string` (strings only; text that isn't valid UTF-8 can't be written) and
+  `std::filesystem::path` (a string, the path in UTF-8 on every platform, so a Windows path is
+  written as `'C:\Users\me'`; a path that wouldn't read back the same can't be written). An
+  application adds its own by specializing the template in namespace `ASWToml`, for one type or,
+  with a requires clause, for a group of types.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

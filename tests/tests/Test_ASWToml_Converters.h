@@ -46,6 +46,37 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_EnumConverters
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_EnumConverters : public TAutoTestGroup<TTest_ASWToml_EnumConverters>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_EnumConverters> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_FromValue_IgnoresTheCaseOfLetters();
+    void Test_FromValue_ReadsEveryName();
+    void Test_FromValue_ReadsTheNumberOfAListedValue();
+    void Test_FromValue_RefusesOtherValues();
+    void Test_Messages_NameTheProblem();
+    void Test_RoundTrip_EveryListedValue_ThroughADocument();
+    void Test_ToValue_RefusesWhatCantBeReadBack();
+    void Test_ToValue_WritesTheFirstName();
+    void Test_WithoutNames_ConvertsAsTheUnderlyingType();
+    void Test_WithoutNames_RefusesWhatTheUnderlyingTypeRefuses();
+
+public:
+    TTest_ASWToml_EnumConverters();
+    ~TTest_ASWToml_EnumConverters() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_FloatConverters
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_FloatConverters : public TAutoTestGroup<TTest_ASWToml_FloatConverters>

@@ -45,6 +45,7 @@ namespace
 constexpr double FloatRoundingLimit = 0x1.FFFFFFp127;
 static_assert(FloatRoundingLimit - std::numeric_limits<float>::max() == 0x1p103, "half the step above FLT_MAX");
 
+char AsciiLower(char c) noexcept;
 TASWTomlResult Failure(ETomlCode code, std::string message);
 bool HeldExactly(std::int64_t number, int digits) noexcept;
 bool NearestFloat(double number, float& nearest) noexcept;
@@ -53,6 +54,19 @@ TASWTomlResult OutOfRange(std::string_view text, std::string_view min, std::stri
 std::string PrefixedPath(std::string part, std::string const& path);
 std::string ValidUtf8(std::string_view text);
 
+//---------------------------------------------------------------------------
+/*
+    AsciiLower
+
+    'c' as a lower-case letter when it is an ASCII upper-case one, else as it is
+*/
+char AsciiLower(char c) noexcept
+{
+    if (c >= 'A' && c <= 'Z')
+        return static_cast<char>(c - 'A' + 'a');
+
+    return c;
+}
 //---------------------------------------------------------------------------
 /*
     Failure
@@ -196,6 +210,11 @@ TASWTomlResult Detail::ElementFailure(TASWTomlResult result, std::size_t index)
     return result;
 }
 //---------------------------------------------------------------------------
+TASWTomlResult Detail::EnumNameToValue(std::string_view name, TASWTomlValue& value)
+{
+    return TASWTomlConverter<std::string>::ToValue(std::string(name), value, TASWTomlValueOptions());
+}
+//---------------------------------------------------------------------------
 TASWTomlResult Detail::IntegerFromValue(TASWTomlValue const& value, std::int64_t min, std::uint64_t max,
     std::int64_t& out)
 {
@@ -211,6 +230,39 @@ TASWTomlResult Detail::IntegerFromValue(TASWTomlValue const& value, std::int64_t
     out = *number;
 
     return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::InvalidEnumName(TASWTomlValue const& value, TNameVector const& names)
+{
+    if (names.empty())
+        return ValueFailure(ETomlCode::InvalidValue, value, "isn't a name of the enum: it has no names.");
+
+    std::string problem = "isn't a name of the enum: it must be ";
+    for (std::size_t i = 0; i < names.size(); ++i)
+    {
+        if (i > 0)
+            problem += i + 1 < names.size() ? ", " : " or ";
+
+        problem += names[i];
+    }
+
+    problem += '.';
+
+    return ValueFailure(ETomlCode::InvalidValue, value, problem);
+}
+//---------------------------------------------------------------------------
+bool Detail::IsEnumName(std::string_view text, std::string_view name) noexcept
+{
+    if (name.empty() || text.size() != name.size())
+        return false;
+
+    for (std::size_t i = 0; i < text.size(); ++i)
+    {
+        if (AsciiLower(text[i]) != AsciiLower(name[i]))
+            return false;
+    }
+
+    return true;
 }
 //---------------------------------------------------------------------------
 TASWTomlResult Detail::KeyFailure(TASWTomlResult result, std::string_view key)
@@ -273,6 +325,15 @@ TASWTomlResult Detail::TypeMismatch(TASWTomlValue const& value, std::string_view
     problem += '.';
 
     return ValueFailure(ETomlCode::TypeMismatch, value, problem);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::UnnamedEnumValue(std::string_view number)
+{
+    std::string message = "The value ";
+    message += number;
+    message += " has no name in the enum's ASWTomlEnumNames(), so it can't be written.";
+
+    return Failure(ETomlCode::InvalidValue, std::move(message));
 }
 //---------------------------------------------------------------------------
 TASWTomlResult Detail::UnsignedIntegerToValue(std::uint64_t number, TASWTomlValue& value)
