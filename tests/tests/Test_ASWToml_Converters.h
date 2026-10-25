@@ -82,6 +82,34 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_ConverterFuzz
+//
+// The converters of many types with random C++ values and random TOML values, each from a generator whose seed a
+// failure names
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_ConverterFuzz : public TAutoTestGroup<TTest_ASWToml_ConverterFuzz>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_ConverterFuzz> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_RandomTomlValues_ReadAsArraysAndTables();
+    void Test_RandomTomlValues_ReadAsScalars();
+    void Test_RandomValues_ArraysAndTables_RoundTrip();
+    void Test_RandomValues_Scalars_RoundTrip();
+
+public:
+    TTest_ASWToml_ConverterFuzz();
+    ~TTest_ASWToml_ConverterFuzz() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DateTimeConverters
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_DateTimeConverters : public TAutoTestGroup<TTest_ASWToml_DateTimeConverters>

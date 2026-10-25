@@ -17,9 +17,14 @@ by its path (`TASWTomlPath`, `ASWToml_Path.h`), checked against every file of to
 list. And it edits them, changing only the text an edit needs: values set in place in their own
 form, new keys and tables where their table is written, keys, tables and elements removed and
 renamed, whole tables and arrays merged so only what differs changes, and the comments above keys
-and tables and at the end of their lines. The typed values come next, then loading and saving
-files, and the settings binding. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The
-interface may change in any way until 1.0.0.
+and tables and at the end of their lines. And it converts TOML values to and from C++ types
+(`TASWTomlConverter<T>`, `ASWToml_Converters.h`): strings, paths, booleans, every integer type,
+`float` and `double`, enums by name, the `std::chrono` dates, time points and times of day,
+`std::vector`, `std::array`, sets, pairs and tuples as arrays, maps (with string, integer or enum
+keys) as tables, and structs through a list of their fields, so a `std::vector` of a struct is an
+array of tables. Loading and saving files come next, then the settings binding.
+[CHANGELOG.md](CHANGELOG.md) lists what each change adds. The interface may change in any way until
+1.0.0.
 
 ## Design
 
@@ -57,10 +62,11 @@ whose design it follows. Its goals:
   key or inside the braces of an inline table when the table is written that way; a new table as a
   `[header]`. The file's, a table's and a key's comments, and end-of-line comments.
 - Typed values, the same in any locale: strings, booleans, every integer type with range checks,
-  `float` and `double`, TOML's four date and time types as C++20 `std::chrono` types, enums by
-  name, `std::filesystem::path`, `std::u8string`, `std::vector<T>` as an array,
-  `std::map<std::string, T>` as a table, and structs through a list of their fields, so a
-  `std::vector` of a struct is an array of tables; plus your own types.
+  `float` and `double`, TOML's four date and time types as C++20 `std::chrono` types, enums by name,
+  `std::filesystem::path`, `std::u8string`, `std::vector<T>`, `std::array`, sets, pairs and tuples
+  as arrays, `std::map` and `std::unordered_map` (string, integer or enum keys) as tables, and
+  structs through a list of their fields, so a `std::vector` of a struct is an array of tables; plus
+  your own types.
 - An interface, `ASWToml::IASWToml`, and its implementation, `ASWToml::TASWBaseToml`, which an
   application's settings class derives from, declaring its tables and settings
   (`TASWTomlTable`, `TASWTomlSetting<T>`), arrays of tables included.
