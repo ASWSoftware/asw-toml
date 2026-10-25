@@ -17,8 +17,6 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "Test_ASWToml_Path.h"
 //---------------------------------------------------------------------------
-#include "ASWUnitTests_Registry.h"
-//---------------------------------------------------------------------------
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -27,6 +25,8 @@ SPDX-License-Identifier: MIT
 #include <string>
 #include <string_view>
 #include <type_traits>
+//---------------------------------------------------------------------------
+#include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
 #include "ASWToml_Path.h"
 #include "ASWToml_Utils.h"

@@ -17,8 +17,6 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "Test_ASWToml_Scalars.h"
 //---------------------------------------------------------------------------
-#include "ASWUnitTests_Registry.h"
-//---------------------------------------------------------------------------
 #include <bit>
 #include <chrono>
 #include <cmath>
@@ -28,6 +26,8 @@ SPDX-License-Identifier: MIT
 #include <random>
 #include <string>
 #include <vector>
+//---------------------------------------------------------------------------
+#include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
 #include "ASWToml_Scalars.h"
 #include "ASWToml_Utils.h"

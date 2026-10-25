@@ -17,8 +17,6 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "Test_ASWToml_Converters_Containers.h"
 //---------------------------------------------------------------------------
-#include "ASWUnitTests_Registry.h"
-//---------------------------------------------------------------------------
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +35,8 @@ SPDX-License-Identifier: MIT
 #include <unordered_set>
 #include <utility>
 #include <vector>
+//---------------------------------------------------------------------------
+#include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"

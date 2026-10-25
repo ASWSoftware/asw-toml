@@ -17,11 +17,11 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "Test_ASWToml_Utils.h"
 //---------------------------------------------------------------------------
-#include "ASWUnitTests_Registry.h"
-//---------------------------------------------------------------------------
 #include <cstddef>
 #include <string>
 #include <string_view>
+//---------------------------------------------------------------------------
+#include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
 #include "ASWToml_Types.h"
 #include "ASWToml_Utils.h"
