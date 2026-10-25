@@ -116,6 +116,10 @@
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
     </PropertyGroup>
     <ItemGroup>
+        <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Base.cpp">
+            <DependentOn>..\..\..\..\ASWToml\ASWToml_Base.h</DependentOn>
+            <BuildOrder>77</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Converters.cpp">
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Converters.h</DependentOn>
             <BuildOrder>69</BuildOrder>
@@ -171,6 +175,10 @@
         <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Writer.cpp">
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Writer.h</DependentOn>
             <BuildOrder>66</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\..\tests\Test_ASWToml_Base.cpp">
+            <DependentOn>..\..\..\tests\Test_ASWToml_Base.h</DependentOn>
+            <BuildOrder>78</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\tests\Test_ASWToml_Converters.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_Converters.h</DependentOn>
@@ -235,6 +243,10 @@
         <CppCompile Include="..\..\..\tests\UT_Helper_Converters.cpp">
             <DependentOn>..\..\..\tests\UT_Helper_Converters.h</DependentOn>
             <BuildOrder>74</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\..\tests\UT_Helper_FailingAlloc.cpp">
+            <DependentOn>..\..\..\tests\UT_Helper_FailingAlloc.h</DependentOn>
+            <BuildOrder>79</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\tests\UT_Helper_TempDir.cpp">
             <DependentOn>..\..\..\tests\UT_Helper_TempDir.h</DependentOn>
