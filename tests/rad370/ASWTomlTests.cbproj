@@ -158,6 +158,18 @@
             <DependentOn>..\tests\Test_ASWToml_Converters.h</DependentOn>
             <BuildOrder>38</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_Converters_Containers.cpp">
+            <DependentOn>..\tests\Test_ASWToml_Converters_Containers.h</DependentOn>
+            <BuildOrder>39</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_Converters_Fuzz.cpp">
+            <DependentOn>..\tests\Test_ASWToml_Converters_Fuzz.h</DependentOn>
+            <BuildOrder>40</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_Converters_Structs.cpp">
+            <DependentOn>..\tests\Test_ASWToml_Converters_Structs.h</DependentOn>
+            <BuildOrder>41</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\tests\Test_ASWToml_Document.cpp">
             <DependentOn>..\tests\Test_ASWToml_Document.h</DependentOn>
             <BuildOrder>32</BuildOrder>
@@ -197,6 +209,10 @@
         <CppCompile Include="..\tests\Test_ASWToml_Writer.cpp">
             <DependentOn>..\tests\Test_ASWToml_Writer.h</DependentOn>
             <BuildOrder>35</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\tests\UT_Helper_Converters.cpp">
+            <DependentOn>..\tests\UT_Helper_Converters.h</DependentOn>
+            <BuildOrder>42</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\tests\UT_Helper_TempDir.cpp">
             <DependentOn>..\tests\UT_Helper_TempDir.h</DependentOn>

@@ -42,6 +42,9 @@ endif()
 add_executable(ASWTomlTests
     ${ASWUNITTESTS_SOURCES}
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters.cpp"
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters_Containers.cpp"
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters_Fuzz.cpp"
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters_Structs.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Document.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_File.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Options.cpp"
@@ -52,6 +55,7 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Value.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Version.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Writer.cpp"
+    "${ASWTOML_TESTS_DIR}/UT_Helper_Converters.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_TempDir.cpp"
     "${ASWTOML_TOML_TEST_DIR}/TomlTest_Corpus.cpp"
 )

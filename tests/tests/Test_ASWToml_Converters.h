@@ -2,6 +2,11 @@
 Test_ASWToml_Converters.h
 Author: Anthony S. West - ASW Software
 
+The tests of ASWToml_Converters: the converters of text, booleans, numbers,
+enums, dates and times. The tests of the other converters are in
+Test_ASWToml_Converters_Containers (arrays and tables), _Structs and _Fuzz,
+and the test types and helpers they share in UT_Helper_Converters.
+
 Copyright 2026 ASW Software
 
 Licensed under the MIT License: see the LICENSE file that comes with this
@@ -22,42 +27,6 @@ namespace ASWUnitTests
 {
 
 /////////////////////////////////////////////////////////////////////////////
-// TTest_ASWToml_ArrayConverters
-/////////////////////////////////////////////////////////////////////////////
-class TTest_ASWToml_ArrayConverters : public TAutoTestGroup<TTest_ASWToml_ArrayConverters>
-{
-private:
-    typedef TAutoTestGroup<TTest_ASWToml_ArrayConverters> inherited;
-
-public: // Test methods, each defined with ASW_TEST
-    void Test_Array_ReadsExactlyItsLength();
-    void Test_Elements_UseTheirTypesConverter();
-    void Test_EveryType_RefusesWhatIsntAnArray();
-    void Test_Helpers_SortByText();
-    void Test_Pair_ReadsTwoElementsOfTheirOwnTypes();
-    void Test_RoundTrip_EveryType_ThroughADocument();
-    void Test_Set_ReadsEachElementOnce();
-    void Test_Set_ReadsWithTheSetsOwnComparator();
-    void Test_Set_WritesInItsOrder();
-    void Test_ToValue_FailsAtTheFirstElementThatFails();
-    void Test_Tuple_ReadsEachElementAsItsOwnType();
-    void Test_UnorderedSet_WritesSortedByText();
-    void Test_Vector_FromValue_FailsAtTheFirstElementThatFails();
-    void Test_Vector_FromValue_ReadsAnyArray();
-    void Test_Vector_ToValue_WritesEachElement();
-
-public:
-    TTest_ASWToml_ArrayConverters();
-    ~TTest_ASWToml_ArrayConverters() override;
-
-    void SetUp_Group() override;
-    void SetUp_Test(ITestCase& testCase) override;
-    void TearDown_Group() override;
-    void TearDown_Test(ITestCase& testCase) override;
-};
-
-
-/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_BoolConverter
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_BoolConverter : public TAutoTestGroup<TTest_ASWToml_BoolConverter>
@@ -73,34 +42,6 @@ public: // Test methods, each defined with ASW_TEST
 public:
     TTest_ASWToml_BoolConverter();
     ~TTest_ASWToml_BoolConverter() override;
-
-    void SetUp_Group() override;
-    void SetUp_Test(ITestCase& testCase) override;
-    void TearDown_Group() override;
-    void TearDown_Test(ITestCase& testCase) override;
-};
-
-
-/////////////////////////////////////////////////////////////////////////////
-// TTest_ASWToml_ConverterFuzz
-//
-// The converters of many types with random C++ values and random TOML values, each from a generator whose seed a
-// failure names
-/////////////////////////////////////////////////////////////////////////////
-class TTest_ASWToml_ConverterFuzz : public TAutoTestGroup<TTest_ASWToml_ConverterFuzz>
-{
-private:
-    typedef TAutoTestGroup<TTest_ASWToml_ConverterFuzz> inherited;
-
-public: // Test methods, each defined with ASW_TEST
-    void Test_RandomTomlValues_ReadAsArraysAndTables();
-    void Test_RandomTomlValues_ReadAsScalars();
-    void Test_RandomValues_ArraysAndTables_RoundTrip();
-    void Test_RandomValues_Scalars_RoundTrip();
-
-public:
-    TTest_ASWToml_ConverterFuzz();
-    ~TTest_ASWToml_ConverterFuzz() override;
 
     void SetUp_Group() override;
     void SetUp_Test(ITestCase& testCase) override;
@@ -221,69 +162,6 @@ public: // Test methods, each defined with ASW_TEST
 public:
     TTest_ASWToml_IntegerConverters();
     ~TTest_ASWToml_IntegerConverters() override;
-
-    void SetUp_Group() override;
-    void SetUp_Test(ITestCase& testCase) override;
-    void TearDown_Group() override;
-    void TearDown_Test(ITestCase& testCase) override;
-};
-
-
-/////////////////////////////////////////////////////////////////////////////
-// TTest_ASWToml_StructConverters
-/////////////////////////////////////////////////////////////////////////////
-class TTest_ASWToml_StructConverters : public TAutoTestGroup<TTest_ASWToml_StructConverters>
-{
-private:
-    typedef TAutoTestGroup<TTest_ASWToml_StructConverters> inherited;
-
-public: // Test methods, each defined with ASW_TEST
-    void Test_EveryType_RefusesWhatIsntATable();
-    void Test_Fields_OfABaseClassAndPrivateMembers();
-    void Test_FromValue_FailsAtTheFirstFieldThatFails();
-    void Test_FromValue_ReadsEachFieldIntoACopy();
-    void Test_OptionalStruct_ReadsIntoTheValueItHolds();
-    void Test_RoundTrip_EveryType_ThroughADocument();
-    void Test_ToValue_FailsForAKeyOrValueThatCantBeWritten();
-    void Test_ToValue_WritesEveryFieldInTheListsOrder();
-
-public:
-    TTest_ASWToml_StructConverters();
-    ~TTest_ASWToml_StructConverters() override;
-
-    void SetUp_Group() override;
-    void SetUp_Test(ITestCase& testCase) override;
-    void TearDown_Group() override;
-    void TearDown_Test(ITestCase& testCase) override;
-};
-
-
-/////////////////////////////////////////////////////////////////////////////
-// TTest_ASWToml_TableConverters
-/////////////////////////////////////////////////////////////////////////////
-class TTest_ASWToml_TableConverters : public TAutoTestGroup<TTest_ASWToml_TableConverters>
-{
-private:
-    typedef TAutoTestGroup<TTest_ASWToml_TableConverters> inherited;
-
-public: // Test methods, each defined with ASW_TEST
-    void Test_EnumKeys_ReadByName();
-    void Test_EveryType_RefusesWhatIsntATable();
-    void Test_FromValue_FailsAtTheFirstKeyThatFails();
-    void Test_FromValue_ReadsAnyTable();
-    void Test_Helpers_RepeatedEnumKey();
-    void Test_IntegerKeys_ReadAsDecimalDigits();
-    void Test_IntegerKeys_RefuseWhatIsntANumberInRange();
-    void Test_ReadsWithTheMapsOwnComparator();
-    void Test_RepeatedKey_FailsTheMap();
-    void Test_RoundTrip_EveryType_ThroughADocument();
-    void Test_ToValue_FailsAtTheFirstKeyOrValueThatFails();
-    void Test_ToValue_WritesInTheMapsOrder();
-    void Test_UnorderedMap_WritesKeysSortedByText();
-
-public:
-    TTest_ASWToml_TableConverters();
-    ~TTest_ASWToml_TableConverters() override;
 
     void SetUp_Group() override;
     void SetUp_Test(ITestCase& testCase) override;
