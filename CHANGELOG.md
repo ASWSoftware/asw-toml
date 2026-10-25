@@ -217,8 +217,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   libstdc++, so it holds only 1677 to 2262 there, while `sys_seconds` holds every instant TOML
   writes), `std::string` and `std::u8string` (strings only; text that isn't valid UTF-8 can't be
   written) and `std::filesystem::path` (a string, the path in UTF-8 on every platform, so a Windows
-  path is written as `'C:\Users\me'`; a path that wouldn't read back the same can't be written). An
-  application adds its own by specializing the template in namespace `ASWToml`, for one type or,
-  with a requires clause, for a group of types.
+  path is written as `'C:\Users\me'`; a path that wouldn't read back the same can't be written), and
+  `std::vector`, `std::array`, `std::set`, `std::unordered_set`, `std::pair` and `std::tuple` of
+  types that have converters and default constructors, as arrays (an array of tables too; each
+  element is read into a new `T{}`, and the first element that fails fails the container, with its
+  index in `Path`, e.g. `[1]` or `[1][0]`; a `std::array`, pair or tuple reads only an array of its
+  length; a set refuses an element read twice, and an unordered set is written with its elements
+  sorted by their TOML text, so a file doesn't change from run to run; `std::vector<TASWTomlValue>`
+  reads and writes an array of mixed types). An application adds its own by specializing the
+  template in namespace `ASWToml`, for one type or, with a requires clause, for a group of types.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

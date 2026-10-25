@@ -27,12 +27,19 @@ SPDX-License-Identifier: MIT
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <initializer_list>
 #include <limits>
+#include <list>
+#include <memory_resource>
 #include <random>
+#include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Converters.h"
@@ -75,6 +82,91 @@ struct TTestBox
     T Item{};
 
     bool operator==(TTestBox const& other) const = default;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTestNoDefault
+//
+// An application's type with a converter (an integer, below) but no default constructor, so a container has no
+// element to read into
+/////////////////////////////////////////////////////////////////////////////
+struct TTestNoDefault
+{
+    int Number;
+
+    explicit TTestNoDefault(int number) : Number(number)
+    {
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTestTextLess
+//
+// A set's comparator of strings that ignores the case of ASCII letters when it is made so: state a set should read
+// with only when the set is its own
+/////////////////////////////////////////////////////////////////////////////
+struct TTestTextLess
+{
+    bool IgnoreCase = false;
+
+    // 'text' with its ASCII letters in lower case
+    static std::string Folded(std::string text)
+    {
+        for (char& c : text)
+        {
+            if (c >= 'A' && c <= 'Z')
+                c = static_cast<char>(c - 'A' + 'a');
+        }
+
+        return text;
+    }
+
+    bool operator()(std::string const& left, std::string const& right) const
+    {
+        if (IgnoreCase)
+            return Folded(left) < Folded(right);
+
+        return left < right;
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTestTextEqual
+//
+// An unordered set's key equality of strings, which ignores the case of ASCII letters when it is made so, as
+// TTestTextLess
+/////////////////////////////////////////////////////////////////////////////
+struct TTestTextEqual
+{
+    bool IgnoreCase = false;
+
+    bool operator()(std::string const& left, std::string const& right) const
+    {
+        if (IgnoreCase)
+            return TTestTextLess::Folded(left) == TTestTextLess::Folded(right);
+
+        return left == right;
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTestTextHash
+//
+// The hash of a string with its ASCII letters in lower case, which fits TTestTextEqual either way, mixed with a seed:
+// state an unordered set should read with only when the set is its own
+/////////////////////////////////////////////////////////////////////////////
+struct TTestTextHash
+{
+    std::size_t Seed = 0;
+
+    std::size_t operator()(std::string const& text) const
+    {
+        return std::hash<std::string>()(TTestTextLess::Folded(text)) ^ Seed;
+    }
 };
 
 // The enums of the enum converter tests. Those with names declare ASWTomlEnumNames() as an application does, next to
@@ -280,6 +372,22 @@ struct TASWTomlConverter<ASWUnitTests::TTestBox<T> >
     }
 };
 
+template <>
+struct TASWTomlConverter<ASWUnitTests::TTestNoDefault>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, ASWUnitTests::TTestNoDefault& out,
+        TASWTomlValueOptions const& options)
+    {
+        return TASWTomlConverter<int>::FromValue(value, out.Number, options);
+    }
+
+    static TASWTomlResult ToValue(ASWUnitTests::TTestNoDefault const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options)
+    {
+        return TASWTomlConverter<int>::ToValue(in.Number, value, options);
+    }
+};
+
 } // namespace ASWToml
 
 // The types with a converter: the library's, and an application's (a full specialization, and a partial one for the
@@ -363,6 +471,39 @@ static_assert(!ASWToml::TomlConvertible<std::chrono::hh_mm_ss<std::chrono::durat
     "nor a time of day that counts in one");
 static_assert(!ASWToml::TomlConvertible<std::chrono::year>, "a year alone should have no converter");
 
+// The arrays: vectors (with any allocator), std::array, the sets, pairs and tuples of the types with converters and
+// default constructors, nested too; not those of other types, nor other containers
+static_assert(ASWToml::TomlConvertible<std::vector<int> > && ASWToml::TomlConvertible<std::vector<bool> >,
+    "vectors should have converters, std::vector<bool> too");
+static_assert(ASWToml::TomlConvertible<std::pmr::vector<std::string> >, "with any allocator");
+static_assert(ASWToml::TomlConvertible<std::vector<std::vector<ASWUnitTests::EColor> > >, "a vector of vectors too");
+static_assert(ASWToml::TomlConvertible<std::vector<ASWToml::TASWTomlValue> >, "a vector of values: a mixed array");
+static_assert(ASWToml::TomlConvertible<std::vector<ASWUnitTests::TTestWord> >, "a vector of an application's type");
+static_assert(ASWToml::TomlConvertible<std::array<double, 3> > && ASWToml::TomlConvertible<std::array<int, 0> >,
+    "std::array should have a converter, of no elements too");
+static_assert(ASWToml::TomlConvertible<std::set<std::string> > &&
+    ASWToml::TomlConvertible<std::set<int, std::greater<> > > &&
+    ASWToml::TomlConvertible<std::unordered_set<std::int64_t> >, "the sets should have converters");
+static_assert(ASWToml::TomlConvertible<std::pair<std::string, std::uint16_t> > &&
+    ASWToml::TomlConvertible<std::tuple<std::string, int, bool> > && ASWToml::TomlConvertible<std::tuple<> >,
+    "pairs and tuples should have converters, the empty tuple too");
+static_assert(!ASWToml::TomlConvertible<std::vector<char const*> > && !ASWToml::TomlConvertible<std::vector<char> >,
+    "a vector of a type without a converter should have none");
+static_assert(!ASWToml::TomlConvertible<std::array<char const*, 2> > &&
+    !ASWToml::TomlConvertible<std::set<std::string_view> > && !ASWToml::TomlConvertible<std::unordered_set<char> > &&
+    !ASWToml::TomlConvertible<std::pair<int, char const*> > && !ASWToml::TomlConvertible<std::tuple<int, char> >,
+    "nor should another array of one");
+static_assert(ASWToml::TomlConvertible<ASWUnitTests::TTestNoDefault> &&
+    !ASWToml::TomlConvertible<std::vector<ASWUnitTests::TTestNoDefault> > &&
+    !ASWToml::TomlConvertible<std::array<ASWUnitTests::TTestNoDefault, 1> > &&
+    !ASWToml::TomlConvertible<std::set<ASWUnitTests::TTestNoDefault> > &&
+    !ASWToml::TomlConvertible<std::unordered_set<ASWUnitTests::TTestNoDefault> > &&
+    !ASWToml::TomlConvertible<std::pair<ASWUnitTests::TTestNoDefault, int> > &&
+    !ASWToml::TomlConvertible<std::pair<int, ASWUnitTests::TTestNoDefault> > &&
+    !ASWToml::TomlConvertible<std::tuple<ASWUnitTests::TTestNoDefault> >,
+    "an array of a type without a default constructor should have no converter: it has no element to read into");
+static_assert(!ASWToml::TomlConvertible<std::list<int> >, "a std::list should have no converter");
+
 namespace ASWUnitTests
 {
 
@@ -386,6 +527,8 @@ using ASWToml::TomlConvertible;
 using TArray = TASWTomlValue::TValueVector;
 using TTable = TASWTomlValue::TKeyValueVector;
 
+template <TomlConvertible T>
+std::string ArrayRoundTripProblem(T const& in, std::string const& firstLine);
 std::chrono::year_month_day Date(int year, unsigned month, unsigned day);
 template <TomlConvertible T>
 std::string EnumRoundTripProblem(std::initializer_list<T> values);
@@ -398,6 +541,9 @@ std::string IntegerRoundTripProblem();
 template <ASWToml::Detail::ConvertibleInteger T>
 std::int64_t LargestInteger();
 TArray OneOfEachType();
+template <TomlConvertible T>
+std::string ReadFailureProblem(TASWTomlValue const& value, T const& initial, ETomlCode code,
+    std::string const& message, std::string const& path);
 template <typename T>
 std::string ReadProblem(TASWTomlValue const& value, T expected);
 template <TomlConvertible T>
@@ -410,8 +556,34 @@ template <TomlConvertible T>
 TASWTomlResult ThroughDocument(T const& in, T& out, std::string& text);
 ASWToml::TASWTomlLocalTime TimeOfDay(int hour, int minute, int second, std::int64_t nanoseconds = 0);
 template <TomlConvertible T>
+std::string WriteFailureProblem(T const& in, ETomlCode code, std::string const& message, std::string const& path);
+template <TomlConvertible T>
 std::string Written(T const& in);
 
+//---------------------------------------------------------------------------
+/*
+    ArrayRoundTripProblem
+
+    What is wrong with how 'in', a container that isn't empty, goes through a document (see ThroughDocument()): it
+    must read back as itself, and the document's first line must be 'firstLine'; empty when nothing is wrong
+*/
+template <TomlConvertible T>
+std::string ArrayRoundTripProblem(T const& in, std::string const& firstLine)
+{
+    T out{};
+    std::string text;
+    TASWTomlResult const result = ThroughDocument(in, out, text);
+    if (!result.IsOk())
+        return firstLine + ": " + result.Message;
+
+    if (!(out == in))
+        return firstLine + ": it should read back as itself";
+
+    if (FirstLine(text) != firstLine)
+        return firstLine + ": the text is " + Escaped(text);
+
+    return std::string();
+}
 //---------------------------------------------------------------------------
 /*
     Date
@@ -606,6 +778,35 @@ TArray OneOfEachType()
 }
 //---------------------------------------------------------------------------
 /*
+    ReadFailureProblem
+
+    What is wrong with how TASWTomlConverter<T>::FromValue() fails to read 'value': it must fail with 'code', the
+    message 'message' and the Path 'path', and leave 'out' (set to 'initial' first) unchanged; empty when nothing is
+    wrong
+*/
+template <TomlConvertible T>
+std::string ReadFailureProblem(TASWTomlValue const& value, T const& initial, ETomlCode code,
+    std::string const& message, std::string const& path)
+{
+    T out = initial;
+    TASWTomlResult const result = TASWTomlConverter<T>::FromValue(value, out, TASWTomlValueOptions());
+    std::string const text = ASWToml::Detail::ValueText(value);
+    if (result.Code != code)
+        return text + ": the code is " + ASWToml::ToString(result.Code);
+
+    if (result.Message != message)
+        return text + ": the message is " + Escaped(result.Message);
+
+    if (result.Path != path)
+        return text + ": the path is " + result.Path;
+
+    if (!(out == initial))
+        return text + ": the value read into changed";
+
+    return std::string();
+}
+//---------------------------------------------------------------------------
+/*
     ReadProblem
 
     What is wrong with how TASWTomlConverter<T>::FromValue() reads 'value', an enum's: it must read it as 'expected',
@@ -772,6 +973,33 @@ ASWToml::TASWTomlLocalTime TimeOfDay(int hour, int minute, int second, std::int6
 }
 //---------------------------------------------------------------------------
 /*
+    WriteFailureProblem
+
+    What is wrong with how TASWTomlConverter<T>::ToValue() fails to write 'in': it must fail with 'code', the message
+    'message' and the Path 'path', and leave the value (a table first) unchanged; empty when nothing is wrong
+*/
+template <TomlConvertible T>
+std::string WriteFailureProblem(T const& in, ETomlCode code, std::string const& message, std::string const& path)
+{
+    TASWTomlValue const table = TTable{ { "x", 1 } };
+    TASWTomlValue value = table;
+    TASWTomlResult const result = TASWTomlConverter<T>::ToValue(in, value, TASWTomlValueOptions());
+    if (result.Code != code)
+        return path + ": the code is " + ASWToml::ToString(result.Code);
+
+    if (result.Message != message)
+        return path + ": the message is " + Escaped(result.Message);
+
+    if (result.Path != path)
+        return path + ": the path is " + result.Path;
+
+    if (!(value == table))
+        return path + ": the value written into changed";
+
+    return std::string();
+}
+//---------------------------------------------------------------------------
+/*
     Written
 
     'in' as TASWTomlConverter<T>::ToValue() writes it, into a value that is a table first: the value as TOML text (see
@@ -793,6 +1021,390 @@ std::string Written(T const& in)
 } // namespace
 
 //---------------------------------------------------------------------------
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_ArrayConverters
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_ArrayConverters::TTest_ASWToml_ArrayConverters()
+    : inherited("ASWToml_ArrayConverters_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_ArrayConverters::~TTest_ASWToml_ArrayConverters()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ArrayConverters::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ArrayConverters::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ArrayConverters::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_ArrayConverters::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Array_ReadsExactlyItsLength)
+{
+    // Arrange
+    using TThree = std::array<int, 3>;
+    TThree const initial = { 7, 7, 7 };
+    TThree three = initial;
+    std::array<int, 0> none;
+
+    // Act
+    TASWTomlResult const read = TASWTomlConverter<TThree>::FromValue(TArray{ 1, 2, 3 }, three, TASWTomlValueOptions());
+    TASWTomlResult const readNone = TASWTomlConverter<std::array<int, 0> >::FromValue(TArray{}, none,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(read.IsOk() && three == TThree{ 1, 2, 3 }, "an array of three elements should read: " + read.Message);
+    CheckTrue(readNone.IsOk(), "an empty array should read as a std::array of none");
+    CheckEquals("[1, 2, 3]"s, Written(TThree{ 1, 2, 3 }), "the elements should be written in order");
+    CheckEmpty(ReadFailureProblem(TArray{ 1, 2 }, initial, ETomlCode::InvalidValue,
+        "The value [1, 2] has 2 elements, not 3.", ""), "an array of two elements should be refused");
+    CheckEmpty(ReadFailureProblem(TArray{ 1 }, initial, ETomlCode::InvalidValue, "The value [1] has 1 element, not 3.",
+        ""), "and one of one");
+    CheckEmpty(ReadFailureProblem(TArray{ 1, 2, 3, 4 }, initial, ETomlCode::InvalidValue,
+        "The value [1, 2, 3, 4] has 4 elements, not 3.", ""), "and one of four");
+    CheckEmpty(ReadFailureProblem(TArray{ 1 }, std::array<int, 0>(), ETomlCode::InvalidValue,
+        "The value [1] has 1 element, not 0.", ""), "a std::array of none should read only an empty array");
+    CheckEmpty(ReadFailureProblem(TArray{ 1, "x", 3 }, initial, ETomlCode::TypeMismatch,
+        "The value \"x\" is a string, not an integer.", "[1]"), "an element that fails should fail it, at its index");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Elements_UseTheirTypesConverter)
+{
+    // Arrange
+    std::vector<EColor> colors;
+    std::vector<TTestWord> const initialWords = { TTestWord{ "kept" } };
+
+    // Act
+    TASWTomlResult const read = TASWTomlConverter<std::vector<EColor> >::FromValue(TArray{ "red", "Lime", 40 }, colors,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(read.IsOk() && colors == std::vector<EColor>{ EColor::Red, EColor::Green, EColor::Blue },
+        "each element should read as the enum reads it: " + read.Message);
+    CheckEquals("[\"Red\", \"Green\"]"s, Written(std::vector<EColor>{ EColor::Red, EColor::Green }),
+        "and be written as it writes it");
+    CheckEmpty(WriteFailureProblem(std::vector<EColor>{ EColor::Red, EColor::Unlisted }, ETomlCode::InvalidValue,
+        "The value 7 has no name in the enum's ASWTomlEnumNames(), so it can't be written.", "[1]"),
+        "so a value without a name can't be written");
+    CheckEmpty(ReadFailureProblem(TArray{ "one", "two words" }, initialWords, ETomlCode::InvalidValue,
+        "The value \"two words\" isn't one word.", "[1]"), "an application's converter should read each element");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, EveryType_RefusesWhatIsntAnArray)
+{
+    // Arrange & Act & Assert
+    std::initializer_list<ETomlType> const accepted = { ETomlType::Array };
+    CheckEmpty(RefusalProblem(std::vector<int>{ 7 }, accepted, "an array"), "a vector should read arrays only");
+    CheckEmpty(RefusalProblem(std::array<int, 1>{ 7 }, accepted, "an array"), "and a std::array");
+    CheckEmpty(RefusalProblem(std::set<int>{ 7 }, accepted, "an array"), "and a std::set");
+    CheckEmpty(RefusalProblem(std::unordered_set<int>{ 7 }, accepted, "an array"), "and a std::unordered_set");
+    CheckEmpty(RefusalProblem(std::pair<int, int>{ 7, 7 }, accepted, "an array"), "and a std::pair");
+    CheckEmpty(RefusalProblem(std::tuple<int>{ 7 }, accepted, "an array"), "and a std::tuple");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Helpers_SortByText)
+{
+    // Arrange
+    TASWTomlValue const one = TArray{ 1 };
+    TASWTomlValue const table = TTable{ { "x", 1 } };
+    TArray elements = { true, table, "D", 2, one, "C:\\d" };
+    TArray none;
+
+    // Act
+    ASWToml::Detail::SortByText(elements);
+    ASWToml::Detail::SortByText(none);
+
+    // Assert
+    CheckTrue(elements == TArray{ "C:\\d", "D", 2, one, true, table },
+        "the elements should be in the order of their texts, strings as basic strings (\"C:\\\\d\" before \"D\"): " +
+        ASWToml::Detail::ValueText(elements));
+    CheckTrue(none.empty(), "no elements should stay none");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Pair_ReadsTwoElementsOfTheirOwnTypes)
+{
+    // Arrange
+    using TEndpoint = std::pair<std::string, std::uint16_t>;
+    TEndpoint const initial = { "kept", 1 };
+    TEndpoint endpoint = initial;
+
+    // Act
+    TASWTomlResult const read = TASWTomlConverter<TEndpoint>::FromValue(TArray{ "example.com", 443 }, endpoint,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(read.IsOk() && endpoint == TEndpoint{ "example.com", 443 }, "a pair should read: " + read.Message);
+    CheckEquals("[\"example.com\", 443]"s, Written(TEndpoint{ "example.com", 443 }),
+        "the first element should be written first");
+    CheckEmpty(ReadFailureProblem(TArray{ 443, "example.com" }, initial, ETomlCode::TypeMismatch,
+        "The value 443 is an integer, not a string.", "[0]"), "each element should be read as its own type");
+    CheckEmpty(ReadFailureProblem(TArray{ "example.com", 70000 }, initial, ETomlCode::ValueOutOfRange,
+        "The value 70000 is out of range: it must be from 0 to 65535.", "[1]"), "the second one too");
+    CheckEmpty(ReadFailureProblem(TArray{ "example.com" }, initial, ETomlCode::InvalidValue,
+        "The value [\"example.com\"] has 1 element, not 2.", ""), "an array of another length should be refused");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, RoundTrip_EveryType_ThroughADocument)
+{
+    // Arrange
+    TASWTomlValue const firstTable = TTable{ { "a", 1 } };
+    TASWTomlValue const secondTable = TTable{ { "a", 2 } };
+    std::vector<std::string> const letters = { "a", "b" };
+    std::vector<std::string> const letter = { "c" };
+    std::vector<std::vector<std::string> > const nested = { letters, std::vector<std::string>(), letter };
+    std::vector<int> emptied = { 7 };
+    std::string text;
+
+    // Act
+    TASWTomlResult const empty = ThroughDocument(std::vector<int>(), emptied, text);
+
+    // Assert
+    CheckTrue(empty.IsOk() && emptied.empty(), "an empty vector should go through a document: " + empty.Message);
+    CheckEquals("v = []"s, FirstLine(text), "as an empty array");
+    CheckEmpty(ArrayRoundTripProblem(std::vector<int>{ 1, 2, 3 }, "v = [1, 2, 3]"), "a vector of integers");
+    CheckEmpty(ArrayRoundTripProblem(nested, "v = [[\"a\", \"b\"], [], [\"c\"]]"), "a vector of vectors");
+    CheckEmpty(ArrayRoundTripProblem(std::vector<bool>{ true, false }, "v = [true, false]"), "a std::vector<bool>");
+    CheckEmpty(ArrayRoundTripProblem(std::array<double, 2>{ 0.5, -2.0 }, "v = [0.5, -2.0]"), "a std::array");
+    CheckEmpty(ArrayRoundTripProblem(std::set<std::string>{ "b", "a" }, "v = [\"a\", \"b\"]"), "a std::set");
+    CheckEmpty(ArrayRoundTripProblem(std::unordered_set<int>{ 9, 10 }, "v = [10, 9]"), "a std::unordered_set");
+    CheckEmpty(ArrayRoundTripProblem(std::pair<std::string, int>{ "example.com", 443 }, "v = [\"example.com\", 443]"),
+        "a std::pair");
+    CheckEmpty(ArrayRoundTripProblem(std::tuple<int, bool, std::string>{ 1, true, "x" }, "v = [1, true, \"x\"]"),
+        "a std::tuple");
+    CheckEmpty(ArrayRoundTripProblem(std::vector<TASWTomlValue>{ 1, "x", 2.5 }, "v = [1, \"x\", 2.5]"),
+        "an array of mixed types");
+    CheckEmpty(ArrayRoundTripProblem(std::vector<TASWTomlValue>{ firstTable, secondTable }, "[[v]]"),
+        "an array of tables");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Set_ReadsEachElementOnce)
+{
+    // Arrange
+    std::set<int> const initial = { 7 };
+    std::unordered_set<int> const initialUnordered = { 7 };
+    std::set<EColor> const initialColors = { EColor::Blue };
+    std::set<int> numbers = initial;
+    std::unordered_set<int> unordered = initialUnordered;
+
+    // Act
+    TASWTomlResult const read = TASWTomlConverter<std::set<int> >::FromValue(TArray{ 3, 1 }, numbers,
+        TASWTomlValueOptions());
+    TASWTomlResult const readUnordered = TASWTomlConverter<std::unordered_set<int> >::FromValue(TArray{ 3, 1 },
+        unordered, TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(read.IsOk() && numbers == std::set<int>{ 1, 3 }, "the elements should replace a set's: " + read.Message);
+    CheckTrue(readUnordered.IsOk() && unordered == std::unordered_set<int>{ 1, 3 },
+        "and an unordered set's: " + readUnordered.Message);
+    CheckEmpty(ReadFailureProblem(TArray{ 1, 2, 1 }, initial, ETomlCode::InvalidValue,
+        "The value 1 reads as an element the set already has.", "[2]"),
+        "an element read twice should fail the set, at its second index");
+    CheckEmpty(ReadFailureProblem(TArray{ 2, 2 }, initialUnordered, ETomlCode::InvalidValue,
+        "The value 2 reads as an element the set already has.", "[1]"), "and an unordered set");
+    CheckEmpty(ReadFailureProblem(TArray{ "Red", "Lime", "green" }, initialColors, ETomlCode::InvalidValue,
+        "The value \"green\" reads as an element the set already has.", "[2]"), "two names of a value are one element");
+    CheckEmpty(ReadFailureProblem(TArray{ 1, "x", 1 }, initial, ETomlCode::TypeMismatch,
+        "The value \"x\" is a string, not an integer.", "[1]"), "the first element that fails should fail the set");
+    CheckEmpty(ReadFailureProblem(TArray{ 1, "x" }, initialUnordered, ETomlCode::TypeMismatch,
+        "The value \"x\" is a string, not an integer.", "[1]"), "and an unordered set");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Set_ReadsWithTheSetsOwnComparator)
+{
+    // Arrange
+    using TNoCaseSet = std::set<std::string, TTestTextLess>;
+    using TNoCaseHashSet = std::unordered_set<std::string, TTestTextHash, TTestTextEqual>;
+    TNoCaseSet const initial(TTestTextLess{ true });
+    TNoCaseHashSet const initialHashed(0, TTestTextHash{ 7 }, TTestTextEqual{ true });
+    TNoCaseSet texts = initial;
+    TNoCaseHashSet hashed = initialHashed;
+
+    // Act
+    TASWTomlResult const read = TASWTomlConverter<TNoCaseSet>::FromValue(TArray{ "B", "a" }, texts,
+        TASWTomlValueOptions());
+    TASWTomlResult const readHashed = TASWTomlConverter<TNoCaseHashSet>::FromValue(TArray{ "B", "a" }, hashed,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(read.IsOk() && texts.key_comp().IgnoreCase, "the set should keep its comparator: " + read.Message);
+    CheckEquals("[\"a\", \"B\"]"s, Written(texts), "and its order, which ignores the case");
+    CheckTrue(readHashed.IsOk() && hashed.key_eq().IgnoreCase && hashed.hash_function().Seed == 7,
+        "an unordered set should keep its key equality and hash");
+    CheckEmpty(ReadFailureProblem(TArray{ "a", "A" }, initial, ETomlCode::InvalidValue,
+        "The value \"A\" reads as an element the set already has.", "[1]"), "A should be a, as its comparator says");
+    CheckEmpty(ReadFailureProblem(TArray{ "a", "A" }, initialHashed, ETomlCode::InvalidValue,
+        "The value \"A\" reads as an element the set already has.", "[1]"), "or an unordered set's key equality");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Set_WritesInItsOrder)
+{
+    // Arrange & Act & Assert
+    CheckEquals("[1, 2, 3]"s, Written(std::set<int>{ 3, 1, 2 }), "a set should be written in its order");
+    CheckEquals("[3, 2, 1]"s, Written(std::set<int, std::greater<> >{ 1, 3, 2 }), "whichever its comparator gives");
+    CheckEquals("[]"s, Written(std::set<int>()), "an empty set as an empty array");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, ToValue_FailsAtTheFirstElementThatFails)
+{
+    // Arrange
+    std::string const invalid = "\xFF";
+    std::string const message = "The string can't be written: it isn't valid UTF-8 (at byte 0), which TOML needs.";
+    std::vector<std::string> const letter = { "a" };
+    std::vector<std::string> const invalids = { invalid, invalid };
+    std::vector<std::vector<std::string> > const nested = { letter, invalids };
+
+    // Act & Assert
+    CheckEmpty(WriteFailureProblem(std::vector<std::string>{ "a", invalid, invalid }, ETomlCode::InvalidValue, message,
+        "[1]"), "a vector should fail at the first element that can't be written");
+    CheckEmpty(WriteFailureProblem(nested, ETomlCode::InvalidValue, message, "[1][0]"), "inside a nested one too");
+    CheckEmpty(WriteFailureProblem(std::vector<unsigned long long>{ 1, 18446744073709551615u },
+        ETomlCode::ValueOutOfRange, "The value 18446744073709551615 is out of range: it must be from 0 to "
+        "9223372036854775807.", "[1]"), "with the element's code and message");
+    CheckEmpty(WriteFailureProblem(std::array<std::string, 2>{ invalid, "a" }, ETomlCode::InvalidValue, message, "[0]"),
+        "a std::array too");
+    CheckEmpty(WriteFailureProblem(std::set<std::string>{ "a", invalid }, ETomlCode::InvalidValue, message, "[1]"),
+        "a set at the element's index in its order");
+    CheckEmpty(WriteFailureProblem(std::unordered_set<std::string>{ invalid }, ETomlCode::InvalidValue, message, "[0]"),
+        "an unordered set too");
+    CheckEmpty(WriteFailureProblem(std::pair<std::string, std::string>{ "a", invalid }, ETomlCode::InvalidValue,
+        message, "[1]"), "a pair");
+    CheckEmpty(WriteFailureProblem(std::tuple<std::string, int, std::string>{ invalid, 1, invalid },
+        ETomlCode::InvalidValue, message, "[0]"), "and a tuple");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Tuple_ReadsEachElementAsItsOwnType)
+{
+    // Arrange
+    using TRecord = std::tuple<std::string, int, bool>;
+    TRecord const initial = { "kept", 7, false };
+    TRecord record = initial;
+    std::tuple<> none;
+
+    // Act
+    TASWTomlResult const read = TASWTomlConverter<TRecord>::FromValue(TArray{ "example.com", 443, true }, record,
+        TASWTomlValueOptions());
+    TASWTomlResult const readNone = TASWTomlConverter<std::tuple<> >::FromValue(TArray{}, none, TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(read.IsOk() && record == TRecord{ "example.com", 443, true }, "a tuple should read: " + read.Message);
+    CheckTrue(readNone.IsOk(), "an empty array should read as an empty tuple");
+    CheckEquals("[\"example.com\", 443, true]"s, Written(TRecord{ "example.com", 443, true }),
+        "the elements should be written in order");
+    CheckEquals("[]"s, Written(std::tuple<>()), "an empty tuple as an empty array");
+    CheckEmpty(ReadFailureProblem(TArray{ "example.com", 443, "yes" }, initial, ETomlCode::TypeMismatch,
+        "The value \"yes\" is a string, not a boolean.", "[2]"), "each element should be read as its own type");
+    CheckEmpty(ReadFailureProblem(TArray{ "example.com", true, 1 }, initial, ETomlCode::TypeMismatch,
+        "The value true is a boolean, not an integer.", "[1]"), "the first element that fails should fail the tuple");
+    CheckEmpty(ReadFailureProblem(TArray{ "example.com", 443 }, initial, ETomlCode::InvalidValue,
+        "The value [\"example.com\", 443] has 2 elements, not 3.", ""), "an array of another length should be refused");
+    CheckEmpty(ReadFailureProblem(TArray{ 1 }, std::tuple<>(), ETomlCode::InvalidValue,
+        "The value [1] has 1 element, not 0.", ""), "by an empty tuple too");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, UnorderedSet_WritesSortedByText)
+{
+    // Arrange & Act & Assert
+    CheckEquals("[1, 10, 100, 2, 20]"s, Written(std::unordered_set<int>{ 20, 1, 100, 2, 10 }),
+        "an unordered set should be written in the order of its elements' texts");
+    CheckEquals("[\"B\", \"a\", \"b\"]"s, Written(std::unordered_set<std::string>{ "b", "a", "B" }),
+        "strings as basic strings");
+    CheckEquals("[]"s, Written(std::unordered_set<int>()), "an empty one as an empty array");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Vector_FromValue_FailsAtTheFirstElementThatFails)
+{
+    // Arrange
+    std::vector<int> const initial = { 7 };
+    std::vector<std::vector<int> > const initialNested = { initial, initial };
+    TASWTomlValue const first = TArray{ 1 };
+    TASWTomlValue const second = TArray{ 1, "x" };
+
+    // Act & Assert
+    CheckEmpty(ReadFailureProblem(TArray{ 1, "x", 2.5 }, initial, ETomlCode::TypeMismatch,
+        "The value \"x\" is a string, not an integer.", "[1]"), "the first element that fails should fail the vector");
+    CheckEmpty(ReadFailureProblem(TArray{ first, second }, initialNested, ETomlCode::TypeMismatch,
+        "The value \"x\" is a string, not an integer.", "[1][1]"), "with the place inside a nested array");
+    CheckEmpty(ReadFailureProblem(TArray{ 1, 300 }, std::vector<std::uint8_t>{ 7 }, ETomlCode::ValueOutOfRange,
+        "The value 300 is out of range: it must be from 0 to 255.", "[1]"), "with the element's code and message");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Vector_FromValue_ReadsAnyArray)
+{
+    // Arrange
+    TASWTomlDocument document;
+    TASWTomlResult const parsed = document.Parse("[[s]]\na = 1\n\n[[s]]\na = 2\n");
+    TASWTomlValue const* const found = document.Find("s");
+    TASWTomlValue const tables = found != nullptr ? *found : TASWTomlValue();
+    TASWTomlValue const firstTable = TTable{ { "a", 1 } };
+    TASWTomlValue const secondTable = TTable{ { "a", 2 } };
+    std::vector<int> numbers = { 7 };
+    std::vector<int> emptied = { 7 };
+    std::vector<bool> flags;
+    std::vector<TASWTomlValue> mixed;
+    std::vector<TASWTomlValue> elements;
+
+    // Act
+    TASWTomlResult const readNumbers = TASWTomlConverter<std::vector<int> >::FromValue(TArray{ 1, 2, 3 }, numbers,
+        TASWTomlValueOptions());
+    TASWTomlResult const readEmpty = TASWTomlConverter<std::vector<int> >::FromValue(TArray{}, emptied,
+        TASWTomlValueOptions());
+    TASWTomlResult const readFlags = TASWTomlConverter<std::vector<bool> >::FromValue(TArray{ true, false, true },
+        flags, TASWTomlValueOptions());
+    TASWTomlResult const readMixed = TASWTomlConverter<std::vector<TASWTomlValue> >::FromValue(TArray{ 1, "x", 2.5 },
+        mixed, TASWTomlValueOptions());
+    TASWTomlResult const readTables = TASWTomlConverter<std::vector<TASWTomlValue> >::FromValue(tables, elements,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(readNumbers.IsOk() && numbers == std::vector<int>{ 1, 2, 3 },
+        "an array should replace the vector's elements: " + readNumbers.Message);
+    CheckTrue(readEmpty.IsOk() && emptied.empty(), "an empty array should read as an empty vector");
+    CheckTrue(readFlags.IsOk() && flags == std::vector<bool>{ true, false, true }, "and booleans as a vector<bool>");
+    CheckTrue(readMixed.IsOk() && mixed == std::vector<TASWTomlValue>{ 1, "x", 2.5 },
+        "an array of mixed types should read as values");
+    CheckTrue(parsed.IsOk() && found != nullptr, "the document should parse: " + parsed.Message);
+    CheckTrue(readTables.IsOk() && elements == std::vector<TASWTomlValue>{ firstTable, secondTable },
+        "an array of tables should read too: " + readTables.Message);
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_ArrayConverters, Vector_ToValue_WritesEachElement)
+{
+    // Arrange
+    std::vector<int> const pair = { 1, 2 };
+    std::vector<int> const single = { 3 };
+    std::vector<std::vector<int> > const nested = { pair, single };
+    TASWTomlValue value = TTable{ { "x", 1 } };
+
+    // Act
+    TASWTomlResult const result = TASWTomlConverter<std::vector<int> >::ToValue({ 1, 2, 3 }, value,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(result.IsOk() && value == TASWTomlValue(TArray{ 1, 2, 3 }),
+        "the table should be replaced by an array of the elements: " + result.Message);
+    CheckEquals("[]"s, Written(std::vector<int>()), "an empty vector should be an empty array");
+    CheckEquals("[true, false]"s, Written(std::vector<bool>{ true, false }), "a vector<bool> an array of booleans");
+    CheckEquals("[[1, 2], [3]]"s, Written(nested), "and a vector of vectors an array of arrays");
+}
+//---------------------------------------------------------------------------
+
 
 /////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_BoolConverter
@@ -2501,6 +3113,7 @@ ASW_TEST(TTest_ASWToml_TextConverters, Value_AsItIs)
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_ArrayConverters, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_BoolConverter, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DateTimeConverters, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_EnumConverters, "Converters")

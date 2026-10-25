@@ -22,6 +22,42 @@ namespace ASWUnitTests
 {
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_ArrayConverters
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_ArrayConverters : public TAutoTestGroup<TTest_ASWToml_ArrayConverters>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_ArrayConverters> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Array_ReadsExactlyItsLength();
+    void Test_Elements_UseTheirTypesConverter();
+    void Test_EveryType_RefusesWhatIsntAnArray();
+    void Test_Helpers_SortByText();
+    void Test_Pair_ReadsTwoElementsOfTheirOwnTypes();
+    void Test_RoundTrip_EveryType_ThroughADocument();
+    void Test_Set_ReadsEachElementOnce();
+    void Test_Set_ReadsWithTheSetsOwnComparator();
+    void Test_Set_WritesInItsOrder();
+    void Test_ToValue_FailsAtTheFirstElementThatFails();
+    void Test_Tuple_ReadsEachElementAsItsOwnType();
+    void Test_UnorderedSet_WritesSortedByText();
+    void Test_Vector_FromValue_FailsAtTheFirstElementThatFails();
+    void Test_Vector_FromValue_ReadsAnyArray();
+    void Test_Vector_ToValue_WritesEachElement();
+
+public:
+    TTest_ASWToml_ArrayConverters();
+    ~TTest_ASWToml_ArrayConverters() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_BoolConverter
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_BoolConverter : public TAutoTestGroup<TTest_ASWToml_BoolConverter>

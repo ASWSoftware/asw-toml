@@ -9,9 +9,11 @@ and from a TASWTomlValue, and the concept TomlConvertible, which says that a
 type has one. The library has converters for TASWTomlValue itself,
 std::string, std::u8string, std::filesystem::path, bool, the integer types,
 float, double, enums (by name when the application gives the enum names,
-see TASWTomlEnumName, else as integers), the TOML date and time types and
-the std::chrono dates, time points and times of day; an application adds its
-own by specializing TASWTomlConverter for its type.
+see TASWTomlEnumName, else as integers), the TOML date and time types, the
+std::chrono dates, time points and times of day, and std::vector, std::array,
+std::set, std::unordered_set, std::pair and std::tuple (as arrays) of the
+types with converters; an application adds its own by specializing
+TASWTomlConverter for its type.
 
 Requires C++ 20 or higher.
 
@@ -29,6 +31,7 @@ SPDX-License-Identifier: MIT
 #ifndef ASWToml_ConvertersH
 #define ASWToml_ConvertersH
 //---------------------------------------------------------------------------
+#include <array>
 #include <chrono>
 #include <concepts>
 #include <cstddef>
@@ -36,9 +39,12 @@ SPDX-License-Identifier: MIT
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 //---------------------------------------------------------------------------
@@ -180,6 +186,19 @@ bool IsEnumName(std::string_view text, std::string_view name) noexcept;
 // "host name" or servers[2]
 TASWTomlResult KeyFailure(TASWTomlResult result, std::string_view key);
 
+// The InvalidValue result of reading 'value', an array, as a type of exactly 'length' elements (a std::array, a
+// std::pair or a std::tuple): "The value [1, 2] has 2 elements, not 3."
+TASWTomlResult LengthMismatch(TASWTomlValue const& value, std::size_t length);
+
+// The InvalidValue result of a set reading 'element', an element of an array that reads as an element the set already
+// has (e.g. 1 twice, or "red" after "Red" for an enum with names): "The value 1 reads as an element the set already
+// has."
+TASWTomlResult RepeatedElement(TASWTomlValue const& element);
+
+// Sorts 'elements' by their TOML text (strings as basic strings), so an unordered set is written in the same order
+// every time
+void SortByText(TASWTomlValue::TValueVector& elements);
+
 // Sets 'time' to the time of day 'count' units of 'unit' after midnight and returns true, or returns false (and leaves
 // 'time' as it was) when that is before midnight or a day and a second or more after it. From a day on, the time is
 // the leap second 23:59:60 (and the fraction past a day), which a local time of 23:59:60 reads back as.
@@ -216,6 +235,54 @@ TASWTomlResult ValueFailure(ETomlCode code, TASWTomlValue const& value, std::str
 // <type>" (e.g. of type String) for a value that can't be written, such as a string that isn't valid UTF-8
 std::string ValueText(TASWTomlValue const& value);
 
+// Sets 'value' to an array of the elements of 'elements', a container of T, in its order, each converted by
+// TASWTomlConverter<T>, or leaves it as it was and fails as the first element that fails, with the element's index in
+// its Path (see ElementFailure())
+template <typename T, typename TElements>
+TASWTomlResult ArrayToValue(TElements const& elements, TASWTomlValue& value, TASWTomlValueOptions const& options)
+{
+    TASWTomlValue::TValueVector array;
+    array.reserve(elements.size());
+    // An element of a const std::vector<bool> is a bool, not a proxy
+    for (T const& element : elements)
+    {
+        TASWTomlResult result = TASWTomlConverter<T>::ToValue(element, array.emplace_back(), options);
+        if (!result.IsOk())
+            return ElementFailure(std::move(result), array.size() - 1);
+    }
+
+    value = TASWTomlValue(std::move(array));
+
+    return TASWTomlResult();
+}
+
+// Reads 'value', an array, into 'read', an empty set of T, each element into a new T{} by TASWTomlConverter<T>:
+// TypeMismatch for a value that isn't an array, and the first element that fails, or that reads as an element 'read'
+// already has (see RepeatedElement()), fails with its index in its Path (see ElementFailure()), leaving some elements
+// in 'read'
+template <typename TSet>
+TASWTomlResult SetFromValue(TASWTomlValue const& value, TSet& read, TASWTomlValueOptions const& options)
+{
+    using T = typename TSet::value_type;
+
+    TASWTomlValue::TValueVector const* const array = value.AsArray();
+    if (array == nullptr)
+        return TypeMismatch(value, "an array");
+
+    for (std::size_t i = 0; i < array->size(); ++i)
+    {
+        T element{};
+        TASWTomlResult result = TASWTomlConverter<T>::FromValue((*array)[i], element, options);
+        if (!result.IsOk())
+            return ElementFailure(std::move(result), i);
+
+        if (!read.insert(std::move(element)).second)
+            return ElementFailure(RepeatedElement((*array)[i]), i);
+    }
+
+    return TASWTomlResult();
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // TIntegerConverter
@@ -249,6 +316,89 @@ struct TIntegerConverter
         {
             return UnsignedIntegerToValue(static_cast<std::uint64_t>(in), value);
         }
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTupleConverter
+//
+// Converts TTuple, a std::pair or a std::tuple, as an array of exactly as many elements, each converted as its own
+// type, as TASWTomlConverter<std::tuple<T...> > describes: the converters of both are this one
+/////////////////////////////////////////////////////////////////////////////
+template <typename TTuple>
+struct TTupleConverter
+{
+private:
+    static constexpr std::size_t Size = std::tuple_size_v<TTuple>;
+
+    // Reads the elements of 'array' from the index I on into those of 'read', or fails as the first one that fails
+    template <std::size_t I>
+    static TASWTomlResult ElementsFromArray(TASWTomlValue::TValueVector const& array, TTuple& read,
+        TASWTomlValueOptions const& options)
+    {
+        if constexpr (I == Size)
+        {
+            return TASWTomlResult();
+        }
+        else
+        {
+            TASWTomlResult result = TASWTomlConverter<std::tuple_element_t<I, TTuple> >::FromValue(array[I],
+                std::get<I>(read), options);
+            if (!result.IsOk())
+                return ElementFailure(std::move(result), I);
+
+            return ElementsFromArray<I + 1>(array, read, options);
+        }
+    }
+
+    // Sets the elements of 'array' from the index I on to those of 'in', or fails as the first one that fails
+    template <std::size_t I>
+    static TASWTomlResult ElementsToArray(TTuple const& in, TASWTomlValue::TValueVector& array,
+        TASWTomlValueOptions const& options)
+    {
+        if constexpr (I == Size)
+        {
+            return TASWTomlResult();
+        }
+        else
+        {
+            TASWTomlResult result = TASWTomlConverter<std::tuple_element_t<I, TTuple> >::ToValue(std::get<I>(in),
+                array[I], options);
+            if (!result.IsOk())
+                return ElementFailure(std::move(result), I);
+
+            return ElementsToArray<I + 1>(in, array, options);
+        }
+    }
+
+public:
+    static TASWTomlResult FromValue(TASWTomlValue const& value, TTuple& out, TASWTomlValueOptions const& options)
+    {
+        TASWTomlValue::TValueVector const* const array = value.AsArray();
+        if (array == nullptr)
+            return TypeMismatch(value, "an array");
+
+        if (array->size() != Size)
+            return LengthMismatch(value, Size);
+
+        // Each element read into a new one
+        TTuple read{};
+        TASWTomlResult result = ElementsFromArray<0>(*array, read, options);
+        if (result.IsOk())
+            out = std::move(read);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(TTuple const& in, TASWTomlValue& value, TASWTomlValueOptions const& options)
+    {
+        TASWTomlValue::TValueVector array(Size);
+        TASWTomlResult result = ElementsToArray<0>(in, array, options);
+        if (result.IsOk())
+            value = TASWTomlValue(std::move(array));
+
+        return result;
     }
 };
 
@@ -313,7 +463,7 @@ struct TASWTomlConverter<TASWTomlOffsetDateTime>
 // TASWTomlConverter<TASWTomlValue>
 //
 // The value as it is, both ways: it never fails (but for std::bad_alloc), so a value of any type can be read and
-// written, e.g. a table an application reads itself
+// written, e.g. a table an application reads itself, or (as std::vector<TASWTomlValue>) an array of mixed types
 /////////////////////////////////////////////////////////////////////////////
 template <>
 struct TASWTomlConverter<TASWTomlValue>
@@ -520,6 +670,48 @@ struct TASWTomlConverter<float>
 template <Detail::ConvertibleInteger T>
 struct TASWTomlConverter<T> : Detail::TIntegerConverter<T>
 {
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::array<T, N> >
+//
+// An array of exactly N elements, as TASWTomlConverter<std::vector<T> > converts one; an array of another length is
+// InvalidValue: "The value [1, 2] has 2 elements, not 3."
+/////////////////////////////////////////////////////////////////////////////
+template <TomlConvertible T, std::size_t N>
+requires std::default_initializable<T>
+struct TASWTomlConverter<std::array<T, N> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::array<T, N>& out,
+        TASWTomlValueOptions const& options)
+    {
+        TASWTomlValue::TValueVector const* const array = value.AsArray();
+        if (array == nullptr)
+            return Detail::TypeMismatch(value, "an array");
+
+        if (array->size() != N)
+            return Detail::LengthMismatch(value, N);
+
+        // Each element read into a new T{}
+        std::array<T, N> read{};
+        for (std::size_t i = 0; i < N; ++i)
+        {
+            TASWTomlResult result = TASWTomlConverter<T>::FromValue((*array)[i], read[i], options);
+            if (!result.IsOk())
+                return Detail::ElementFailure(std::move(result), i);
+        }
+
+        out = std::move(read);
+
+        return TASWTomlResult();
+    }
+
+    static TASWTomlResult ToValue(std::array<T, N> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options)
+    {
+        return Detail::ArrayToValue<T>(in, value, options);
+    }
 };
 
 
@@ -731,6 +923,49 @@ struct TASWTomlConverter<std::filesystem::path>
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::pair<T1, T2> >
+//
+// An array of exactly two elements, the first converted as T1 and the second as T2 (e.g. ["example.com", 443]), as
+// TASWTomlConverter<std::tuple<T...> > describes
+/////////////////////////////////////////////////////////////////////////////
+template <TomlConvertible T1, TomlConvertible T2>
+requires std::default_initializable<T1> && std::default_initializable<T2>
+struct TASWTomlConverter<std::pair<T1, T2> > : Detail::TTupleConverter<std::pair<T1, T2> >
+{
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::set<T> >
+//
+// An array, as TASWTomlConverter<std::vector<T> > converts one, read with the set's comparator and allocator: an
+// element that reads as one the set already has (1 twice, or "red" after "Red" for an enum with names) is InvalidValue,
+// with its index in Path, as it is likely a mistake in the file. Writes the elements in the set's order.
+/////////////////////////////////////////////////////////////////////////////
+template <TomlConvertible T, typename TCompare, typename TAllocator>
+requires std::default_initializable<T>
+struct TASWTomlConverter<std::set<T, TCompare, TAllocator> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::set<T, TCompare, TAllocator>& out,
+        TASWTomlValueOptions const& options)
+    {
+        std::set<T, TCompare, TAllocator> read(out.key_comp(), out.get_allocator());
+        TASWTomlResult result = Detail::SetFromValue(value, read, options);
+        if (result.IsOk())
+            out = std::move(read);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(std::set<T, TCompare, TAllocator> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options)
+    {
+        return Detail::ArrayToValue<T>(in, value, options);
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TASWTomlConverter<std::string>
 //
 // A string (UTF-8), both ways; any other type (80, true) is TypeMismatch. Writing text that isn't valid UTF-8 is
@@ -745,6 +980,21 @@ struct TASWTomlConverter<std::string>
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::tuple<T...> >
+//
+// An array of exactly as many elements as the tuple has, each converted as its own type, which must have a converter
+// and a default constructor (e.g. ["example.com", 443, true] for std::tuple<std::string, int, bool>); any other type is
+// TypeMismatch, an array of another length InvalidValue ("The value [1, 2] has 2 elements, not 3."). The first element
+// that fails fails the tuple, with its index in front of its Path, and leaves 'out' as it was.
+/////////////////////////////////////////////////////////////////////////////
+template <TomlConvertible... T>
+requires(std::default_initializable<T> && ...)
+struct TASWTomlConverter<std::tuple<T...> > : Detail::TTupleConverter<std::tuple<T...> >
+{
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TASWTomlConverter<std::u8string>
 //
 // As TASWTomlConverter<std::string>, the string's bytes as the char8_t of a std::u8string
@@ -755,6 +1005,92 @@ struct TASWTomlConverter<std::u8string>
     static TASWTomlResult FromValue(TASWTomlValue const& value, std::u8string& out,
         TASWTomlValueOptions const& options);
     static TASWTomlResult ToValue(std::u8string const& in, TASWTomlValue& value, TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::unordered_set<T> >
+//
+// As TASWTomlConverter<std::set<T> >, read with the set's hash, key equality and allocator, but written with the
+// elements sorted by their TOML text (strings as basic strings), so a file doesn't change from run to run: an
+// unordered_set<int> of 9, 10 and 80 is written as [10, 80, 9]. A failure to write an element has the index the
+// element has in the set's own order in its Path.
+/////////////////////////////////////////////////////////////////////////////
+template <TomlConvertible T, typename THash, typename TEqual, typename TAllocator>
+requires std::default_initializable<T>
+struct TASWTomlConverter<std::unordered_set<T, THash, TEqual, TAllocator> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::unordered_set<T, THash, TEqual, TAllocator>& out,
+        TASWTomlValueOptions const& options)
+    {
+        std::unordered_set<T, THash, TEqual, TAllocator> read(0, out.hash_function(), out.key_eq(),
+            out.get_allocator());
+        TASWTomlResult result = Detail::SetFromValue(value, read, options);
+        if (result.IsOk())
+            out = std::move(read);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(std::unordered_set<T, THash, TEqual, TAllocator> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options)
+    {
+        TASWTomlValue array;
+        TASWTomlResult result = Detail::ArrayToValue<T>(in, array, options);
+        if (result.IsOk())
+        {
+            Detail::SortByText(*array.AsArray());
+            value = std::move(array);
+        }
+
+        return result;
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::vector<T> >
+//
+// An array of any type T that has a converter and a default constructor. Reads any array (an array value or an array
+// of tables), each element into a new T{} by TASWTomlConverter<T>; any other type is TypeMismatch. The first element
+// that fails fails the vector, with its index in front of its Path ([1], or [1].port for a key inside it), and leaves
+// 'out' as it was. Writes an array of the elements in order (a std::vector<bool> too), so a document writes a vector
+// of tables as an array of tables, and an empty vector as []. A vector of vectors needs nothing more, and
+// std::vector<TASWTomlValue> reads and writes an array whose elements' types differ.
+/////////////////////////////////////////////////////////////////////////////
+template <TomlConvertible T, typename TAllocator>
+requires std::default_initializable<T>
+struct TASWTomlConverter<std::vector<T, TAllocator> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::vector<T, TAllocator>& out,
+        TASWTomlValueOptions const& options)
+    {
+        TASWTomlValue::TValueVector const* const array = value.AsArray();
+        if (array == nullptr)
+            return Detail::TypeMismatch(value, "an array");
+
+        std::vector<T, TAllocator> read(out.get_allocator());
+        read.reserve(array->size());
+        for (std::size_t i = 0; i < array->size(); ++i)
+        {
+            T element{};
+            TASWTomlResult result = TASWTomlConverter<T>::FromValue((*array)[i], element, options);
+            if (!result.IsOk())
+                return Detail::ElementFailure(std::move(result), i);
+
+            read.push_back(std::move(element));
+        }
+
+        out = std::move(read);
+
+        return TASWTomlResult();
+    }
+
+    static TASWTomlResult ToValue(std::vector<T, TAllocator> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options)
+    {
+        return Detail::ArrayToValue<T>(in, value, options);
+    }
 };
 
 } // namespace ASWToml

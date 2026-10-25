@@ -28,6 +28,7 @@ SPDX-License-Identifier: MIT
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_File.h"
 #include "ASWToml_Scalars.h"
@@ -50,6 +51,9 @@ static_assert(FloatRoundingLimit - std::numeric_limits<float>::max() == 0x1p103,
 constexpr std::int64_t FirstDay = -719528;
 constexpr std::int64_t LastDay = 2932896;
 
+// The TOML texts of the elements of an array, each with its element's index (see SortByText())
+using TTextVector = std::vector<std::pair<std::string, std::size_t> >;
+
 char AsciiLower(char c) noexcept;
 std::int64_t CountOfSeconds(std::int64_t seconds, Detail::TDurationUnit const& unit) noexcept;
 std::string DateText(std::chrono::year_month_day const& date);
@@ -65,6 +69,7 @@ std::string OffsetDateTimeEnd(std::int64_t count, Detail::TDurationUnit const& u
 TASWTomlResult OutOfRange(std::string_view text, std::string_view min, std::string_view max);
 std::string PrefixedPath(std::string part, std::string const& path);
 TASWTomlResult RealDateFromValue(TASWTomlValue const& value, std::chrono::year_month_day& date);
+Detail::TWriteStyle TextStyle();
 std::string ValidUtf8(std::string_view text);
 
 //---------------------------------------------------------------------------
@@ -307,6 +312,21 @@ TASWTomlResult RealDateFromValue(TASWTomlValue const& value, std::chrono::year_m
 }
 //---------------------------------------------------------------------------
 /*
+    TextStyle
+
+    The style values are written in for messages and for SortByText(): strings as basic strings, which escape every
+    control character, nested as deep as a document's values may be
+*/
+Detail::TWriteStyle TextStyle()
+{
+    Detail::TWriteStyle style;
+    style.Values.StringStyle = EStringStyle::Basic;
+    style.MaxDepth = TASWTomlReadingOptions::MaxNestingDepthLimit;
+
+    return style;
+}
+//---------------------------------------------------------------------------
+/*
     ValidUtf8
 
     'text' with each byte that doesn't belong to a valid UTF-8 sequence as '?'
@@ -444,6 +464,45 @@ TASWTomlResult Detail::KeyFailure(TASWTomlResult result, std::string_view key)
     return result;
 }
 //---------------------------------------------------------------------------
+TASWTomlResult Detail::LengthMismatch(TASWTomlValue const& value, std::size_t length)
+{
+    std::size_t const size = value.AsArray()->size();
+    std::string problem = "has " + std::to_string(size);
+    problem += size == 1 ? " element, not " : " elements, not ";
+    problem += std::to_string(length);
+    problem += '.';
+
+    return ValueFailure(ETomlCode::InvalidValue, value, problem);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::RepeatedElement(TASWTomlValue const& element)
+{
+    return ValueFailure(ETomlCode::InvalidValue, element, "reads as an element the set already has.");
+}
+//---------------------------------------------------------------------------
+void Detail::SortByText(TASWTomlValue::TValueVector& elements)
+{
+    // The texts first, then the elements moved in their order, so a std::bad_alloc leaves 'elements' as they were;
+    // two elements with the same text are the same TOML value, so their order doesn't show
+    TWriteStyle const style = TextStyle();
+    TTextVector texts;
+    texts.reserve(elements.size());
+    for (std::size_t i = 0; i < elements.size(); ++i)
+    {
+        std::string text;
+        static_cast<void>(WriteValue(elements[i], style, text));
+        texts.emplace_back(std::move(text), i);
+    }
+
+    std::sort(texts.begin(), texts.end());
+    TASWTomlValue::TValueVector sorted;
+    sorted.reserve(elements.size());
+    for (TTextVector::value_type const& text : texts)
+        sorted.push_back(std::move(elements[text.second]));
+
+    elements = std::move(sorted);
+}
+//---------------------------------------------------------------------------
 bool Detail::TimeOfDayFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalTime& time) noexcept
 {
     std::int64_t const day = CountOfSeconds(86400, unit);
@@ -557,13 +616,8 @@ TASWTomlResult Detail::ValueFailure(ETomlCode code, TASWTomlValue const& value, 
 //---------------------------------------------------------------------------
 std::string Detail::ValueText(TASWTomlValue const& value)
 {
-    // Strings as basic strings, which escape every control character; nested as deep as a document's values may be
-    TWriteStyle style;
-    style.Values.StringStyle = EStringStyle::Basic;
-    style.MaxDepth = TASWTomlReadingOptions::MaxNestingDepthLimit;
-
     std::string text;
-    if (!WriteValue(value, style, text).IsOk())
+    if (!WriteValue(value, TextStyle(), text).IsOk())
         return std::string("of type ") + ToString(value.GetType());
 
     if (text.size() > MaxValueTextSize)
