@@ -139,7 +139,8 @@ struct [[nodiscard]] TASWTomlResult
 
     // The path of the key, table or value the error is about, in TOML's dotted-key syntax as TASWTomlPath::ToString()
     // writes it, e.g. server."host name".port; empty when the error isn't about one, or is about the root table. A
-    // failed edit of a TASWTomlDocument gives the path it was given.
+    // failed edit of a TASWTomlDocument gives the path it was given; a failed TASWTomlConverter gives the place inside
+    // the value it converted, e.g. [1].port (empty for the value itself).
     std::string Path;
 
     int SystemError = 0; // The operating system's error code (GetLastError() or errno); 0 when there is none

@@ -98,6 +98,10 @@
         <TASM_Debugging>None</TASM_Debugging>
     </PropertyGroup>
     <ItemGroup>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Converters.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Converters.h</DependentOn>
+            <BuildOrder>37</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_Document.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Document.h</DependentOn>
             <BuildOrder>30</BuildOrder>
@@ -150,6 +154,10 @@
             <BuildOrder>0</BuildOrder>
             <PCH>true</PCH>
         </PCHCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_Converters.cpp">
+            <DependentOn>..\tests\Test_ASWToml_Converters.h</DependentOn>
+            <BuildOrder>38</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\tests\Test_ASWToml_Document.cpp">
             <DependentOn>..\tests\Test_ASWToml_Document.h</DependentOn>
             <BuildOrder>32</BuildOrder>

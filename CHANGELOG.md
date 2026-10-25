@@ -189,5 +189,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   inline table have no line of their own, so their comments can't be set (`InvalidArgument`); a
   comment that isn't valid UTF-8 or holds a control character other than a tab fails with
   `InvalidValue`.
+- `TASWTomlConverter<T>` (`ASWToml_Converters.h`), which converts a value of an application's type
+  to and from a `TASWTomlValue`: `FromValue(value, out, options)` and `ToValue(in, value,
+  options)`, each returning a `TASWTomlResult` and leaving `out` or `value` as it was on failure.
+  A value of a TOML type the C++ type doesn't read fails with `TypeMismatch`, one it doesn't accept
+  (or that TOML can't hold) with `InvalidValue`, each with a message that shows the value as TOML
+  text, e.g. `The value 80 is an integer, not a string.`; a failure inside a value gives its place
+  in `Path`. The concept `TomlConvertible<T>` says whether a type has a converter. Converters come
+  for `TASWTomlValue` (as it is), `bool` (booleans only), `std::string` and `std::u8string` (strings
+  only; text that isn't valid UTF-8 can't be written) and `std::filesystem::path` (a string, the
+  path in UTF-8 on every platform, so a Windows path is written as `'C:\Users\me'`; a path that
+  wouldn't read back the same can't be written). An application adds its own by specializing the
+  template in namespace `ASWToml`, for one type or, with a requires clause, for a group of types.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop
