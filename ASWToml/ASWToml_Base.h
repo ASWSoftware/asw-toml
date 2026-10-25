@@ -24,6 +24,7 @@ SPDX-License-Identifier: MIT
 #ifndef ASWToml_BaseH
 #define ASWToml_BaseH
 //---------------------------------------------------------------------------
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -104,10 +105,10 @@ public:
 // The thread-safe TOML object: a TASWTomlDocument (empty, with the default options, until a text or a file is
 // loaded), its file path and the log callback, with IASWToml's operations, which any thread may call at any time. Each
 // operation is complete in itself: a lookup sees the document before or after an edit or a load, never during one.
-// Lookups share a reader/writer lock; edits take it alone. LoadText() parses the text without that lock, so lookups
-// and edits go on meanwhile; a second lock keeps loads and SetOptions() from overlapping. Failures are reported after
-// the locks are released (see TASWTomlLogCallback). An application's settings class derives from it. Neither copyable
-// nor movable.
+// Lookups share a reader/writer lock; edits take it alone. Load() reads and parses the file (and LoadText() the text)
+// without that lock, and Save() writes the file without it, so lookups and edits go on meanwhile; a second lock keeps
+// loads, saves and SetOptions() from overlapping. Failures and warnings are reported after the locks are released (see
+// TASWTomlLogCallback). An application's settings class derives from it. Neither copyable nor movable.
 /////////////////////////////////////////////////////////////////////////////
 class TASWBaseToml : public IASWToml
 {
@@ -127,7 +128,8 @@ private:
     TLogCallbackPtr m_LogCallback; // nullptr when there is none
     unsigned long long m_EditCount = 0; // Counts the edits that succeeded, so a save can tell whether one was made
 
-    // Held for the whole of LoadText() and SetOptions(), so they never overlap; taken before m_Mutex, never after it
+    // Held for the whole of Load(), LoadText(), Save(), SaveAs() and SetOptions(), so they never overlap; taken before
+    // m_Mutex, never after it
     Detail::TMutex m_FileMutex;
 
 private:
@@ -136,6 +138,21 @@ private:
     template <typename TMethod, typename ... TArgs>
     TASWTomlResult Edit(TMethod method, TASWTomlPath const& path, TArgs const& ... args);
 
+    // Load()'s work, which may throw: adds the warnings to 'messages', and sets 'missing' when the file doesn't exist
+    // and the document was emptied
+    TASWTomlResult LoadFile(std::string_view filePath, TMessageVector& messages, bool& missing);
+
+    // Reports each of 'messages', in order (with no lock held)
+    void ReportAll(TMessageVector const& messages) const noexcept;
+
+    // The work of Save() (when 'filePath' is nullptr) and SaveAs(*filePath), which may throw: adds the warnings to
+    // 'messages'
+    TASWTomlResult SaveFile(std::string_view const* filePath, TMessageVector& messages);
+
+    // Save() (when 'filePath' is nullptr) or SaveAs(*filePath): SaveFile() with an exception caught, and its warnings
+    // and failure reported
+    TASWTomlResult SaveTo(std::string_view const* filePath);
+
 protected:
     TASWTomlResult DocumentAppend(TASWTomlPath const& path, TASWTomlValue const& value,
         TASWTomlValueOptions const& values) override;
@@ -143,9 +160,22 @@ protected:
     TASWTomlResult DocumentSetValue(TASWTomlPath const& path, TASWTomlValue const& value,
         TASWTomlValueOptions const& values) override;
 
+    // Reads the whole file 'filePath' (UTF-8) into 'contents', failing with FileTooLarge if it has more than 'maxSize'
+    // bytes, as Detail::ReadWholeFile() does (the default). Load() calls it with the file lock held but not the
+    // document's lock, so it may call the object's lookups and edits, but not Load(), LoadText(), Save(), SaveAs() or
+    // SetOptions(). A derived class may override it, e.g. for a test to make a failure the file system can't give
+    // reliably. A FileNotFound result is a missing file (see Load()). May throw; Load() catches it.
+    virtual TASWTomlResult ReadFile(std::string const& filePath, std::size_t maxSize, std::string& contents);
+
     // Calls the log callback with 'message' (FilePath set to the file path when it is empty), unless there is none.
     // An exception the callback throws is dropped.
     void Report(TASWTomlMessage const& message) const noexcept override;
+
+    // Writes 'contents' to the file 'filePath' (UTF-8) as the saving options 'options' say, adding warnings (e.g.
+    // BackupFailed) to 'warnings', as Detail::WriteWholeFile() does (the default). Save() and SaveAs() call it as
+    // Load() calls ReadFile(). May throw; Save() and SaveAs() catch it.
+    virtual TASWTomlResult WriteFile(std::string const& filePath, std::string_view contents,
+        TASWTomlSavingOptions const& options, TMessageVector& warnings);
 
 public:
     // An empty document with the default options, no file path and no log callback
@@ -161,9 +191,12 @@ public:
     TASWTomlValueOptions GetValueOptions() const override;
     std::string_view GetVersionStr() const noexcept override;
     bool IsModified() const override;
+    TASWTomlResult Load(std::string_view filePath) override;
     TASWTomlResult LoadText(std::string_view text) override;
     bool Remove(TASWTomlPath const& path) override;
     TASWTomlResult Rename(TASWTomlPath const& path, std::string_view newKey) override;
+    TASWTomlResult Save() override;
+    TASWTomlResult SaveAs(std::string_view filePath) override;
     TASWTomlResult SetComment(TASWTomlPath const& path, std::string_view text) override;
     void SetLogCallback(TASWTomlLogCallback callback) override;
     TASWTomlResult SetOptions(TASWTomlOptions const& options) override;

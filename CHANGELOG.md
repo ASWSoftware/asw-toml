@@ -245,7 +245,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   struct is an array of tables). An application adds its own by specializing the template in
   namespace `ASWToml`, for one type or, with a requires clause, for a group of types.
 - `IASWToml` (`ASWToml_Interface.h`), the interface of a thread-safe TOML object (which
-  `TASWBaseToml` will implement), so code that only reads and writes values can take an
+  `TASWBaseToml` implements), so code that only reads and writes values can take an
   `IASWToml&`. Its operations by path are each complete in itself and give out copies, never
   pointers into the document: `Contains()`, `GetKeyNames()` (a `TStringVector`), `GetComment()`,
   `GetTrailingComment()`, `Remove()`, `Rename()`, `SetComment()`, `SetTrailingComment()`,
@@ -263,14 +263,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `GetValue()` too).
 - `TASWBaseToml` (`ASWToml_Base.h`), the thread-safe TOML object that implements `IASWToml`, which
   an application's settings class derives from: a `TASWTomlDocument` with the default options until
-  `SetOptions()` or `LoadText()`, whose operations any thread may call at any time, each complete in
-  itself (a lookup sees the document before or after an edit or a load, never during one). Lookups
-  share a reader/writer lock and edits take it alone; `LoadText()` parses without it, and a
-  failed `LoadText()`, edit or `SetOptions()` changes nothing. Every operation that returns a
-  `TASWTomlResult` catches what is thrown (`std::bad_alloc`, or what an application's converter
-  throws) and returns it as `UnexpectedException`. Failures are reported to the log callback
-  (`SetLogCallback()`) after the locks are released, so the callback may call the object, and an
-  exception the callback throws is dropped. `Load()`, `Save()` and `SaveAs()` are still to come:
-  until then, a class derived from it must provide them.
+  `SetOptions()`, `LoadText()` or `Load()`, whose operations any thread may call at any time, each
+  complete in itself (a lookup sees the document before or after an edit or a load, never during
+  one). Lookups share a reader/writer lock and edits take it alone; `Load()` reads and parses the
+  file (and `LoadText()` the text) without it, and `Save()` writes the file without it, so lookups
+  and edits go on meanwhile. `Load(path)` makes the file the object's file path, which `Save()`
+  writes, and `SaveAs(path)` writes another file and makes it the file path; a save writes the
+  document even when it isn't modified, atomically by default, and clears the modified flag unless
+  an edit succeeded while the file was being written. A failed load, save, edit or `SetOptions()`
+  changes nothing, a load of a file with a syntax error included, so `Save()` never overwrites the
+  file that has to be fixed. Only a missing file is different: `Load()` fails with `FileNotFound`,
+  reported as a Warning, but empties the document and makes the file the file path, so an
+  application's first run creates it with `Save()`. Every operation that returns a `TASWTomlResult`
+  catches what is thrown (`std::bad_alloc`, or what an application's converter throws) and returns
+  it as `UnexpectedException`. Failures and the warnings of a save (`BackupFailed`,
+  `TempFileCleanupFailed`) are reported to the log callback (`SetLogCallback()`) after the locks are
+  released, each with the file it is about, so the callback may call the object, and an exception
+  the callback throws is dropped. The files are read and written by the protected virtual
+  `ReadFile()` and `WriteFile()`, which a derived class may override.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

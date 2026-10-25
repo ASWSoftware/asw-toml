@@ -92,6 +92,54 @@ public:
     void TearDown_Test(ITestCase& testCase) override;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_BaseFile
+//
+// TASWBaseToml's Load(), Save() and SaveAs(): real files, a missing file, failures that change nothing, the modified
+// flag, the ReadFile() and WriteFile() seams, and what they do when memory runs out
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_BaseFile : public TAutoTestGroup<TTest_ASWToml_BaseFile>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_BaseFile> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_EmptyPath_IsInvalidArgument();
+    void Test_FileOperations_DontOverlap();
+    void Test_Load_FileErrorsChangeNothing();
+    void Test_Load_MissingFileEmptiesTheDocument();
+    void Test_Load_MissingFolderIsCreatedBySave();
+    void Test_Load_ReadsTheFile();
+    void Test_Load_ReadsWithoutTheLock();
+    void Test_Load_SyntaxErrorChangesNothing();
+    void Test_OutOfMemory_LoadChangesNothing();
+    void Test_OutOfMemory_SaveChangesNothing();
+    void Test_SaveAs_SetsTheFilePath();
+    void Test_SaveAs_UsesUtf8Paths();
+    void Test_Save_EditDuringSaveKeepsTheModifiedFlag();
+    void Test_Save_NoFilePathFails();
+#if defined(_WIN32)
+    void Test_Save_ReadOnlyFileChangesNothing();
+#endif
+    void Test_Save_RoundTripsByteForByte();
+    void Test_Save_WarningsAreReported();
+    void Test_Save_WritesAndClearsTheModifiedFlag();
+    void Test_Seams_ExceptionIsUnexpectedException();
+    void Test_Seams_FailuresChangeNothing();
+    void Test_Seams_FileNotFoundIsAMissingFile();
+    void Test_Seams_GetTheirArguments();
+
+public:
+    TTest_ASWToml_BaseFile();
+    ~TTest_ASWToml_BaseFile() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------

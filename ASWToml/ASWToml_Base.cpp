@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "ASWToml_Base.h"
 //---------------------------------------------------------------------------
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -24,6 +25,7 @@ SPDX-License-Identifier: MIT
 #include <string_view>
 #include <utility>
 //---------------------------------------------------------------------------
+#include "ASWToml_File.h"
 #include "ASWToml_Version.h"
 //---------------------------------------------------------------------------
 
@@ -44,6 +46,92 @@ extern "C" void __tsan_mutex_destroy(void* addr, unsigned flags);
 
 namespace ASWToml
 {
+
+namespace
+{
+
+// The message of Load()'s and SaveAs()'s InvalidArgument for an empty file path
+constexpr char const* EmptyFilePathText = "The file path is empty.";
+
+TASWTomlResult Failure(ETomlCode code, char const* message);
+TASWTomlMessage MissingFileWarning(TASWTomlResult const& result);
+void SetFailureFilePath(std::string_view filePath, TASWTomlResult& result) noexcept;
+void SetFilePaths(std::string const& filePath, TASWTomlResult& result, TMessageVector& messages);
+
+//---------------------------------------------------------------------------
+/*
+    Failure
+
+    A failed result with 'code' and 'message'.
+*/
+TASWTomlResult Failure(ETomlCode code, char const* message)
+{
+    TASWTomlResult result;
+    result.Code = code;
+    result.Message = message;
+
+    return result;
+}
+//---------------------------------------------------------------------------
+/*
+    MissingFileWarning
+
+    The Warning message Load() reports for 'result', its FileNotFound result (the file it emptied the document for
+    doesn't exist), with the result's code, text, file path and system error.
+*/
+TASWTomlMessage MissingFileWarning(TASWTomlResult const& result)
+{
+    TASWTomlMessage message;
+    message.Severity = ESeverity::Warning;
+    message.Code = result.Code;
+    message.Text = result.Message;
+    message.FilePath = result.FilePath;
+    message.SystemError = result.SystemError;
+
+    return message;
+}
+//---------------------------------------------------------------------------
+/*
+    SetFailureFilePath
+
+    Sets the file path of 'result', the result of an exception Load() or SaveAs() caught (which has none), to
+    'filePath', the file it was given, unless the text can't be made (std::bad_alloc: the result is complete without
+    it), so its report doesn't take the object's file path, which is another file.
+*/
+void SetFailureFilePath(std::string_view filePath, TASWTomlResult& result) noexcept
+{
+    try
+    {
+        result.FilePath = filePath;
+    }
+    catch (...)
+    {
+        // The file path couldn't be made (std::bad_alloc)
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    SetFilePaths
+
+    Sets the file path of 'result', when it failed, and of each of 'messages' to 'filePath', the file they are about,
+    where they have none, so their reports don't take the object's file path, which may be another file by then.
+*/
+void SetFilePaths(std::string const& filePath, TASWTomlResult& result, TMessageVector& messages)
+{
+    if (!result.IsOk() && result.FilePath.empty())
+        result.FilePath = filePath;
+
+    for (TASWTomlMessage& message : messages)
+    {
+        if (message.FilePath.empty())
+            message.FilePath = filePath;
+    }
+}
+//---------------------------------------------------------------------------
+
+} // namespace
+
+//---------------------------------------------------------------------------
 
 namespace Detail
 {
@@ -243,6 +331,73 @@ bool TASWBaseToml::IsModified() const
     return m_Document.IsModified();
 }
 //---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::Load(std::string_view filePath)
+{
+    TMessageVector messages;
+    TASWTomlResult result;
+    bool missing = false;
+
+    try
+    {
+        result = LoadFile(filePath, messages, missing);
+    }
+    catch (...)
+    {
+        result = CaughtException();
+        SetFailureFilePath(filePath, result);
+    }
+
+    ReportAll(messages);
+
+    // A missing file is in 'messages', as a Warning
+    if (!result.IsOk() && !missing)
+        ReportFailure(result);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::LoadFile(std::string_view filePath, TMessageVector& messages, bool& missing)
+{
+    if (filePath.empty())
+        return Failure(ETomlCode::InvalidArgument, EmptyFilePathText);
+
+    std::string path(filePath);
+    std::lock_guard<Detail::TMutex> fileLock(m_FileMutex);
+    TASWTomlOptions options;
+    {
+        std::shared_lock<Detail::TSharedMutex> lock(m_Mutex);
+        options = m_Document.GetOptions();
+    }
+
+    // Read and parsed without the lock, as LoadText() parses; an edit made meanwhile is replaced by the file
+    std::string text;
+    TASWTomlDocument document;
+    TASWTomlResult result = ReadFile(path, options.Reading.MaxFileSize, text);
+    bool const notFound = result.Code == ETomlCode::FileNotFound;
+    if (result.IsOk())
+        result = document.Parse(text, options);
+    else if (notFound)
+        static_cast<void>(document.Reset(options)); // The options are the document's, so they are valid
+
+    SetFilePaths(path, result, messages);
+    if (!result.IsOk() && !notFound)
+        return result;
+
+    // An application's first run has no file: the document is emptied and gets the path, so Save() creates the file
+    if (notFound)
+        messages.push_back(MissingFileWarning(result));
+
+    {
+        std::lock_guard<Detail::TSharedMutex> lock(m_Mutex);
+        m_Document = std::move(document);
+        m_FilePath = std::move(path);
+    }
+
+    missing = notFound;
+
+    return result;
+}
+//---------------------------------------------------------------------------
 TASWTomlResult TASWBaseToml::LoadText(std::string_view text)
 {
     TASWTomlResult result;
@@ -275,6 +430,11 @@ TASWTomlResult TASWBaseToml::LoadText(std::string_view text)
         ReportFailure(result);
 
     return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::ReadFile(std::string const& filePath, std::size_t maxSize, std::string& contents)
+{
+    return Detail::ReadWholeFile(Utf8ToPath(filePath), maxSize, contents);
 }
 //---------------------------------------------------------------------------
 bool TASWBaseToml::Remove(TASWTomlPath const& path)
@@ -324,6 +484,85 @@ void TASWBaseToml::Report(TASWTomlMessage const& message) const noexcept
     {
         // The callback threw, or the message couldn't be made (std::bad_alloc): reporting never throws
     }
+}
+//---------------------------------------------------------------------------
+void TASWBaseToml::ReportAll(TMessageVector const& messages) const noexcept
+{
+    for (TASWTomlMessage const& message : messages)
+        Report(message);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::Save()
+{
+    return SaveTo(nullptr);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::SaveAs(std::string_view filePath)
+{
+    return SaveTo(&filePath);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::SaveFile(std::string_view const* filePath, TMessageVector& messages)
+{
+    if (filePath != nullptr && filePath->empty())
+        return Failure(ETomlCode::InvalidArgument, EmptyFilePathText);
+
+    std::lock_guard<Detail::TMutex> fileLock(m_FileMutex);
+    std::string path;
+    std::string text;
+    TASWTomlSavingOptions options;
+    unsigned long long editCount = 0;
+    {
+        std::shared_lock<Detail::TSharedMutex> lock(m_Mutex);
+        path = filePath != nullptr ? std::string(*filePath) : m_FilePath;
+        if (path.empty())
+            return Failure(ETomlCode::NoFilePath, "There is no file path to save to; Load() or SaveAs() sets one.");
+
+        text = m_Document.ToText();
+        options = m_Document.GetOptions().Saving;
+        editCount = m_EditCount;
+    }
+
+    // Written without the lock, so lookups and edits go on meanwhile
+    TASWTomlResult result = WriteFile(path, text, options, messages);
+    SetFilePaths(path, result, messages);
+    if (!result.IsOk())
+        return result;
+
+    std::lock_guard<Detail::TSharedMutex> lock(m_Mutex);
+
+    // An edit made while the file was being written isn't in the file
+    if (m_EditCount == editCount)
+        m_Document.ClearModified();
+
+    if (filePath != nullptr)
+        m_FilePath = std::move(path);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::SaveTo(std::string_view const* filePath)
+{
+    TMessageVector messages;
+    TASWTomlResult result;
+
+    try
+    {
+        result = SaveFile(filePath, messages);
+    }
+    catch (...)
+    {
+        result = CaughtException();
+        if (filePath != nullptr)
+            SetFailureFilePath(*filePath, result);
+    }
+
+    ReportAll(messages);
+
+    if (!result.IsOk())
+        ReportFailure(result);
+
+    return result;
 }
 //---------------------------------------------------------------------------
 TASWTomlResult TASWBaseToml::SetComment(TASWTomlPath const& path, std::string_view text)
@@ -377,6 +616,12 @@ std::string TASWBaseToml::ToText() const
     std::shared_lock<Detail::TSharedMutex> lock(m_Mutex);
 
     return m_Document.ToText();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::WriteFile(std::string const& filePath, std::string_view contents,
+    TASWTomlSavingOptions const& options, TMessageVector& warnings)
+{
+    return Detail::WriteWholeFile(Utf8ToPath(filePath), contents, options, warnings);
 }
 //---------------------------------------------------------------------------
 
