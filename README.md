@@ -22,9 +22,13 @@ and tables and at the end of their lines. And it converts TOML values to and fro
 `float` and `double`, enums by name, the `std::chrono` dates, time points and times of day,
 `std::vector`, `std::array`, sets, pairs and tuples as arrays, maps (with string, integer or enum
 keys) as tables, and structs through a list of their fields, so a `std::vector` of a struct is an
-array of tables. Loading and saving files come next, then the settings binding.
-[CHANGELOG.md](CHANGELOG.md) lists what each change adds. The interface may change in any way until
-1.0.0.
+array of tables. `TASWBaseToml` (`ASWToml_Base.h`) is the TOML object an application uses, from any
+number of threads: it loads a file and saves it back (atomically, with an optional backup), reads
+and writes typed values by path (`GetValue()`, `TryGetValue()`, `SetValue()` and `Append()`), and
+reports warnings and errors to a log callback. Code that only reads and writes values can take its
+interface, `IASWToml` (`ASWToml_Interface.h`). The settings binding, which declares an application's
+settings in one place, comes next. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The
+interface may change in any way until 1.0.0.
 
 ## Design
 

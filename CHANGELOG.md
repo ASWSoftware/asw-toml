@@ -271,15 +271,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   writes, and `SaveAs(path)` writes another file and makes it the file path; a save writes the
   document even when it isn't modified, atomically by default, and clears the modified flag unless
   an edit succeeded while the file was being written. A failed load, save, edit or `SetOptions()`
-  changes nothing, a load of a file with a syntax error included, so `Save()` never overwrites the
-  file that has to be fixed. Only a missing file is different: `Load()` fails with `FileNotFound`,
-  reported as a Warning, but empties the document and makes the file the file path, so an
-  application's first run creates it with `Save()`. Every operation that returns a `TASWTomlResult`
-  catches what is thrown (`std::bad_alloc`, or what an application's converter throws) and returns
-  it as `UnexpectedException`. Failures and the warnings of a save (`BackupFailed`,
-  `TempFileCleanupFailed`) are reported to the log callback (`SetLogCallback()`) after the locks are
-  released, each with the file it is about, so the callback may call the object, and an exception
-  the callback throws is dropped. The files are read and written by the protected virtual
+  changes nothing, a load of a file with a syntax error included: the file path stays, so `Save()`
+  doesn't write over that file unless it already was the file path. Only a missing file is
+  different: `Load()` fails with `FileNotFound`, reported as a Warning, but empties the document and
+  makes the file the file path, so an application's first run creates it with `Save()`. Every
+  operation that returns a `TASWTomlResult` catches what is thrown (`std::bad_alloc`, or what an
+  application's converter throws) and returns it as `UnexpectedException`. Failures and the warnings
+  of a save (`BackupFailed`, `TempFileCleanupFailed`) are reported to the log callback
+  (`SetLogCallback()`) after the locks are released, each with the file it is about, so the callback
+  may call the object, even `Load()`, `Save()` or `SetLogCallback()`, and an exception the callback
+  throws is dropped. Any thread may replace the callback at any time; a report already under way may
+  still go to the callback it replaced. The files are read and written by the protected virtual
   `ReadFile()` and `WriteFile()`, which a derived class may override.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

@@ -252,6 +252,10 @@
             <DependentOn>..\..\..\tests\UT_Helper_TempDir.h</DependentOn>
             <BuildOrder>55</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\..\tests\UT_Helper_Threads.cpp">
+            <DependentOn>..\..\..\tests\UT_Helper_Threads.h</DependentOn>
+            <BuildOrder>80</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\toml-test\TomlTest_Corpus.cpp">
             <DependentOn>..\..\..\toml-test\TomlTest_Corpus.h</DependentOn>
             <BuildOrder>65</BuildOrder>

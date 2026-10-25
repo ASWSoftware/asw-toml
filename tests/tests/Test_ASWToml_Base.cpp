@@ -20,15 +20,18 @@ SPDX-License-Identifier: MIT
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <random>
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 //---------------------------------------------------------------------------
@@ -45,6 +48,7 @@ SPDX-License-Identifier: MIT
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
 #include "ASWToml_Base.h"
+#include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
 #include "ASWToml_File.h"
 #include "ASWToml_Interface.h"
@@ -56,6 +60,7 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "UT_Helper_FailingAlloc.h"
 #include "UT_Helper_TempDir.h"
+#include "UT_Helper_Threads.h"
 //---------------------------------------------------------------------------
 
 // Neither copyable nor movable
@@ -91,6 +96,7 @@ using ASWToml::TMessageVector;
 using ASWToml::TStringVector;
 using ASWToml::Utf8ToPath;
 
+using TResultVector = std::vector<TASWTomlResult>;
 using TTable = TASWTomlValue::TKeyValueVector;
 
 // A text with a file comment, keys with comments, a table and an array of tables
@@ -142,6 +148,14 @@ constexpr char const* TrickyText =
 
 // How long a test waits for another thread before it counts as stuck
 constexpr std::chrono::seconds ThreadTimeout(10);
+
+// The file operation TFileReentrant calls for the next message
+enum class EFileCall
+{
+    None,
+    Load,
+    Save,
+};
 
 // The edit TEditingWriter makes while the file is written
 enum class EEditDuringSave
@@ -281,6 +295,51 @@ public:
 
     TASWTomlResult operator()(TWriteCall const& call) const;
 };
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TFileReentrant
+//
+// A log callback that adds each message to a vector and then makes the file call an EFileCall names (once, setting it
+// to None): Load() of its file or Save() of the object it is the callback of, adding the result to another vector
+/////////////////////////////////////////////////////////////////////////////
+class TFileReentrant
+{
+private:
+    TASWBaseToml* m_Toml;
+    std::string m_FilePath;
+    EFileCall* m_Next;
+    TMessageVector* m_Messages;
+    TResultVector* m_Results;
+
+public:
+    TFileReentrant(TASWBaseToml& toml, std::string const& filePath, EFileCall& next, TMessageVector& messages,
+        TResultVector& results);
+
+    void operator()(TASWTomlMessage const& message) const;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TGenerationServer
+//
+// An element of the array of tables "servers" in the thread tests: a writer sets all of them to one generation in one
+// edit, so a reader that sees two generations in one read has seen a document halfway through an edit
+/////////////////////////////////////////////////////////////////////////////
+struct TGenerationServer
+{
+    std::string Host;
+    int Port = 0;
+    int Generation = 0;
+};
+
+// Its fields, as an application declares them (here, since the converter's return type is deduced)
+auto ASWTomlFields(TGenerationServer const&)
+{
+    return std::tuple{ ASWToml::Field("host", &TGenerationServer::Host),
+        ASWToml::Field("port", &TGenerationServer::Port),
+        ASWToml::Field("generation", &TGenerationServer::Generation) };
+}
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -434,6 +493,31 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TThreadTest
+//
+// What the threads of a thread test share: the object, the problems they find, and how much work each does. Writer
+// threads count WriterPath(index) up from 1, to at least Iterations and at most Largest; threads that go on until
+// others are done wait for Left to reach 0.
+/////////////////////////////////////////////////////////////////////////////
+struct TThreadTest
+{
+    TSeamToml Toml;
+    TThreadFailures Failures;
+    std::size_t Writers = 0;
+    int Iterations = 0;
+    int Largest = 0;
+    int FileOperations = 0; // The loads or saves of each file thread
+    std::atomic<int> Left{ 0 }; // The threads still running that the others go on for
+    std::string FilePath; // The file the loads and saves use
+    std::atomic<int> FirstCount{ 0 }; // The messages First and Second counted
+    std::atomic<int> SecondCount{ 0 };
+    TASWTomlLogCallback First; // The callbacks SwitchCallbacks() switches between
+    TASWTomlLogCallback Second;
+    TASWTomlOptions Hexadecimal; // The options SwitchOptions() switches to and from the default ones
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TThrowingRecorder
 //
 // A log callback that adds each message to a vector, then throws: a std::runtime_error for the first, an int after it
@@ -479,15 +563,106 @@ public:
     TASWTomlResult operator()(TWriteCall const& call) const;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TWholeFileChecker
+//
+// A write seam of a thread test that writes the file, then reads it back and checks it has the text that was saved,
+// which reads back as it is with each writer's count in range (see ValuesProblem())
+/////////////////////////////////////////////////////////////////////////////
+class TWholeFileChecker
+{
+private:
+    TThreadTest* m_Test;
+
+public:
+    explicit TWholeFileChecker(TThreadTest& test);
+
+    TASWTomlResult operator()(TWriteCall const& call) const;
+};
+
+void CountUp(TThreadTest& test, std::size_t index);
+void FailEdits(TThreadTest& test, std::size_t index);
+std::vector<TGenerationServer> GenerationServers(int generation);
 void LoadAppFile(TASWBaseToml* toml);
+void LoadRepeatedly(TThreadTest& test, std::size_t index);
 void LockReader(TLockCounters& counters, int iterations);
 void LockWriter(TLockCounters& counters, int iterations);
 TASWTomlDocument ParsedDocument(std::string_view text);
+void ReadCounts(TThreadTest& test, std::size_t index);
+void ReadDuringFileOperations(TThreadTest& test, std::size_t index);
+void ReadWithOptions(TThreadTest& test, std::size_t index);
 bool SameResult(TASWTomlResult const& first, TASWTomlResult const& second);
 void SaveAsAppFile(TASWBaseToml* toml);
+void SaveRepeatedly(TThreadTest& test, std::size_t index);
 TASWTomlResult SeamFailure(ETomlCode code, std::string const& filePath, int systemError);
+std::string ServersProblem(std::vector<TGenerationServer> const& servers);
+void SetComments(TThreadTest& test, std::size_t index);
+void SetCountAndMask(TThreadTest& test, std::size_t index);
 void SharedReader(ASWToml::Detail::TSharedMutex& shared, std::atomic<bool>& inside);
+void SwitchCallbacks(TThreadTest& test, std::size_t index);
+void SwitchOptions(TThreadTest& test, std::size_t index);
+void UseScratchTable(TThreadTest& test, std::size_t index);
+std::string ValuesProblem(TASWTomlDocument const& document, std::size_t writers, int largest);
+void WriteServers(TThreadTest& test, std::size_t index);
 
+//---------------------------------------------------------------------------
+/*
+    CountUp
+
+    A writer thread: sets WriterPath(index) to 1, 2 and so on, to at least test.Iterations, and on until test.Left
+    is 0, at most to test.Largest.
+*/
+void CountUp(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int value = 1; value <= test.Largest; ++value)
+    {
+        TASWTomlResult const result = test.Toml.SetValue(WriterPath(index), value);
+        if (!result.IsOk())
+            test.Failures.Add("SetValue() should succeed: " + result.Message);
+
+        if (value >= test.Iterations && test.Left == 0)
+            break;
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    FailEdits
+
+    Renames a missing key test.Iterations times, each a NotFound failure that is reported, then counts itself out of
+    test.Left.
+*/
+void FailEdits(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Iterations; ++i)
+    {
+        TASWTomlResult const result = test.Toml.Rename("missing", "other");
+        if (result.Code != ETomlCode::NotFound)
+            test.Failures.Add("renaming a missing key should be NotFound: " + result.Message);
+
+        MaybeYield(generator);
+    }
+
+    --test.Left;
+}
+//---------------------------------------------------------------------------
+/*
+    GenerationServers
+
+    The three elements of "servers" of generation 'generation': hosts h0 to h2, ports 1000 to 1002.
+*/
+std::vector<TGenerationServer> GenerationServers(int generation)
+{
+    std::vector<TGenerationServer> servers;
+    for (int i = 0; i < 3; ++i)
+        servers.push_back(TGenerationServer{ "h" + std::to_string(i), 1000 + i, generation });
+
+    return servers;
+}
 //---------------------------------------------------------------------------
 /*
     LoadAppFile
@@ -498,7 +673,31 @@ void LoadAppFile(TASWBaseToml* toml)
 {
     static_cast<void>(toml->Load("app.toml"));
 }
+//---------------------------------------------------------------------------
+/*
+    LoadRepeatedly
 
+    A file thread: test.FileOperations times, loads test.FilePath, and every other time a text with each writer's
+    count 0 (LoadText(), which keeps the file path), then counts itself out of test.Left.
+*/
+void LoadRepeatedly(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    std::string text;
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        text += "[writer" + std::to_string(i) + "]\ncount = 0\n";
+
+    for (int i = 0; i < test.FileOperations; ++i)
+    {
+        TASWTomlResult const result = i % 2 == 0 ? test.Toml.Load(test.FilePath) : test.Toml.LoadText(text);
+        if (!result.IsOk())
+            test.Failures.Add("Load() and LoadText() should succeed: " + result.Message);
+
+        MaybeYield(generator);
+    }
+
+    --test.Left;
+}
 //---------------------------------------------------------------------------
 /*
     LockReader
@@ -555,6 +754,121 @@ TASWTomlDocument ParsedDocument(std::string_view text)
 }
 //---------------------------------------------------------------------------
 /*
+    ReadCounts
+
+    A reader thread of Edits_LookupsNeverSeeAValueGoBack: test.Iterations times, reads a writer's count or the servers,
+    checking that the count converts and never goes back, and that the servers are all of one generation that never
+    goes back; every 50 reads, checks a copy of the document (see ValuesProblem()).
+*/
+void ReadCounts(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    std::vector<int> last(test.Writers + 1, 0);
+    for (int i = 0; i < test.Iterations; ++i)
+    {
+        std::size_t const key = generator() % (test.Writers + 1);
+        if (key < test.Writers)
+        {
+            int value = -1;
+            TASWTomlResult const result = test.Toml.TryGetValue(WriterPath(key), value);
+            if (!result.IsOk())
+                test.Failures.Add("each count should convert: " + result.Message);
+            else if (value < last[key] || value > test.Iterations)
+                test.Failures.Add(WriterPath(key) + " shouldn't go back: " + std::to_string(value) + " after " +
+                    std::to_string(last[key]));
+            else
+                last[key] = value;
+        }
+        else
+        {
+            std::vector<TGenerationServer> servers;
+            TASWTomlResult const result = test.Toml.TryGetValue("servers", servers);
+            std::string const problem = result.IsOk() ? ServersProblem(servers) : result.Message;
+            if (!problem.empty())
+                test.Failures.Add("the servers should be read whole: " + problem);
+            else if (servers[0].Generation < last[key])
+                test.Failures.Add("the servers' generation shouldn't go back");
+            else
+                last[key] = servers[0].Generation;
+        }
+
+        if (i % 50 == 0)
+        {
+            std::string const problem = ValuesProblem(test.Toml.GetDocument(), test.Writers, test.Iterations);
+            if (!problem.empty())
+                test.Failures.Add("in a copy of the document, " + problem);
+        }
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    ReadDuringFileOperations
+
+    A reader thread of LoadsAndSaves_EverySavedFileIsWhole: reads a writer's count, which a load may set back but is
+    always a number in range, and checks the file path stays; at least test.Iterations times, and on until test.Left
+    is 0, at most test.Largest times.
+*/
+void ReadDuringFileOperations(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Largest; ++i)
+    {
+        std::size_t const key = generator() % test.Writers;
+        int value = -1;
+        TASWTomlResult const result = test.Toml.TryGetValue(WriterPath(key), value);
+        if (!result.IsOk() || value < 0 || value > test.Largest)
+            test.Failures.Add(WriterPath(key) + " should be a number in range: " + result.Message);
+
+        if (test.Toml.GetFilePath() != test.FilePath)
+            test.Failures.Add("the file path should stay the same");
+
+        if (i >= test.Iterations && test.Left == 0)
+            break;
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    ReadWithOptions
+
+    A reader thread of SetOptions_LookupsSeeTheOldOrTheNewOptions: test.Iterations times, checks that writer 0's count
+    converts and never goes back and that its mask (written in either base) converts; every 50 reads, checks a copy of
+    the document (see ValuesProblem()).
+*/
+void ReadWithOptions(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    int last = 0;
+    for (int i = 0; i < test.Iterations; ++i)
+    {
+        int value = -1;
+        TASWTomlResult const count = test.Toml.TryGetValue(WriterPath(0), value);
+        if (!count.IsOk() || value < last || value > test.Iterations)
+            test.Failures.Add("the count should convert and never go back: " + std::to_string(value) + " after " +
+                std::to_string(last));
+        else
+            last = value;
+
+        int mask = -1;
+        TASWTomlResult const maskResult = test.Toml.TryGetValue("writer0.mask", mask);
+        if (!maskResult.IsOk())
+            test.Failures.Add("the mask should convert: " + maskResult.Message);
+
+        if (i % 50 == 0)
+        {
+            std::string const problem = ValuesProblem(test.Toml.GetDocument(), 1, test.Iterations);
+            if (!problem.empty())
+                test.Failures.Add("in a copy of the document, " + problem);
+        }
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
     SameResult
 
     Whether 'first' and 'second' have the same code, message and path.
@@ -575,6 +889,26 @@ void SaveAsAppFile(TASWBaseToml* toml)
 }
 //---------------------------------------------------------------------------
 /*
+    SaveRepeatedly
+
+    A file thread: saves the object test.FileOperations times, then counts itself out of test.Left.
+*/
+void SaveRepeatedly(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.FileOperations; ++i)
+    {
+        TASWTomlResult const result = test.Toml.Save();
+        if (!result.IsOk())
+            test.Failures.Add("Save() should succeed: " + result.Message);
+
+        MaybeYield(generator);
+    }
+
+    --test.Left;
+}
+//---------------------------------------------------------------------------
+/*
     SeamFailure
 
     A failed result with 'code', 'filePath' and 'systemError', as a seam may return it.
@@ -591,6 +925,92 @@ TASWTomlResult SeamFailure(ETomlCode code, std::string const& filePath, int syst
 }
 //---------------------------------------------------------------------------
 /*
+    ServersProblem
+
+    What is wrong with 'servers', the servers read in one read: "" when they are GenerationServers() of one generation.
+*/
+std::string ServersProblem(std::vector<TGenerationServer> const& servers)
+{
+    if (servers.empty())
+        return "there should be servers";
+
+    std::vector<TGenerationServer> const expected = GenerationServers(servers[0].Generation);
+    if (servers.size() != expected.size())
+        return "there should be " + std::to_string(expected.size()) + " servers, not " + std::to_string(servers.size());
+
+    for (std::size_t i = 0; i < servers.size(); ++i)
+    {
+        TGenerationServer const& server = servers[i];
+        if (server.Host != expected[i].Host || server.Port != expected[i].Port ||
+            server.Generation != expected[i].Generation)
+        {
+            return "server " + std::to_string(i) + " should be " + expected[i].Host + " of generation " +
+                std::to_string(expected[i].Generation) + ", not " + server.Host + " of generation " +
+                std::to_string(server.Generation);
+        }
+    }
+
+    return std::string();
+}
+//---------------------------------------------------------------------------
+/*
+    SetComments
+
+    test.Iterations times, sets the file comment, the comment of a writer's table or the trailing comment of its
+    count.
+*/
+void SetComments(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Iterations; ++i)
+    {
+        std::string const text = "Comment " + std::to_string(i);
+        std::size_t const which = generator() % 3;
+        std::size_t const writer = generator() % test.Writers;
+        TASWTomlResult result;
+        switch (which)
+        {
+            case 0:
+                result = test.Toml.SetComment("", text);
+                break;
+
+            case 1:
+                result = test.Toml.SetComment("writer" + std::to_string(writer), text);
+                break;
+
+            default:
+                result = test.Toml.SetTrailingComment(WriterPath(writer), text);
+                break;
+        }
+
+        if (!result.IsOk())
+            test.Failures.Add("setting a comment should succeed: " + result.Message);
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    SetCountAndMask
+
+    The writer thread of SetOptions_LookupsSeeTheOldOrTheNewOptions: sets writer 0's count and its mask to 1, 2 and so
+    on to test.Iterations, so each is written with the options of the moment.
+*/
+void SetCountAndMask(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int value = 1; value <= test.Iterations; ++value)
+    {
+        TASWTomlResult const count = test.Toml.SetValue(WriterPath(0), value);
+        TASWTomlResult const mask = test.Toml.SetValue("writer0.mask", value);
+        if (!count.IsOk() || !mask.IsOk())
+            test.Failures.Add("SetValue() should succeed: " + count.Message + mask.Message);
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
     SharedReader
 
     Takes the shared lock 'shared' and sets 'inside' while it holds it.
@@ -599,6 +1019,126 @@ void SharedReader(ASWToml::Detail::TSharedMutex& shared, std::atomic<bool>& insi
 {
     std::shared_lock<ASWToml::Detail::TSharedMutex> lock(shared);
     inside = true;
+}
+//---------------------------------------------------------------------------
+/*
+    SwitchCallbacks
+
+    Sets the log callback to test.Second and test.First in turn, at least test.Iterations times, and on until test.Left
+    is 0, at most test.Largest times.
+*/
+void SwitchCallbacks(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Largest; ++i)
+    {
+        test.Toml.SetLogCallback(i % 2 == 0 ? test.Second : test.First);
+        if (i >= test.Iterations && test.Left == 0)
+            break;
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    SwitchOptions
+
+    test.Iterations times, gives the object test.Hexadecimal and the default options in turn (the default ones last,
+    for an even count).
+*/
+void SwitchOptions(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    TASWTomlOptions const defaults;
+    for (int i = 0; i < test.Iterations; ++i)
+    {
+        TASWTomlResult const result = test.Toml.SetOptions(i % 2 == 0 ? test.Hexadecimal : defaults);
+        if (!result.IsOk())
+            test.Failures.Add("SetOptions() should succeed: " + result.Message);
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    UseScratchTable
+
+    test.Iterations times, sets a key of the table "scratch" (adding the table), renames the key, and removes the
+    table.
+*/
+void UseScratchTable(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Iterations; ++i)
+    {
+        TASWTomlResult const set = test.Toml.SetValue("scratch.round", i);
+        TASWTomlResult const renamed = test.Toml.Rename("scratch.round", "done");
+        bool const removed = test.Toml.Remove("scratch");
+        if (!set.IsOk() || !renamed.IsOk() || !removed)
+            test.Failures.Add("the scratch table should be set, renamed and removed: " + set.Message + renamed.Message);
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    ValuesProblem
+
+    What is wrong with 'document', a copy of a thread test's object or a file it saved: "" when its text reads back as
+    it is, each of WriterPath(0) to WriterPath(writers - 1) is an int from 0 to 'largest', and the servers, if there
+    are any, are all of one generation (see ServersProblem()).
+*/
+std::string ValuesProblem(TASWTomlDocument const& document, std::size_t writers, int largest)
+{
+    std::string const text = document.ToText();
+    TASWTomlDocument reread;
+    TASWTomlResult const parsed = reread.Parse(text, document.GetOptions());
+    if (!parsed.IsOk() || reread.ToText() != text)
+        return "the text should read back as it is: " + parsed.Message;
+
+    for (std::size_t i = 0; i < writers; ++i)
+    {
+        TASWTomlValue const* const value = document.Find(WriterPath(i));
+        int count = -1;
+        bool converts = false;
+        if (value != nullptr)
+            converts = ASWToml::TASWTomlConverter<int>::FromValue(*value, count, document.GetOptions().Values).IsOk();
+
+        if (!converts || count < 0 || count > largest)
+            return WriterPath(i) + " should be a number from 0 to " + std::to_string(largest);
+    }
+
+    TASWTomlValue const* const value = document.Find("servers");
+    if (value == nullptr)
+        return std::string();
+
+    std::vector<TGenerationServer> servers;
+    TASWTomlResult const converted = ASWToml::TASWTomlConverter<std::vector<TGenerationServer> >::FromValue(*value,
+        servers, document.GetOptions().Values);
+    if (!converted.IsOk())
+        return "the servers should convert: " + converted.Message;
+
+    std::string const problem = ServersProblem(servers);
+
+    return problem.empty() ? std::string() : "in the servers, " + problem;
+}
+//---------------------------------------------------------------------------
+/*
+    WriteServers
+
+    test.Iterations times, sets all the servers to the next generation, in one edit (a merge of the array of tables).
+*/
+void WriteServers(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int generation = 1; generation <= test.Iterations; ++generation)
+    {
+        TASWTomlResult const result = test.Toml.SetValue("servers", GenerationServers(generation));
+        if (!result.IsOk())
+            test.Failures.Add("setting the servers should succeed: " + result.Message);
+
+        MaybeYield(generator);
+    }
 }
 //---------------------------------------------------------------------------
 
@@ -716,6 +1256,34 @@ TASWTomlResult TEditingWriter::operator()(TWriteCall const& call) const
     }
 
     return m_Toml->DefaultWrite(call);
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TFileReentrant
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TFileReentrant::TFileReentrant(TASWBaseToml& toml, std::string const& filePath, EFileCall& next,
+    TMessageVector& messages, TResultVector& results)
+    : m_Toml(&toml),
+      m_FilePath(filePath),
+      m_Next(&next),
+      m_Messages(&messages),
+      m_Results(&results)
+{
+}
+//---------------------------------------------------------------------------
+void TFileReentrant::operator()(TASWTomlMessage const& message) const
+{
+    m_Messages->push_back(message);
+    EFileCall const next = *m_Next;
+    *m_Next = EFileCall::None;
+    if (next == EFileCall::Load)
+        m_Results->push_back(m_Toml->Load(m_FilePath));
+    else if (next == EFileCall::Save)
+        m_Results->push_back(m_Toml->Save());
 }
 //---------------------------------------------------------------------------
 
@@ -952,6 +1520,39 @@ TASWTomlResult TWarningWriter::operator()(TWriteCall const& call) const
     call.Warnings.push_back(warning);
 
     return m_Toml->DefaultWrite(call);
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TWholeFileChecker
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TWholeFileChecker::TWholeFileChecker(TThreadTest& test)
+    : m_Test(&test)
+{
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TWholeFileChecker::operator()(TWriteCall const& call) const
+{
+    TASWTomlResult result = m_Test->Toml.DefaultWrite(call);
+    if (!result.IsOk())
+        return result;
+
+    std::string contents;
+    if (!ReadTestFile(Utf8ToPath(call.FilePath), contents) || contents != call.Contents)
+    {
+        m_Test->Failures.Add("a saved file should have the text that was saved");
+    }
+    else
+    {
+        std::string const problem = ValuesProblem(ParsedDocument(contents), m_Test->Writers, m_Test->Largest);
+        if (!problem.empty())
+            m_Test->Failures.Add("in a saved file, " + problem);
+    }
+
+    return result;
 }
 //---------------------------------------------------------------------------
 
@@ -1560,6 +2161,62 @@ ASW_TEST(TTest_ASWToml_BaseCallback, Callback_MayCallTheObject)
         CheckEquals(std::string("port = 80\ncalled = true\n"), seen[3],
             "the callback's edit should be in the document");
     }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseCallback, Callback_MayLoadAndSave)
+{
+    // Arrange
+    // The callback calls Save() for the Warning of a Load() of a missing file, and Load() for the failure of
+    // SetOptions() and for a warning of Save(), which would deadlock if the file lock were held while reporting (the
+    // CI's test timeout turns that into a failure)
+    TTempDir const folder;
+    AssertFalse(folder.Path().empty(), "the test folder should be created");
+    std::filesystem::path const file = folder.Path() / "app.toml";
+    std::string const path = PathToUtf8(file);
+    TSeamToml toml;
+    TMessageVector messages;
+    TResultVector inCallback;
+    EFileCall next = EFileCall::None;
+    toml.SetLogCallback(TFileReentrant(toml, path, next, messages, inCallback));
+    TASWTomlOptions invalid;
+    invalid.Writing.CommentPrefix = "//";
+
+    // Act
+    next = EFileCall::Save;
+    TASWTomlResult const loaded = toml.Load(path);
+    std::size_t const messagesOfLoad = messages.size();
+    static_cast<void>(toml.SetValue("port", 80));
+    next = EFileCall::Load;
+    TASWTomlResult const refused = toml.SetOptions(invalid);
+    bool const editKeptByLoad = toml.Contains("port");
+    std::size_t const messagesOfSetOptions = messages.size() - messagesOfLoad;
+    toml.OnWrite = TWarningWriter(toml);
+    static_cast<void>(toml.SetValue("name", "app"));
+    next = EFileCall::Load;
+    TASWTomlResult const saved = toml.Save();
+    std::size_t const messagesOfSave = messages.size() - messagesOfLoad - messagesOfSetOptions;
+
+    // Assert
+    std::string contents;
+    CheckEquals(static_cast<int>(ETomlCode::FileNotFound), static_cast<int>(loaded.Code),
+        "the missing file should be FileNotFound");
+    CheckEquals(static_cast<int>(ETomlCode::InvalidOptions), static_cast<int>(refused.Code),
+        "the invalid options should be refused");
+    CheckTrue(saved.IsOk(), "Save() should succeed: " + saved.Message);
+    CheckEquals(std::size_t(3), inCallback.size(), "the callback should have saved once and loaded twice");
+    for (TASWTomlResult const& result : inCallback)
+        CheckTrue(result.IsOk(), "each call in the callback should succeed: " + result.Message);
+
+    CheckEquals(std::size_t(1), messagesOfLoad, "Load() should report the missing file, and the callback's Save() "
+        "nothing");
+    CheckEquals(std::size_t(1), messagesOfSetOptions, "SetOptions() should report its failure, and the callback's "
+        "Load() nothing");
+    CheckFalse(editKeptByLoad, "the callback's Load() should replace the edited document with the saved file");
+    CheckEquals(std::size_t(1), messagesOfSave, "Save() should report its warning, and the callback's Load() nothing");
+    CheckTrue(ReadTestFile(file, contents), "the file should be readable");
+    CheckEquals(toml.ToText(), contents, "the callback's Load() should load the file the Save() wrote");
+    CheckEquals(std::string("app"), toml.GetValue("name", ""), "with its edit");
+    CheckFalse(toml.IsModified(), "the loaded document shouldn't be modified");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseCallback, Callback_MayReplaceItself)
@@ -2697,9 +3354,219 @@ ASW_TEST(TTest_ASWToml_BaseFile, Seams_GetTheirArguments)
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_BaseThreads
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_BaseThreads::TTest_ASWToml_BaseThreads()
+    : inherited("ASWToml_BaseThreads_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_BaseThreads::~TTest_ASWToml_BaseThreads()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_BaseThreads::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_BaseThreads::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_BaseThreads::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_BaseThreads::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseThreads, Edits_LookupsNeverSeeAValueGoBack)
+{
+    // Arrange
+    // Writers count their own keys up and another sets all the servers (an array of tables) to the next generation in
+    // one edit. Readers check that each count converts and never goes back, that the servers are all of one generation
+    // that never goes back, and that a copy of the document reads back as it is, while comments are set and a scratch
+    // table is added, renamed and removed.
+    TThreadTest test;
+    test.Writers = 4;
+    test.Iterations = 1000;
+    test.Largest = test.Iterations;
+    std::size_t const readers = 3;
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        static_cast<void>(test.Toml.SetValue(WriterPath(i), 0));
+
+    static_cast<void>(test.Toml.SetValue("servers", GenerationServers(0)));
+    std::atomic<int> reports{ 0 };
+    test.Toml.SetLogCallback(TCountingCallback(reports));
+    TWorkVector work;
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        work.push_back(std::bind(CountUp, std::ref(test), i));
+
+    for (std::size_t i = 0; i < readers; ++i)
+        work.push_back(std::bind(ReadCounts, std::ref(test), test.Writers + i));
+
+    std::size_t const others = test.Writers + readers;
+    work.push_back(std::bind(WriteServers, std::ref(test), others));
+    work.push_back(std::bind(SetComments, std::ref(test), others + 1));
+    work.push_back(std::bind(UseScratchTable, std::ref(test), others + 2));
+
+    // Act
+    RunTogether(work, test.Failures);
+
+    // Assert
+    std::vector<TGenerationServer> const servers = test.Toml.GetValue("servers", std::vector<TGenerationServer>());
+    CheckEquals(std::string(), test.Failures.Summary(), "no thread should find a problem");
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        CheckEquals(test.Iterations, test.Toml.GetValue(WriterPath(i), -1),
+            "each count should have its writer's last value");
+
+    CheckEquals(std::string(), ServersProblem(servers), "the servers should be of one generation");
+    CheckTrue(!servers.empty() && servers[0].Generation == test.Iterations, "the last one");
+    CheckFalse(test.Toml.Contains("scratch"), "the scratch table should be removed");
+    CheckEquals(std::string(), ValuesProblem(test.Toml.GetDocument(), test.Writers, test.Iterations),
+        "the document should read back as it is");
+    CheckEquals(0, reports.load(), "nothing should be reported");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseThreads, LoadsAndSaves_EverySavedFileIsWhole)
+{
+    // Arrange
+    // Writers count their own keys up while other threads save the object to one file, load it from that file (or a
+    // text) and look up values, and WriteFile() reads each saved file back (see TWholeFileChecker). A load replaces the
+    // document, so a count may go back, but it is always a number in range. The writers and the reader go on until the
+    // file threads are done, since a file operation takes much longer than an edit.
+    TThreadTest test;
+    test.Writers = 2;
+    test.Iterations = 300;
+    test.Largest = 1000000;
+    test.FileOperations = 8;
+    test.Left = 3;
+    TTempDir const folder;
+    AssertFalse(folder.Path().empty(), "the test folder should be created");
+    test.FilePath = PathToUtf8(folder.Path() / "app.toml");
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        static_cast<void>(test.Toml.SetValue(WriterPath(i), 0));
+
+    AssertTrue(test.Toml.SaveAs(test.FilePath).IsOk(), "the file should be saved");
+    std::atomic<int> reports{ 0 };
+    test.Toml.SetLogCallback(TCountingCallback(reports));
+    test.Toml.OnWrite = TWholeFileChecker(test);
+    TWorkVector work;
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        work.push_back(std::bind(CountUp, std::ref(test), i));
+
+    work.push_back(std::bind(SaveRepeatedly, std::ref(test), test.Writers));
+    work.push_back(std::bind(SaveRepeatedly, std::ref(test), test.Writers + 1));
+    work.push_back(std::bind(LoadRepeatedly, std::ref(test), test.Writers + 2));
+    work.push_back(std::bind(ReadDuringFileOperations, std::ref(test), test.Writers + 3));
+
+    // Act
+    // Then each count is set to a value of its own, and the object is saved and loaded again
+    RunTogether(work, test.Failures);
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        static_cast<void>(test.Toml.SetValue(WriterPath(i), static_cast<int>(i) + 10));
+
+    TASWTomlResult const saved = test.Toml.Save();
+    TASWBaseToml reloaded;
+    TASWTomlResult const loaded = reloaded.Load(test.FilePath);
+
+    // Assert
+    CheckEquals(std::string(), test.Failures.Summary(), "no thread should find a problem");
+    CheckTrue(saved.IsOk() && loaded.IsOk(), "the last save and load should succeed");
+    CheckFalse(test.Toml.IsModified(), "the saved object shouldn't be modified");
+    CheckEquals(test.Toml.ToText(), reloaded.ToText(), "the file should load as the object saved it");
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        CheckEquals(static_cast<int>(i) + 10, reloaded.GetValue(WriterPath(i), -1),
+            "each count should have its last value");
+
+    CheckEquals(0, reports.load(), "nothing should be reported");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseThreads, SetLogCallback_EachFailureIsReportedOnce)
+{
+    // Arrange
+    // Threads make edits that fail, each of which is reported, while another thread switches between two callbacks
+    // and a writer counts its key up (both until the failing threads are done); each failure goes to one of the
+    // callbacks, once, and a callback isn't destroyed while it runs (see TCountingCallback)
+    TThreadTest test;
+    std::size_t const failers = 3;
+    std::size_t const writer = failers + 1;
+    test.Iterations = 2000;
+    test.Largest = 1000000;
+    test.Left = static_cast<int>(failers);
+    test.First = TCountingCallback(test.FirstCount);
+    test.Second = TCountingCallback(test.SecondCount);
+    test.Toml.SetLogCallback(test.First);
+    TWorkVector work;
+    for (std::size_t i = 0; i < failers; ++i)
+        work.push_back(std::bind(FailEdits, std::ref(test), i));
+
+    work.push_back(std::bind(SwitchCallbacks, std::ref(test), failers));
+    work.push_back(std::bind(CountUp, std::ref(test), writer));
+
+    // Act
+    RunTogether(work, test.Failures);
+
+    // Assert
+    int const count = test.Toml.GetValue(WriterPath(writer), -1);
+    CheckEquals(std::string(), test.Failures.Summary(), "no thread should find a problem");
+    CheckEquals(static_cast<int>(failers) * test.Iterations, test.FirstCount.load() + test.SecondCount.load(),
+        "each failure should be reported once");
+    CheckTrue(count >= test.Iterations && count <= test.Largest, "the count should have the writer's last value");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseThreads, SetOptions_LookupsSeeTheOldOrTheNewOptions)
+{
+    // Arrange
+    // A thread switches between options that write integers in hexadecimal and the default ones, while a writer counts
+    // its key up and sets a mask (each written as the options of the moment say), and readers check that the count
+    // never goes back, the mask converts, and a copy of the document reads back as it is. Many other keys make reading
+    // the text again take long enough that an edit made meanwhile would be lost without the lock.
+    TThreadTest test;
+    test.Iterations = 1000;
+    std::size_t const readers = 3;
+    std::string text = "[writer0]\ncount = 0\nmask = 0\n\n[other]\n";
+    for (int i = 0; i < 200; ++i)
+        text += "key" + std::to_string(i) + " = " + std::to_string(i) + "\n";
+
+    static_cast<void>(test.Toml.LoadText(text));
+    test.Hexadecimal.Values.IntegerBase = EIntegerBase::Hexadecimal;
+    std::atomic<int> reports{ 0 };
+    test.Toml.SetLogCallback(TCountingCallback(reports));
+    TWorkVector work;
+    work.push_back(std::bind(SwitchOptions, std::ref(test), 0));
+    work.push_back(std::bind(SetCountAndMask, std::ref(test), 1));
+    for (std::size_t i = 0; i < readers; ++i)
+        work.push_back(std::bind(ReadWithOptions, std::ref(test), 2 + i));
+
+    // Act
+    // The last options set are the default ones
+    RunTogether(work, test.Failures);
+
+    // Assert
+    CheckEquals(std::string(), test.Failures.Summary(), "no thread should find a problem");
+    CheckTrue(test.Toml.GetValueOptions().IntegerBase == EIntegerBase::Auto, "the last options set should be kept");
+    CheckEquals(test.Iterations, test.Toml.GetValue(WriterPath(0), -1), "the count should have the writer's last value");
+    CheckEquals(test.Iterations, test.Toml.GetValue("writer0.mask", -1), "and the mask too");
+    CheckEquals(std::string(), ValuesProblem(test.Toml.GetDocument(), 1, test.Iterations),
+        "the document should read back as it is");
+    CheckEquals(0, reports.load(), "nothing should be reported");
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_BaseAccess, "Base")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_BaseCallback, "Base")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_BaseFile, "Base")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_BaseThreads, "Base")

@@ -264,10 +264,11 @@ public:
 
     // Reads file 'filePath' (UTF-8) as LoadText() reads a text, and makes it the file path. Fails with InvalidArgument
     // for an empty path, the file errors (e.g. AccessDenied, FileTooLarge), and LoadText()'s (e.g. ParseFailed, with
-    // the line and column of the error); then nothing changes, so a file with an error is never overwritten by Save().
-    // A missing file (FileNotFound) is the exception, since an application's first run has none: the document is
-    // emptied, as a new one with the options, 'filePath' becomes the file path, so Save() creates the file, and the
-    // failure is reported as a Warning, not an Error.
+    // the line and column of the error); then nothing changes, the file path included, so Save() doesn't write over a
+    // file with an error unless it already was the file path (an earlier Load() or SaveAs() of it). A missing file
+    // (FileNotFound) is the exception, since an application's first run has none: the document is emptied, as a new
+    // one with the options, 'filePath' becomes the file path, so Save() creates the file, and the failure is reported
+    // as a Warning, not an Error.
     virtual TASWTomlResult Load(std::string_view filePath) = 0;
 
     // Replaces the document with 'text', read as TASWTomlDocument::Parse() reads it, with the options. Keeps the file

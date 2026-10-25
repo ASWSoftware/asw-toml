@@ -73,6 +73,7 @@ private:
 public: // Test methods, each defined with ASW_TEST
     void Test_Callback_ExceptionIsDropped();
     void Test_Callback_MayCallTheObject();
+    void Test_Callback_MayLoadAndSave();
     void Test_Callback_MayReplaceItself();
     void Test_FailedEdit_IsReportedAsAnError();
     void Test_GetValue_WarningIsReported();
@@ -133,6 +134,34 @@ public: // Test methods, each defined with ASW_TEST
 public:
     TTest_ASWToml_BaseFile();
     ~TTest_ASWToml_BaseFile() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_BaseThreads
+//
+// TASWBaseToml used by many threads at once: edits, lookups, loads, saves, SetLogCallback() and SetOptions(), each
+// seeing the document before or after another thread's operation, never during it
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_BaseThreads : public TAutoTestGroup<TTest_ASWToml_BaseThreads>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_BaseThreads> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Edits_LookupsNeverSeeAValueGoBack();
+    void Test_LoadsAndSaves_EverySavedFileIsWhole();
+    void Test_SetLogCallback_EachFailureIsReportedOnce();
+    void Test_SetOptions_LookupsSeeTheOldOrTheNewOptions();
+
+public:
+    TTest_ASWToml_BaseThreads();
+    ~TTest_ASWToml_BaseThreads() override;
 
     void SetUp_Group() override;
     void SetUp_Test(ITestCase& testCase) override;

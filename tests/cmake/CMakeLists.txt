@@ -60,6 +60,7 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/UT_Helper_Converters.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_FailingAlloc.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_TempDir.cpp"
+    "${ASWTOML_TESTS_DIR}/UT_Helper_Threads.cpp"
     "${ASWTOML_TOML_TEST_DIR}/TomlTest_Corpus.cpp"
 )
 
