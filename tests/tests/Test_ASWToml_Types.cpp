@@ -146,6 +146,7 @@ ASW_TEST(TTest_ASWToml_Types, Result_DefaultsToOk)
     CheckEmpty(result.FilePath, "the file path should be empty");
     CheckEquals(0, static_cast<int>(result.Line), "the line should be 0");
     CheckEquals(0, static_cast<int>(result.Column), "the column should be 0");
+    CheckEmpty(result.Path, "the path should be empty");
     CheckEquals(0, result.SystemError, "the system error should be 0");
 }
 //---------------------------------------------------------------------------

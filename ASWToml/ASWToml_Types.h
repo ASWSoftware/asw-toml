@@ -136,6 +136,12 @@ struct [[nodiscard]] TASWTomlResult
     std::string FilePath; // UTF-8; empty when the operation wasn't about a file
     std::size_t Line = 0; // 1-based; 0 when the error isn't about a place in the text
     std::size_t Column = 0; // 1-based, in characters (Unicode code points; a tab is one); 0 when Line is 0
+
+    // The path of the key, table or value the error is about, in TOML's dotted-key syntax as TASWTomlPath::ToString()
+    // writes it, e.g. server."host name".port; empty when the error isn't about one, or is about the root table. A
+    // failed edit of a TASWTomlDocument gives the path it was given.
+    std::string Path;
+
     int SystemError = 0; // The operating system's error code (GetLastError() or errno); 0 when there is none
 
     bool IsOk() const noexcept

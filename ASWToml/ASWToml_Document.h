@@ -242,7 +242,8 @@ struct TDocModel
 // blank lines, keys and values as written (quoting, spacing, the form of each number and string, the layout of arrays
 // and inline tables, and each line's own line break). With the default options, ToText() writes a parsed text back
 // byte for byte. Its values can be read by path (Find()) or as one table (GetRoot()). It keeps the options it was
-// parsed with. Not thread-safe; copyable and movable.
+// parsed with. An edit that fails gives the path it was given in its result's Path. Not thread-safe; copyable and
+// movable.
 /////////////////////////////////////////////////////////////////////////////
 class TASWTomlDocument
 {

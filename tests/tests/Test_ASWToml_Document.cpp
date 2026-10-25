@@ -4473,6 +4473,7 @@ void TTest_ASWToml_DocumentSetValue::CheckFails(std::string const& text, ASWToml
 
     CheckEquals(code, result.Code, msg + ": the code", loc);
     CheckContains(result.Message, expectedText, msg + ": the message", loc);
+    CheckEquals(path.ToString(), result.Path, msg + ": the path of the failure", loc);
     CheckEquals(std::size_t(0), result.Line, msg + ": not about a place in the text", loc);
     CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
     CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
@@ -4489,6 +4490,7 @@ void TTest_ASWToml_DocumentSetValue::CheckSets(std::string const& text, ASWToml:
     ASWToml::TASWTomlResult const result = document.SetValue(path, value);
 
     CheckTrue(result.IsOk(), msg + ": the value should be set: " + result.Message, loc);
+    CheckEmpty(result.Path, msg + ": no path on success", loc);
     CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
     TASWTomlValue const* const set = document.Find(path);
     CheckTrue(set != nullptr && ASWToml::Detail::IdenticalValues(*set, value), msg + ": the value at the path", loc);
@@ -4582,6 +4584,7 @@ ASW_TEST(TTest_ASWToml_DocumentSetValue, IdenticalValue_ChangesNothing)
 
         // Assert
         CheckTrue(result.IsOk(), Escaped(item.Text) + ": setting the same value succeeds: " + result.Message);
+        CheckEmpty(result.Path, Escaped(item.Text) + ": no path on success");
         CheckEquals(item.Text, document.ToText(), Escaped(item.Text) + ": the text stays as it was");
         CheckFalse(document.IsModified(), Escaped(item.Text) + ": the document isn't modified");
     }
@@ -4766,6 +4769,7 @@ ASW_TEST(TTest_ASWToml_DocumentSetValue, RejectsWhatCantBeSet)
     ASWToml::TASWTomlResult const fits = document.SetValue("b", deep);
     ASWToml::TASWTomlResult const fitsInPlace = document.SetValue("a", deep);
     ASWToml::TASWTomlResult const badOptions = document.SetValue("c", 1, badValues);
+    ASWToml::TASWTomlResult const quoted = document.SetValue({ "a", "x y" }, 1);
 
     // Assert
     CheckEquals(ETomlCode::NestingTooDeep, tooDeep.Code, "a table and two arrays are 3 deep, beyond 2");
@@ -4773,6 +4777,9 @@ ASW_TEST(TTest_ASWToml_DocumentSetValue, RejectsWhatCantBeSet)
     CheckTrue(fits.IsOk(), "two arrays in the root fit: " + fits.Message);
     CheckTrue(fitsInPlace.IsOk(), "and in place of a key's value: " + fitsInPlace.Message);
     CheckEquals(ETomlCode::InvalidOptions, badOptions.Code, "value options that aren't valid");
+    CheckEquals("c"s, badOptions.Path, "the path of the edit, for options too");
+    CheckEquals(ETomlCode::InvalidArgument, quoted.Code, "a key of an array");
+    CheckEquals("a.\"x y\""s, quoted.Path, "the path in dotted-key syntax, a key quoted where it must be");
     CheckEquals("a = [[1]]\nb = [[1]]\n"s, document.ToText(), "only the edits that fit changed the text");
 }
 //---------------------------------------------------------------------------
@@ -4847,6 +4854,7 @@ void TTest_ASWToml_DocumentAppend::CheckFails(std::string const& text, ASWToml::
 
     CheckEquals(code, result.Code, msg + ": the code", loc);
     CheckContains(result.Message, expectedText, msg + ": the message", loc);
+    CheckEquals(path.ToString(), result.Path, msg + ": the path of the failure", loc);
     CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
     CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
 }
@@ -4947,6 +4955,7 @@ ASW_TEST(TTest_ASWToml_DocumentAppend, RejectsWhatCantBeAppended)
     CheckEquals(ETomlCode::NestingTooDeep, tooDeep.Code, "an array of an array in the array would be 3 deep");
     CheckTrue(fits.IsOk(), "a scalar fits: " + fits.Message);
     CheckEquals(ETomlCode::InvalidOptions, badOptions.Code, "value options that aren't valid");
+    CheckEquals("a[0]"s, badOptions.Path, "the path of the edit, for options too");
     CheckEquals("a = [[1, 2]]\n"s, document.ToText(), "only the edit that fits changed the text");
 }
 //---------------------------------------------------------------------------
@@ -5204,6 +5213,7 @@ void TTest_ASWToml_DocumentRename::CheckFails(std::string const& text, ASWToml::
 
     CheckEquals(code, result.Code, msg + ": the code", loc);
     CheckContains(result.Message, expectedText, msg + ": the message", loc);
+    CheckEquals(path.ToString(), result.Path, msg + ": the path of the failure", loc);
     CheckEquals(std::size_t(0), result.Line, msg + ": not about a place in the text", loc);
     CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
     CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
@@ -5317,6 +5327,7 @@ ASW_TEST(TTest_ASWToml_DocumentRename, SameName_ChangesNothing)
 
     // Assert
     CheckTrue(key.IsOk() && table.IsOk(), "renaming to the same name succeeds");
+    CheckTrue(key.Path.empty() && table.Path.empty(), "no path on success");
     CheckEquals(text, document.ToText(), "the text stays as it was, a quoted key too");
     CheckFalse(document.IsModified(), "the document isn't modified");
 }
@@ -5363,6 +5374,7 @@ void TTest_ASWToml_DocumentMerge::CheckFails(std::string const& text, ASWToml::T
 
     CheckEquals(code, result.Code, msg + ": the code", loc);
     CheckContains(result.Message, expectedText, msg + ": the message", loc);
+    CheckEquals(path.ToString(), result.Path, msg + ": the path of the failure", loc);
     CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
     CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
 }
@@ -5741,6 +5753,9 @@ void TTest_ASWToml_DocumentComments::CheckFails(std::string const& text, ASWToml
     CheckContains(result.Message, expectedText, msg + ": the message of SetComment()", loc);
     CheckEquals(code, trailing.Code, msg + ": the code of SetTrailingComment()", loc);
     CheckContains(trailing.Message, expectedText, msg + ": the message of SetTrailingComment()", loc);
+    CheckEquals(path.ToString(), result.Path, msg + ": the path of the failure of SetComment()", loc);
+    CheckEquals(path.ToString(), trailing.Path, msg + ": the path of the failure of SetTrailingComment()",
+        loc);
     CheckEquals(std::size_t(0), result.Line + trailing.Line, msg + ": not about a place in the text", loc);
     CheckEquals(text, document.ToText(), msg + ": the text should be kept", loc);
     CheckFalse(document.IsModified(), msg + ": the document isn't modified", loc);
@@ -5758,6 +5773,7 @@ void TTest_ASWToml_DocumentComments::CheckSets(std::string const& text, ASWToml:
     ASWToml::TASWTomlResult const result = document.SetComment(path, comment);
 
     CheckTrue(result.IsOk(), msg + ": the comment should be set: " + result.Message, loc);
+    CheckEmpty(result.Path, msg + ": no path on success", loc);
     CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
     CheckEquals(Escaped(expectedComment), Escaped(document.GetComment(path)), msg + ": the comment", loc);
     CheckTrue(ASWToml::Detail::IdenticalValues(document.GetRoot(), old), msg + ": the values stay", loc);
@@ -5782,6 +5798,7 @@ void TTest_ASWToml_DocumentComments::CheckSetsTrailing(std::string const& text, 
     ASWToml::TASWTomlResult const result = document.SetTrailingComment(path, comment);
 
     CheckTrue(result.IsOk(), msg + ": the comment should be set: " + result.Message, loc);
+    CheckEmpty(result.Path, msg + ": no path on success", loc);
     CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
     CheckEquals(Escaped(expectedComment), Escaped(document.GetTrailingComment(path)), msg + ": the comment", loc);
     CheckTrue(ASWToml::Detail::IdenticalValues(document.GetRoot(), old), msg + ": the values stay", loc);

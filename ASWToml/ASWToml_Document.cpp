@@ -396,6 +396,7 @@ bool SpliceBefore(TSplice const& left, TSplice const& right) noexcept;
 std::string TrailingCommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& index,
     TASWTomlPath const& path);
 std::string_view Trimmed(std::string_view text) noexcept;
+TASWTomlResult WithPath(TASWTomlResult result, TASWTomlPath const& path);
 TASWTomlValue Wrapped(TASWTomlPath::TPartVector const& parts, std::size_t first, TASWTomlValue const& value);
 
 //---------------------------------------------------------------------------
@@ -1023,6 +1024,20 @@ std::string_view Trimmed(std::string_view text) noexcept
         --end;
 
     return text.substr(begin, end - begin);
+}
+//---------------------------------------------------------------------------
+/*
+    WithPath
+
+    'result' with its Path set to 'path' (as TASWTomlPath::ToString() writes it) when it failed, as the edits report
+    their failures
+*/
+TASWTomlResult WithPath(TASWTomlResult result, TASWTomlPath const& path)
+{
+    if (!result.IsOk())
+        result.Path = path.ToString();
+
+    return result;
 }
 //---------------------------------------------------------------------------
 /*
@@ -2722,7 +2737,7 @@ TASWTomlResult TASWTomlDocument::Append(TASWTomlPath const& path, TASWTomlValue 
 {
     TASWTomlResult result = values.Validate();
     if (!result.IsOk())
-        return result;
+        return WithPath(result, path);
 
     TASWTomlValue const* const old = FindValue(m_Root, path);
     std::size_t const oldSize = old != nullptr && old->IsArray() ? old->AsArray()->size() : 0;
@@ -2731,7 +2746,7 @@ TASWTomlResult TASWTomlDocument::Append(TASWTomlPath const& path, TASWTomlValue 
     TEditor editor(body, m_Index, m_Root, m_Options, values, GetLineBreak());
     result = editor.Append(path, value);
     if (!result.IsOk())
-        return result;
+        return WithPath(result, path);
 
     editor.Finish();
 
@@ -2740,15 +2755,15 @@ TASWTomlResult TASWTomlDocument::Append(TASWTomlPath const& path, TASWTomlValue 
     TASWTomlValue root;
     result = ReadEdited(editor.EditedText(), model, index, root);
     if (!result.IsOk())
-        return result;
+        return WithPath(result, path);
 
     // The array must have the value at its end now, and one element more
     TASWTomlValue const* const written = FindValue(root, path);
     TASWTomlValue::TValueVector const* const array = written != nullptr ? written->AsArray() : nullptr;
     if (array == nullptr || array->size() != oldSize + 1 || !Detail::IdenticalValues(array->back(), value))
     {
-        return Failure(ETomlCode::InvalidValue, "Can't append to " + MessagePath(path) +
-            ": the text written for the value doesn't read back as it.");
+        return WithPath(Failure(ETomlCode::InvalidValue, "Can't append to " + MessagePath(path) +
+            ": the text written for the value doesn't read back as it."), path);
     }
 
     Commit(model, index, root);
@@ -2938,14 +2953,14 @@ TASWTomlResult TASWTomlDocument::Rename(TASWTomlPath const& path, std::string_vi
         editor.Finish();
 
     if (!result.IsOk() || editor.IsEmpty())
-        return result;
+        return WithPath(result, path);
 
     Detail::TDocModel model;
     Detail::TDocIndex index;
     TASWTomlValue root;
     result = ReadEdited(editor.EditedText(), model, index, root);
     if (!result.IsOk())
-        return result;
+        return WithPath(result, path);
 
     // The text must read as the values with the key under its new name
     TASWTomlValue expected = m_Root;
@@ -2958,8 +2973,8 @@ TASWTomlResult TASWTomlDocument::Rename(TASWTomlPath const& path, std::string_vi
 
     if (!Detail::IdenticalValues(root, expected))
     {
-        return Failure(ETomlCode::InvalidValue, "Can't rename " + MessagePath(path) +
-            ": the text written for the new name doesn't read back as it.");
+        return WithPath(Failure(ETomlCode::InvalidValue, "Can't rename " + MessagePath(path) +
+            ": the text written for the new name doesn't read back as it."), path);
     }
 
     Commit(model, index, root);
@@ -2996,20 +3011,20 @@ TASWTomlResult TASWTomlDocument::SetComment(TASWTomlPath const& path, std::strin
         editor.Finish();
 
     if (!result.IsOk() || editor.IsEmpty())
-        return result;
+        return WithPath(result, path);
 
     Detail::TDocModel model;
     Detail::TDocIndex index;
     TASWTomlValue root;
     result = ReadEdited(editor.EditedText(), model, index, root);
     if (!result.IsOk())
-        return result;
+        return WithPath(result, path);
 
     // The text must read as the same values, with the comment at 'path'
     if (!Detail::IdenticalValues(root, m_Root) || CommentOf(model, index, path) != Joined(CommentLines(text)))
     {
-        return Failure(ETomlCode::InvalidValue, "Can't set the comment of " + MessagePath(path) +
-            ": the text written for it doesn't read back as it.");
+        return WithPath(Failure(ETomlCode::InvalidValue, "Can't set the comment of " + MessagePath(path) +
+            ": the text written for it doesn't read back as it."), path);
     }
 
     Commit(model, index, root);
@@ -3052,20 +3067,20 @@ TASWTomlResult TASWTomlDocument::SetTrailingComment(TASWTomlPath const& path, st
         editor.Finish();
 
     if (!result.IsOk() || editor.IsEmpty())
-        return result;
+        return WithPath(result, path);
 
     Detail::TDocModel model;
     Detail::TDocIndex index;
     TASWTomlValue root;
     result = ReadEdited(editor.EditedText(), model, index, root);
     if (!result.IsOk())
-        return result;
+        return WithPath(result, path);
 
     // The text must read as the same values, with the comment at the end of the line of 'path'
     if (!Detail::IdenticalValues(root, m_Root) || TrailingCommentOf(model, index, path) != Trimmed(text))
     {
-        return Failure(ETomlCode::InvalidValue, "Can't set the trailing comment of " + MessagePath(path) +
-            ": the text written for it doesn't read back as it.");
+        return WithPath(Failure(ETomlCode::InvalidValue, "Can't set the trailing comment of " + MessagePath(path) +
+            ": the text written for it doesn't read back as it."), path);
     }
 
     Commit(model, index, root);
@@ -3083,7 +3098,7 @@ TASWTomlResult TASWTomlDocument::SetValue(TASWTomlPath const& path, TASWTomlValu
 {
     TASWTomlResult result = values.Validate();
     if (!result.IsOk())
-        return result;
+        return WithPath(result, path);
 
     std::string const body = BodyText();
     TEditor editor(body, m_Index, m_Root, m_Options, values, GetLineBreak());
@@ -3092,7 +3107,7 @@ TASWTomlResult TASWTomlDocument::SetValue(TASWTomlPath const& path, TASWTomlValu
         editor.Finish();
 
     if (!result.IsOk() || editor.IsEmpty())
-        return result;
+        return WithPath(result, path);
 
     std::string const edited = editor.EditedText();
     if (edited == body)
@@ -3103,14 +3118,14 @@ TASWTomlResult TASWTomlDocument::SetValue(TASWTomlPath const& path, TASWTomlValu
     TASWTomlValue root;
     result = ReadEdited(edited, model, index, root);
     if (!result.IsOk())
-        return result;
+        return WithPath(result, path);
 
     // What was written must read back as the value
     TASWTomlValue const* const written = FindValue(root, path);
     if (written == nullptr || !Detail::IdenticalValues(*written, value))
     {
-        return Failure(ETomlCode::InvalidValue, "Can't set " + MessagePath(path) +
-            ": the text written for the value doesn't read back as it.");
+        return WithPath(Failure(ETomlCode::InvalidValue, "Can't set " + MessagePath(path) +
+            ": the text written for the value doesn't read back as it."), path);
     }
 
     Commit(model, index, root);

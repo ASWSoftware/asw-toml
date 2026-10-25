@@ -21,8 +21,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ELineBreak` (`None`, `LF` or `CRLF`: the line break that ends a line), `ESeverity`,
   `TASWTomlMessage` (a warning or error for the application's log callback, with the file, line,
   column, path of the key or table, and system error it is about), `TMessageVector` (a list of
-  messages) and `TASWTomlResult` (an operation's outcome, with the file, line and column of an
-  error, which converts to `true` when it succeeded). A column counts characters (Unicode code
+  messages) and `TASWTomlResult` (an operation's outcome, with the file, line, column and path of
+  the key or value an error is about, which converts to `true` when it succeeded; an edit of a
+  document that fails gives the path it was given). A column counts characters (Unicode code
   points) from 1, and a path is written in TOML's dotted-key syntax (`server."host name".port`).
   `ToString()` names a code, a line break or a severity, and writes a message as one line of text.
 - `TASWTomlOptions` (`ASWToml_Options.h`), the settings for TOML files in four groups:
