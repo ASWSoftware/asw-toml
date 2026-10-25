@@ -10,10 +10,11 @@ type has one. The library has converters for TASWTomlValue itself,
 std::string, std::u8string, std::filesystem::path, bool, the integer types,
 float, double, enums (by name when the application gives the enum names,
 see TASWTomlEnumName, else as integers), the TOML date and time types, the
-std::chrono dates, time points and times of day, and std::vector, std::array,
+std::chrono dates, time points and times of day, std::vector, std::array,
 std::set, std::unordered_set, std::pair and std::tuple (as arrays) of the
-types with converters; an application adds its own by specializing
-TASWTomlConverter for its type.
+types with converters, and std::map and std::unordered_map (as tables) of
+them, with string, integer or enum keys; an application adds its own by
+specializing TASWTomlConverter for its type.
 
 Requires C++ 20 or higher.
 
@@ -38,12 +39,14 @@ SPDX-License-Identifier: MIT
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -136,6 +139,17 @@ using TEnumNamesResult = decltype(ASWTomlEnumNames(std::declval<T>()));
 // The names of an enum's values, as a message lists them
 using TNameVector = std::vector<std::string_view>;
 
+// Converts K, a key type of a map (see ConvertibleKey), to and from a key of a TOML table with two static functions,
+// as TASWTomlConverter<std::map<K, T> > describes them:
+//
+//     static TASWTomlResult FromKey(std::string_view key, K& out, TASWTomlValueOptions const& options);
+//     static TASWTomlResult ToKey(K const& in, std::string& key, TASWTomlValueOptions const& options);
+//
+// On failure they leave 'out' or 'key' as it was. Only declared here: each kind of key type has a partial
+// specialization below.
+template <typename K>
+struct TKeyConverter;
+
 // The longest part of a value's text a message shows (see ValueText())
 constexpr std::size_t MaxValueTextSize = 40;
 
@@ -154,6 +168,12 @@ concept EnumWithNames = std::is_enum_v<T> && std::same_as<T, std::remove_cv_t<T>
 template <typename T>
 concept EnumWithoutNames = std::is_enum_v<T> && std::same_as<T, std::remove_cv_t<T> > && !EnumWithNames<T>;
 
+// Whether K is one of the key types of the maps TASWTomlConverter converts: std::string, an integer type it converts
+// (see ConvertibleInteger) or an enum (with or without names)
+template <typename K>
+concept ConvertibleKey = std::same_as<K, std::string> || ConvertibleInteger<K> || EnumWithNames<K> ||
+    EnumWithoutNames<K>;
+
 // The ValueOutOfRange result of reading 'value', an offset date-time, a local date-time or a local time, as a type
 // that counts in 'unit' and can't hold it: the message gives the first and last values the unit's count holds, as far
 // as TOML's years 0 to 9999 (or a day, up to the leap second 23:59:60) go, e.g. "The value 9999-12-31T00:00:00Z is
@@ -168,10 +188,20 @@ TASWTomlResult ElementFailure(TASWTomlResult result, std::size_t index);
 // when the name isn't valid UTF-8, which TOML needs
 TASWTomlResult EnumNameToValue(std::string_view name, TASWTomlValue& value);
 
+// Reads 'key', a key of a map whose key type is an integer type with the range 'min' to 'max' (see
+// TASWTomlConverter<std::map<K, T> >), into 'bits', the number as 64-bit two's complement (so static_cast<K>(bits) is
+// the number for a K that holds it), which is left as it was on failure: InvalidValue for a key that isn't 0 or
+// digits that don't start with 0 after an optional '-', ValueOutOfRange outside the range, whose message gives it
+TASWTomlResult IntegerFromKey(std::string_view key, std::int64_t min, std::uint64_t max, std::uint64_t& bits);
+
 // Reads 'value' as an integer type with the range 'min' to 'max' reads it (see TASWTomlConverter<integer types>)
 // into 'out', which is left as it was on failure: TypeMismatch for a value that isn't an integer, ValueOutOfRange
 // outside the range, whose message gives it ('max' as at most INT64_MAX, the largest TOML integer)
 TASWTomlResult IntegerFromValue(TASWTomlValue const& value, std::int64_t min, std::uint64_t max, std::int64_t& out);
+
+// The InvalidValue result of a map whose key type is an enum with names reading 'key', which is none of its names, as
+// InvalidEnumName(): "The key Purple isn't a name of the enum: it must be Red, Green or Blue."
+TASWTomlResult InvalidEnumKey(std::string_view key, TNameVector const& names);
 
 // The InvalidValue result of an enum with names reading 'value', a string that is none of its names or an integer
 // that is no listed value's number (see TASWTomlConverter<enums with names>): the message lists 'names', the names the
@@ -195,9 +225,27 @@ TASWTomlResult LengthMismatch(TASWTomlValue const& value, std::size_t length);
 // has."
 TASWTomlResult RepeatedElement(TASWTomlValue const& element);
 
+// Checks the keys of 'table', the names a map whose key type is an enum with names writes its keys as: Ok, or
+// InvalidValue when two of them are the same name with the ASCII letters' case ignored, which would read back as one
+// key ("The key red names two values of the enum, which would read back as one: each value needs a name of its own in
+// ASWTomlEnumNames().")
+TASWTomlResult RepeatedEnumKey(TASWTomlValue::TKeyValueVector const& table);
+
+// The InvalidValue result of a map reading 'key', a key of a table that reads as a key the map already has (e.g. red
+// after Red for an enum with names): "The key red reads as a key the map already has."
+TASWTomlResult RepeatedKey(std::string_view key);
+
+// Sorts the keys of 'table' (which are all different) by their text, byte by byte, so an unordered map is written in
+// the same order every time
+void SortByKey(TASWTomlValue::TKeyValueVector& table) noexcept;
+
 // Sorts 'elements' by their TOML text (strings as basic strings), so an unordered set is written in the same order
 // every time
 void SortByText(TASWTomlValue::TValueVector& elements);
+
+// Sets 'key' to 'text', the key a map writes, or leaves it as it was and fails with InvalidValue when 'text' isn't
+// valid UTF-8, which TOML needs
+TASWTomlResult TextToKey(std::string_view text, std::string& key);
 
 // Sets 'time' to the time of day 'count' units of 'unit' after midnight and returns true, or returns false (and leaves
 // 'time' as it was) when that is before midnight or a day and a second or more after it. From a day on, the time is
@@ -256,6 +304,77 @@ TASWTomlResult ArrayToValue(TElements const& elements, TASWTomlValue& value, TAS
     return TASWTomlResult();
 }
 
+// Reads 'value', a table, into 'read', an empty map, each key by TKeyConverter and its value into a new T{} by
+// TASWTomlConverter<T>: TypeMismatch for a value that isn't a table, and the first key that fails or reads as a key
+// 'read' already has (see RepeatedKey()), or value that fails, fails with the key in its Path (see KeyFailure()),
+// leaving some keys in 'read'
+template <typename TMap>
+TASWTomlResult MapFromValue(TASWTomlValue const& value, TMap& read, TASWTomlValueOptions const& options)
+{
+    using K = typename TMap::key_type;
+    using T = typename TMap::mapped_type;
+
+    TASWTomlValue::TKeyValueVector const* const table = value.AsTable();
+    if (table == nullptr)
+        return TypeMismatch(value, "a table");
+
+    for (TASWTomlKeyValue const& entry : *table)
+    {
+        K key{};
+        TASWTomlResult result = TKeyConverter<K>::FromKey(entry.Key, key, options);
+        if (!result.IsOk())
+            return KeyFailure(std::move(result), entry.Key);
+
+        if (read.contains(key))
+            return KeyFailure(RepeatedKey(entry.Key), entry.Key);
+
+        T item{};
+        result = TASWTomlConverter<T>::FromValue(entry.Value, item, options);
+        if (!result.IsOk())
+            return KeyFailure(std::move(result), entry.Key);
+
+        read.emplace(std::move(key), std::move(item));
+    }
+
+    return TASWTomlResult();
+}
+
+// Sets 'value' to a table of the keys of 'map' in its order, each key written by TKeyConverter and its value by
+// TASWTomlConverter<T>, or leaves it as it was and fails as the first key or value that fails (a value with the key
+// in its Path, see KeyFailure()), or as two keys of an enum with names that would read back as one (see
+// RepeatedEnumKey())
+template <typename TMap>
+TASWTomlResult MapToValue(TMap const& map, TASWTomlValue& value, TASWTomlValueOptions const& options)
+{
+    using K = typename TMap::key_type;
+    using T = typename TMap::mapped_type;
+
+    TASWTomlValue::TKeyValueVector table;
+    table.reserve(map.size());
+    for (auto const& item : map)
+    {
+        TASWTomlKeyValue& entry = table.emplace_back();
+        TASWTomlResult result = TKeyConverter<K>::ToKey(item.first, entry.Key, options);
+        if (!result.IsOk())
+            return result;
+
+        result = TASWTomlConverter<T>::ToValue(item.second, entry.Value, options);
+        if (!result.IsOk())
+            return KeyFailure(std::move(result), entry.Key);
+    }
+
+    if constexpr (EnumWithNames<K>)
+    {
+        TASWTomlResult result = RepeatedEnumKey(table);
+        if (!result.IsOk())
+            return result;
+    }
+
+    value = TASWTomlValue(std::move(table));
+
+    return TASWTomlResult();
+}
+
 // Reads 'value', an array, into 'read', an empty set of T, each element into a new T{} by TASWTomlConverter<T>:
 // TypeMismatch for a value that isn't an array, and the first element that fails, or that reads as an element 'read'
 // already has (see RepeatedElement()), fails with its index in its Path (see ElementFailure()), leaving some elements
@@ -281,6 +400,46 @@ TASWTomlResult SetFromValue(TASWTomlValue const& value, TSet& read, TASWTomlValu
     }
 
     return TASWTomlResult();
+}
+
+// The first name listed for 'value' in 'names', an enum's (see TASWTomlEnumName), that isn't empty: the one it is
+// written as; empty when it has none
+template <typename T, typename TNames>
+std::string_view WrittenEnumName(TNames const& names, T value) noexcept
+{
+    for (auto const& name : names)
+    {
+        if (name.Value == value && !name.Name.empty())
+            return name.Name;
+    }
+
+    return std::string_view();
+}
+
+// The names the values in 'names', an enum's (see TASWTomlEnumName), are written as, each value's once, in the order
+// listed
+template <typename TNames>
+TNameVector WrittenEnumNames(TNames const& names)
+{
+    TNameVector written;
+    for (auto const& name : names)
+    {
+        // Written unless an entry before it names the same value
+        bool first = !name.Name.empty();
+        for (auto const& earlier : names)
+        {
+            if (&earlier == &name)
+                break;
+
+            if (earlier.Value == name.Value && !earlier.Name.empty())
+                first = false;
+        }
+
+        if (first)
+            written.push_back(name.Name);
+    }
+
+    return written;
 }
 
 
@@ -316,6 +475,101 @@ struct TIntegerConverter
         {
             return UnsignedIntegerToValue(static_cast<std::uint64_t>(in), value);
         }
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TKeyConverter<std::string>
+//
+// The key as it is; one that isn't valid UTF-8 can't be written (InvalidValue)
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TKeyConverter<std::string>
+{
+    static TASWTomlResult FromKey(std::string_view key, std::string& out, TASWTomlValueOptions const& /*options*/)
+    {
+        out = key;
+
+        return TASWTomlResult();
+    }
+
+    static TASWTomlResult ToKey(std::string const& in, std::string& key, TASWTomlValueOptions const& /*options*/)
+    {
+        return TextToKey(in, key);
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TKeyConverter<enums with names>
+//
+// One of the enum's names, with the ASCII letters' case ignored; written as the first name listed for the value, as
+// TASWTomlConverter<enums with names> writes it (a value with no name is InvalidValue)
+/////////////////////////////////////////////////////////////////////////////
+template <EnumWithNames K>
+struct TKeyConverter<K>
+{
+    static TASWTomlResult FromKey(std::string_view key, K& out, TASWTomlValueOptions const& /*options*/)
+    {
+        auto const& names = ASWTomlEnumNames(K());
+        for (auto const& name : names)
+        {
+            if (IsEnumName(key, name.Name))
+            {
+                out = name.Value;
+                return TASWTomlResult();
+            }
+        }
+
+        return InvalidEnumKey(key, WrittenEnumNames(names));
+    }
+
+    static TASWTomlResult ToKey(K const& in, std::string& key, TASWTomlValueOptions const& options)
+    {
+        TASWTomlValue name;
+        TASWTomlResult result = TASWTomlConverter<K>::ToValue(in, name, options);
+        if (result.IsOk())
+            key = std::move(*name.AsString());
+
+        return result;
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TKeyConverter<integer types and enums without names>
+//
+// The decimal digits of the number (of the underlying type for an enum): 0, or digits that don't start with 0 after a
+// '-' for a negative number, in the whole range of the type (see IntegerFromKey())
+/////////////////////////////////////////////////////////////////////////////
+template <typename K>
+requires ConvertibleInteger<K> || EnumWithoutNames<K>
+struct TKeyConverter<K>
+{
+private:
+    using TNumber = typename std::conditional_t<std::is_enum_v<K>, std::underlying_type<K>, std::type_identity<K> >::type;
+
+public:
+    static TASWTomlResult FromKey(std::string_view key, K& out, TASWTomlValueOptions const& /*options*/)
+    {
+        std::uint64_t bits = 0;
+        TASWTomlResult result = IntegerFromKey(key, static_cast<std::int64_t>(std::numeric_limits<TNumber>::min()),
+            static_cast<std::uint64_t>(std::numeric_limits<TNumber>::max()), bits);
+        if (result.IsOk())
+            out = static_cast<K>(static_cast<TNumber>(bits));
+
+        return result;
+    }
+
+    static TASWTomlResult ToKey(K const& in, std::string& key, TASWTomlValueOptions const& /*options*/)
+    {
+        if constexpr (std::is_signed_v<TNumber>)
+            key = std::to_string(static_cast<std::int64_t>(in));
+        else
+            key = std::to_string(static_cast<std::uint64_t>(in));
+
+        return TASWTomlResult();
     }
 };
 
@@ -518,44 +772,6 @@ struct TASWTomlConverter<T>
 private:
     using TNumber = std::underlying_type_t<T>;
 
-    // The first name listed for 'value' in 'names' (empty when it has none), the one it is written as
-    template <typename TNames>
-    static std::string_view WrittenName(TNames const& names, T value) noexcept
-    {
-        for (auto const& name : names)
-        {
-            if (name.Value == value && !name.Name.empty())
-                return name.Name;
-        }
-
-        return std::string_view();
-    }
-
-    // The names the values in 'names' are written as, each value's once, in the order listed
-    template <typename TNames>
-    static Detail::TNameVector WrittenNames(TNames const& names)
-    {
-        Detail::TNameVector written;
-        for (auto const& name : names)
-        {
-            // Written unless an entry before it names the same value
-            bool first = !name.Name.empty();
-            for (auto const& earlier : names)
-            {
-                if (&earlier == &name)
-                    break;
-
-                if (earlier.Value == name.Value && !earlier.Name.empty())
-                    first = false;
-            }
-
-            if (first)
-                written.push_back(name.Name);
-        }
-
-        return written;
-    }
-
 public:
     static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& options)
     {
@@ -577,7 +793,7 @@ public:
             TNumber number = 0;
             if (Detail::TIntegerConverter<TNumber>::FromValue(value, number, options).IsOk())
             {
-                if (!WrittenName(names, static_cast<T>(number)).empty())
+                if (!Detail::WrittenEnumName(names, static_cast<T>(number)).empty())
                 {
                     out = static_cast<T>(number);
                     return TASWTomlResult();
@@ -589,12 +805,12 @@ public:
             return Detail::TypeMismatch(value, "a string or an integer");
         }
 
-        return Detail::InvalidEnumName(value, WrittenNames(names));
+        return Detail::InvalidEnumName(value, Detail::WrittenEnumNames(names));
     }
 
     static TASWTomlResult ToValue(T const& in, TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
     {
-        std::string_view const name = WrittenName(ASWTomlEnumNames(T()), in);
+        std::string_view const name = Detail::WrittenEnumName(ASWTomlEnumNames(T()), in);
         if (!name.empty())
             return Detail::EnumNameToValue(name, value);
 
@@ -923,6 +1139,47 @@ struct TASWTomlConverter<std::filesystem::path>
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::map<K, T> >
+//
+// A table, for a key type K that is std::string, an integer type or an enum, and any type T that has a converter and a
+// default constructor. Reads any table (a [header] table, a dotted-key table or an inline one), with the map's
+// comparator and allocator, each key into a K and its value into a new T{} by TASWTomlConverter<T>; any other type is
+// TypeMismatch. A std::string key is the key as it is. An integer key is the number's decimal digits: 0, or digits
+// that don't start with 0 after a '-' for a negative number (01, +1 and 1_000 are InvalidValue), from the type's
+// smallest to its largest value (ValueOutOfRange otherwise; a key is text, so 18446744073709551615 is a key of
+// std::uint64_t, though a TOML integer can't hold it). An enum key with names is one of its names with the ASCII
+// letters' case ignored, as TASWTomlConverter<enums with names> reads a string; one without names is a number of its
+// underlying type. The first key that fails, or reads as a key the map already has ("The key red reads as a key the
+// map already has.", for an enum whose names are read with the case ignored, or a map whose comparator ignores it), or
+// value that fails fails the map, with the key in front of its Path (port, or "host name"[0] for an element of its
+// value), and leaves 'out' as it was. Writes a table of the keys in the map's order. A key that can't be written fails
+// without a Path: a string that isn't valid UTF-8, an enum value without a name, or two values of an enum that would
+// be written as the same name with the case ignored, since they would read back as one key.
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::ConvertibleKey K, TomlConvertible T, typename TCompare, typename TAllocator>
+requires std::default_initializable<T>
+struct TASWTomlConverter<std::map<K, T, TCompare, TAllocator> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::map<K, T, TCompare, TAllocator>& out,
+        TASWTomlValueOptions const& options)
+    {
+        std::map<K, T, TCompare, TAllocator> read(out.key_comp(), out.get_allocator());
+        TASWTomlResult result = Detail::MapFromValue(value, read, options);
+        if (result.IsOk())
+            out = std::move(read);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(std::map<K, T, TCompare, TAllocator> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options)
+    {
+        return Detail::MapToValue(in, value, options);
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TASWTomlConverter<std::pair<T1, T2> >
 //
 // An array of exactly two elements, the first converted as T1 and the second as T2 (e.g. ["example.com", 443]), as
@@ -1005,6 +1262,45 @@ struct TASWTomlConverter<std::u8string>
     static TASWTomlResult FromValue(TASWTomlValue const& value, std::u8string& out,
         TASWTomlValueOptions const& options);
     static TASWTomlResult ToValue(std::u8string const& in, TASWTomlValue& value, TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::unordered_map<K, T> >
+//
+// As TASWTomlConverter<std::map<K, T> >, read with the map's hash, key equality and allocator, but written with its
+// keys sorted by their text, byte by byte, so a file doesn't change from run to run: an unordered_map<int, T> with the
+// keys 9, 10 and 80 is written with the keys 10, 80 and 9 in that order
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::ConvertibleKey K, TomlConvertible T, typename THash, typename TEqual, typename TAllocator>
+requires std::default_initializable<T>
+struct TASWTomlConverter<std::unordered_map<K, T, THash, TEqual, TAllocator> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::unordered_map<K, T, THash, TEqual, TAllocator>& out,
+        TASWTomlValueOptions const& options)
+    {
+        std::unordered_map<K, T, THash, TEqual, TAllocator> read(0, out.hash_function(), out.key_eq(),
+            out.get_allocator());
+        TASWTomlResult result = Detail::MapFromValue(value, read, options);
+        if (result.IsOk())
+            out = std::move(read);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(std::unordered_map<K, T, THash, TEqual, TAllocator> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options)
+    {
+        TASWTomlValue table;
+        TASWTomlResult result = Detail::MapToValue(in, table, options);
+        if (result.IsOk())
+        {
+            Detail::SortByKey(*table.AsTable());
+            value = std::move(table);
+        }
+
+        return result;
+    }
 };
 
 

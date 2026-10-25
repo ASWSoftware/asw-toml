@@ -202,6 +202,39 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_TableConverters
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_TableConverters : public TAutoTestGroup<TTest_ASWToml_TableConverters>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_TableConverters> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_EnumKeys_ReadByName();
+    void Test_EveryType_RefusesWhatIsntATable();
+    void Test_FromValue_FailsAtTheFirstKeyThatFails();
+    void Test_FromValue_ReadsAnyTable();
+    void Test_IntegerKeys_ReadAsDecimalDigits();
+    void Test_IntegerKeys_RefuseWhatIsntANumberInRange();
+    void Test_ReadsWithTheMapsOwnComparator();
+    void Test_RepeatedKey_FailsTheMap();
+    void Test_RoundTrip_EveryType_ThroughADocument();
+    void Test_ToValue_FailsAtTheFirstKeyOrValueThatFails();
+    void Test_ToValue_WritesInTheMapsOrder();
+    void Test_UnorderedMap_WritesKeysSortedByText();
+
+public:
+    TTest_ASWToml_TableConverters();
+    ~TTest_ASWToml_TableConverters() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_TextConverters
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_TextConverters : public TAutoTestGroup<TTest_ASWToml_TextConverters>

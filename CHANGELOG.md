@@ -224,7 +224,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   index in `Path`, e.g. `[1]` or `[1][0]`; a `std::array`, pair or tuple reads only an array of its
   length; a set refuses an element read twice, and an unordered set is written with its elements
   sorted by their TOML text, so a file doesn't change from run to run; `std::vector<TASWTomlValue>`
-  reads and writes an array of mixed types). An application adds its own by specializing the
-  template in namespace `ASWToml`, for one type or, with a requires clause, for a group of types.
+  reads and writes an array of mixed types), and `std::map` and `std::unordered_map` of them, as
+  tables, with `std::string`, integer or enum keys (an integer key is its decimal digits, `0` or
+  digits that don't start with 0 after a `-`, so `01` and `+1` are `InvalidValue`, in the whole
+  range of its type, an unsigned 64-bit one's too; an enum key is one of its names, the case
+  ignored, or for an enum without names its number; each value is read into a new `T{}`, and the
+  first key or value that fails fails the map, with the key in `Path`, e.g. `port` or
+  `"host name"[0]`; a key that reads as one the map already has, such as `Red` and `red`, is
+  `InvalidValue`; a map is written in its order, and an unordered map with its keys sorted). An
+  application adds its own by specializing the template in namespace `ASWToml`, for one type or,
+  with a requires clause, for a group of types.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

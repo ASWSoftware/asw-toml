@@ -58,8 +58,12 @@ char AsciiLower(char c) noexcept;
 std::int64_t CountOfSeconds(std::int64_t seconds, Detail::TDurationUnit const& unit) noexcept;
 std::string DateText(std::chrono::year_month_day const& date);
 TASWTomlResult DaysToValue(std::int64_t days, TASWTomlValue& value);
+std::string EnumNamesProblem(Detail::TNameVector const& names);
+TASWTomlResult FailedKey(ETomlCode code, std::string_view key, std::string_view problem);
 TASWTomlResult Failure(ETomlCode code, std::string message);
 bool HeldExactly(std::int64_t number, int digits) noexcept;
+bool KeyLess(TASWTomlKeyValue const& left, TASWTomlKeyValue const& right) noexcept;
+std::string KeyPart(std::string_view key);
 std::string LocalDateTimeEnd(std::int64_t count, Detail::TDurationUnit const& unit,
     TASWTomlLocalDateTime const& tomlEnd);
 bool NearestFloat(double number, float& nearest) noexcept;
@@ -68,7 +72,9 @@ std::string OffsetDateTimeEnd(std::int64_t count, Detail::TDurationUnit const& u
     TASWTomlOffsetDateTime const& tomlEnd);
 TASWTomlResult OutOfRange(std::string_view text, std::string_view min, std::string_view max);
 std::string PrefixedPath(std::string part, std::string const& path);
+std::string RangeProblem(std::string_view min, std::string_view max);
 TASWTomlResult RealDateFromValue(TASWTomlValue const& value, std::chrono::year_month_day& date);
+std::string Shortened(std::string text);
 Detail::TWriteStyle TextStyle();
 std::string ValidUtf8(std::string_view text);
 
@@ -143,6 +149,47 @@ TASWTomlResult DaysToValue(std::int64_t days, TASWTomlValue& value)
 }
 //---------------------------------------------------------------------------
 /*
+    EnumNamesProblem
+
+    What a message says about a name that isn't one of 'names', the names an enum's values are written as: "isn't a
+    name of the enum: it must be Red, Green or Blue.", or "isn't a name of the enum: it has no names." for none
+*/
+std::string EnumNamesProblem(Detail::TNameVector const& names)
+{
+    if (names.empty())
+        return "isn't a name of the enum: it has no names.";
+
+    std::string problem = "isn't a name of the enum: it must be ";
+    for (std::size_t i = 0; i < names.size(); ++i)
+    {
+        if (i > 0)
+            problem += i + 1 < names.size() ? ", " : " or ";
+
+        problem += names[i];
+    }
+
+    problem += '.';
+
+    return problem;
+}
+//---------------------------------------------------------------------------
+/*
+    FailedKey
+
+    A failed result with 'code' and the message "The key <key> <problem>", the key as a path shows it (see KeyPart()),
+    cut as ValueText() cuts a value's text, e.g. FailedKey(InvalidValue, "a b", "isn't one word.")
+*/
+TASWTomlResult FailedKey(ETomlCode code, std::string_view key, std::string_view problem)
+{
+    std::string message = "The key ";
+    message += Shortened(KeyPart(key));
+    message += ' ';
+    message += problem;
+
+    return Failure(code, std::move(message));
+}
+//---------------------------------------------------------------------------
+/*
     Failure
 
     A failed result with 'code' and 'message'
@@ -171,6 +218,31 @@ bool HeldExactly(std::int64_t number, int digits) noexcept
         magnitude = 0 - magnitude;
 
     return static_cast<int>(std::bit_width(magnitude)) - std::countr_zero(magnitude) <= digits;
+}
+//---------------------------------------------------------------------------
+/*
+    KeyLess
+
+    Whether the key of 'left' comes before that of 'right', byte by byte (see SortByKey())
+*/
+bool KeyLess(TASWTomlKeyValue const& left, TASWTomlKeyValue const& right) noexcept
+{
+    return left.Key < right.Key;
+}
+//---------------------------------------------------------------------------
+/*
+    KeyPart
+
+    'key' as a part of a path: bare when it can be, else a basic string, each of its bytes that isn't valid UTF-8 as
+    '?' (a key that isn't valid UTF-8 can't be written as TOML, and WriteKey() then appends nothing)
+*/
+std::string KeyPart(std::string_view key)
+{
+    std::string part;
+    if (!Detail::WriteKey(key, part).IsOk())
+        static_cast<void>(Detail::WriteKey(ValidUtf8(key), part));
+
+    return part;
 }
 //---------------------------------------------------------------------------
 /*
@@ -263,11 +335,8 @@ TASWTomlResult OutOfRange(std::string_view text, std::string_view min, std::stri
 {
     std::string message = "The value ";
     message += text;
-    message += " is out of range: it must be from ";
-    message += min;
-    message += " to ";
-    message += max;
-    message += '.';
+    message += ' ';
+    message += RangeProblem(min, max);
 
     return Failure(ETomlCode::ValueOutOfRange, std::move(message));
 }
@@ -292,6 +361,23 @@ std::string PrefixedPath(std::string part, std::string const& path)
 }
 //---------------------------------------------------------------------------
 /*
+    RangeProblem
+
+    What a message says about a number outside the range 'min' to 'max' (as text): "is out of range: it must be from
+    <min> to <max>."
+*/
+std::string RangeProblem(std::string_view min, std::string_view max)
+{
+    std::string problem = "is out of range: it must be from ";
+    problem += min;
+    problem += " to ";
+    problem += max;
+    problem += '.';
+
+    return problem;
+}
+//---------------------------------------------------------------------------
+/*
     RealDateFromValue
 
     Sets 'date' to 'value', a local date, and returns Ok, or leaves it as it was and fails with TypeMismatch for a
@@ -309,6 +395,28 @@ TASWTomlResult RealDateFromValue(TASWTomlValue const& value, std::chrono::year_m
     date = *read;
 
     return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+/*
+    Shortened
+
+    'text' as messages show a value or a key: cut to at most MaxValueTextSize bytes (not inside a UTF-8 sequence) and
+    followed by "..." when it is longer
+*/
+std::string Shortened(std::string text)
+{
+    if (text.size() > Detail::MaxValueTextSize)
+    {
+        // Cut before a UTF-8 sequence, never inside one
+        std::size_t cut = Detail::MaxValueTextSize;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80)
+            --cut;
+
+        text.resize(cut);
+        text += "...";
+    }
+
+    return text;
 }
 //---------------------------------------------------------------------------
 /*
@@ -401,6 +509,39 @@ TASWTomlResult Detail::EnumNameToValue(std::string_view name, TASWTomlValue& val
     return TASWTomlConverter<std::string>::ToValue(std::string(name), value, TASWTomlValueOptions());
 }
 //---------------------------------------------------------------------------
+TASWTomlResult Detail::IntegerFromKey(std::string_view key, std::int64_t min, std::uint64_t max, std::uint64_t& bits)
+{
+    // Only the form a key is written in, so each number has one key: 0, or digits that don't start with 0 after an
+    // optional '-'
+    std::string_view digits = key;
+    bool const negative = !digits.empty() && digits.front() == '-';
+    if (negative)
+        digits.remove_prefix(1);
+
+    bool const allDigits = !digits.empty() && digits.find_first_not_of("0123456789") == std::string_view::npos;
+    bool const leadingZero = allDigits && digits.front() == '0' && (negative || digits.size() > 1);
+    if (!allDigits || leadingZero)
+    {
+        return FailedKey(ETomlCode::InvalidValue, key,
+            "isn't a decimal integer (such as 80 or -1, without a + or leading zeros).");
+    }
+
+    // The largest magnitude on the number's side of 0: that of a negative 'min' is one more than that of -(min + 1),
+    // which can't overflow, and an unsigned type's 'min' of 0 allows none
+    std::uint64_t limit = max;
+    if (negative)
+        limit = static_cast<std::uint64_t>(-(min + 1)) + 1;
+
+    std::uint64_t magnitude = 0;
+    std::from_chars_result const read = std::from_chars(digits.data(), digits.data() + digits.size(), magnitude);
+    if (read.ec != std::errc() || magnitude > limit)
+        return FailedKey(ETomlCode::ValueOutOfRange, key, RangeProblem(std::to_string(min), std::to_string(max)));
+
+    bits = negative ? 0 - magnitude : magnitude;
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
 TASWTomlResult Detail::IntegerFromValue(TASWTomlValue const& value, std::int64_t min, std::uint64_t max,
     std::int64_t& out)
 {
@@ -418,23 +559,14 @@ TASWTomlResult Detail::IntegerFromValue(TASWTomlValue const& value, std::int64_t
     return TASWTomlResult();
 }
 //---------------------------------------------------------------------------
+TASWTomlResult Detail::InvalidEnumKey(std::string_view key, TNameVector const& names)
+{
+    return FailedKey(ETomlCode::InvalidValue, key, EnumNamesProblem(names));
+}
+//---------------------------------------------------------------------------
 TASWTomlResult Detail::InvalidEnumName(TASWTomlValue const& value, TNameVector const& names)
 {
-    if (names.empty())
-        return ValueFailure(ETomlCode::InvalidValue, value, "isn't a name of the enum: it has no names.");
-
-    std::string problem = "isn't a name of the enum: it must be ";
-    for (std::size_t i = 0; i < names.size(); ++i)
-    {
-        if (i > 0)
-            problem += i + 1 < names.size() ? ", " : " or ";
-
-        problem += names[i];
-    }
-
-    problem += '.';
-
-    return ValueFailure(ETomlCode::InvalidValue, value, problem);
+    return ValueFailure(ETomlCode::InvalidValue, value, EnumNamesProblem(names));
 }
 //---------------------------------------------------------------------------
 bool Detail::IsEnumName(std::string_view text, std::string_view name) noexcept
@@ -453,13 +585,7 @@ bool Detail::IsEnumName(std::string_view text, std::string_view name) noexcept
 //---------------------------------------------------------------------------
 TASWTomlResult Detail::KeyFailure(TASWTomlResult result, std::string_view key)
 {
-    // A key that isn't valid UTF-8 can't be written as TOML (WriteKey() then appends nothing), so its bytes that
-    // aren't are shown as '?'
-    std::string part;
-    if (!WriteKey(key, part).IsOk())
-        static_cast<void>(WriteKey(ValidUtf8(key), part));
-
-    result.Path = PrefixedPath(std::move(part), result.Path);
+    result.Path = PrefixedPath(KeyPart(key), result.Path);
 
     return result;
 }
@@ -478,6 +604,44 @@ TASWTomlResult Detail::LengthMismatch(TASWTomlValue const& value, std::size_t le
 TASWTomlResult Detail::RepeatedElement(TASWTomlValue const& element)
 {
     return ValueFailure(ETomlCode::InvalidValue, element, "reads as an element the set already has.");
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::RepeatedEnumKey(TASWTomlValue::TKeyValueVector const& table)
+{
+    // The keys with their letters in lower case, sorted with their indexes, so two that are the same are next to each
+    // other, the later one in the table second
+    TTextVector keys;
+    keys.reserve(table.size());
+    for (std::size_t i = 0; i < table.size(); ++i)
+    {
+        std::string key = table[i].Key;
+        for (char& c : key)
+            c = AsciiLower(c);
+
+        keys.emplace_back(std::move(key), i);
+    }
+
+    std::sort(keys.begin(), keys.end());
+    for (std::size_t i = 1; i < keys.size(); ++i)
+    {
+        if (keys[i].first == keys[i - 1].first)
+        {
+            return FailedKey(ETomlCode::InvalidValue, table[keys[i].second].Key, "names two values of the enum, which "
+                "would read back as one: each value needs a name of its own in ASWTomlEnumNames().");
+        }
+    }
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::RepeatedKey(std::string_view key)
+{
+    return FailedKey(ETomlCode::InvalidValue, key, "reads as a key the map already has.");
+}
+//---------------------------------------------------------------------------
+void Detail::SortByKey(TASWTomlValue::TKeyValueVector& table) noexcept
+{
+    std::sort(table.begin(), table.end(), KeyLess);
 }
 //---------------------------------------------------------------------------
 void Detail::SortByText(TASWTomlValue::TValueVector& elements)
@@ -501,6 +665,20 @@ void Detail::SortByText(TASWTomlValue::TValueVector& elements)
         sorted.push_back(std::move(elements[text.second]));
 
     elements = std::move(sorted);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::TextToKey(std::string_view text, std::string& key)
+{
+    std::size_t const invalid = FindInvalidUtf8(text);
+    if (invalid != std::string_view::npos)
+    {
+        return Failure(ETomlCode::InvalidValue, "The key can't be written: it isn't valid UTF-8 (at byte " +
+            std::to_string(invalid) + "), which TOML needs.");
+    }
+
+    key = text;
+
+    return TASWTomlResult();
 }
 //---------------------------------------------------------------------------
 bool Detail::TimeOfDayFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalTime& time) noexcept
@@ -620,18 +798,7 @@ std::string Detail::ValueText(TASWTomlValue const& value)
     if (!WriteValue(value, TextStyle(), text).IsOk())
         return std::string("of type ") + ToString(value.GetType());
 
-    if (text.size() > MaxValueTextSize)
-    {
-        // Cut before a UTF-8 sequence, never inside one
-        std::size_t cut = MaxValueTextSize;
-        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80)
-            --cut;
-
-        text.resize(cut);
-        text += "...";
-    }
-
-    return text;
+    return Shortened(std::move(text));
 }
 //---------------------------------------------------------------------------
 
