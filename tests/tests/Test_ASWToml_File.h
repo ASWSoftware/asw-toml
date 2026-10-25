@@ -59,6 +59,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_WriteWholeFile_KeepsSymbolicLink();
 #endif
     void Test_WriteWholeFile_NonAsciiPath();
+    void Test_WriteWholeFile_OutOfMemory_KeepsFileAndRemovesTemp();
 #if defined(_WIN32)
     void Test_WriteWholeFile_ReadOnlyFile_Fails();
 #endif

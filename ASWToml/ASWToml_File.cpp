@@ -444,38 +444,52 @@ TASWTomlResult WriteAtomically(std::filesystem::path const& target, std::string_
     if (error != 0)
         return Failure(OpenFailureCode(error), "Could not create the temporary file", temp, "", error);
 
-    // From here on, a failure deletes the temporary file
+    // From here on, a failure deletes the temporary file, and so does an exception (std::bad_alloc, e.g. while a
+    // failure's message is made, or in ReplaceWithTemp() before the replace), which WriteWholeFile() then returns
     TASWTomlResult result;
 
-    if (!file.WriteAll(contents, error))
+    try
     {
-        result = Failure(ETomlCode::WriteFailed, "Could not write the temporary file", temp, "", error);
-    }
-    else
-    {
-#if !defined(_WIN32)
-        // The new file gets the old one's permissions (e.g. 0600 for a private file) and, when the process may set
-        // it, its owner, instead of the defaults a new file gets
-        struct stat status;
-        if (targetExists && ::stat(target.c_str(), &status) == 0)
-        {
-            ::fchmod(file.GetDescriptor(), status.st_mode & 07777);
-            if (::fchown(file.GetDescriptor(), status.st_uid, status.st_gid) != 0)
-            {
-                // Only the owner's group, or root, can do this; the permissions above still apply
-            }
-        }
-#endif
-
-        if (!file.Flush(error) || !file.Close(error))
+        if (!file.WriteAll(contents, error))
         {
             result = Failure(ETomlCode::WriteFailed, "Could not write the temporary file", temp, "", error);
         }
-        else if (!ReplaceWithTemp(temp, target, targetExists, error))
+        else
         {
-            result = Failure(ETomlCode::ReplaceFailed, "Could not replace the file", target, " with its new contents",
-                error);
+#if !defined(_WIN32)
+            // The new file gets the old one's permissions (e.g. 0600 for a private file) and, when the process may
+            // set it, its owner, instead of the defaults a new file gets
+            struct stat status;
+            if (targetExists && ::stat(target.c_str(), &status) == 0)
+            {
+                ::fchmod(file.GetDescriptor(), status.st_mode & 07777);
+                if (::fchown(file.GetDescriptor(), status.st_uid, status.st_gid) != 0)
+                {
+                    // Only the owner's group, or root, can do this; the permissions above still apply
+                }
+            }
+#endif
+
+            if (!file.Flush(error) || !file.Close(error))
+            {
+                result = Failure(ETomlCode::WriteFailed, "Could not write the temporary file", temp, "", error);
+            }
+            else if (!ReplaceWithTemp(temp, target, targetExists, error))
+            {
+                result = Failure(ETomlCode::ReplaceFailed, "Could not replace the file", target,
+                    " with its new contents", error);
+            }
         }
+    }
+    catch (...)
+    {
+        file.Close();
+
+        // A temporary file that can't be deleted isn't added to the warnings: the exception is what the save returns
+        int deleteError = 0;
+        static_cast<void>(DeleteFileAt(temp, deleteError));
+
+        throw;
     }
 
     if (!result.IsOk())

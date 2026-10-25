@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "Test_ASWToml_File.h"
 //---------------------------------------------------------------------------
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -40,6 +41,7 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_Options.h"
 #include "ASWToml_Types.h"
 //---------------------------------------------------------------------------
+#include "UT_Helper_FailingAlloc.h"
 #include "UT_Helper_TempDir.h"
 //---------------------------------------------------------------------------
 
@@ -573,6 +575,57 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_NonAsciiPath)
     CheckTrue(std::filesystem::exists(folder.Path() / L"caf\x00E9" / L"\x03BB.toml", error),
         "the file should have the wide name");
 #endif
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_File, WriteWholeFile_OutOfMemory_KeepsFileAndRemovesTemp)
+{
+    // Arrange
+    if (!CanFailAllocations())
+        Skip("allocations can't be made to fail in this build (see CanFailAllocations())");
+
+    TTempDir const folder;
+    AssertFalse(folder.Path().empty(), "the test folder should be created");
+    std::filesystem::path const path = folder.Path() / "app.toml";
+    ASWToml::TASWTomlSavingOptions const options;
+    std::size_t failures = 0;
+
+    // Act & Assert
+    // Each allocation of the save fails in turn, until the save makes no more; a failed one leaves the file as it was
+    // and deletes its temporary file
+    for (std::size_t number = 1; number < 10000; ++number)
+    {
+        AssertTrue(WriteTestFile(path, "old"), "the test file should be written");
+        std::string const which = " (allocation " + std::to_string(number) + ")";
+        ASWToml::TMessageVector warnings;
+        ASWToml::TASWTomlResult result;
+        bool failed = false;
+        {
+            TFailingAlloc failingAlloc(number);
+            result = ASWToml::Detail::WriteWholeFile(path, "new", options, warnings);
+            failed = failingAlloc.HasFailed();
+        }
+
+        std::string contents;
+        CheckTrue(ReadTestFile(path, contents), "the file should be readable" + which);
+        if (result.IsOk())
+        {
+            CheckEquals(std::string("new"), contents, "a save that succeeded should write the contents" + which);
+        }
+        else
+        {
+            ++failures;
+            CheckTrue(failed, "the save should only fail when an allocation fails" + which);
+            CheckEquals(ASWToml::ETomlCode::UnexpectedException, result.Code,
+                "a failed allocation should be UnexpectedException" + which);
+            CheckEquals(std::string("old"), contents, "a failed save should leave the file as it was" + which);
+        }
+
+        CheckEquals(1, static_cast<int>(CountEntries(folder.Path())), "no temporary file should be left" + which);
+        if (!failed)
+            break;
+    }
+
+    CheckGreaterThan(failures, std::size_t(0), "at least one allocation should have failed");
 }
 //---------------------------------------------------------------------------
 #if defined(_WIN32)
