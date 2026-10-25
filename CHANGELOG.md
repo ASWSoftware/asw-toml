@@ -21,11 +21,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ELineBreak` (`None`, `LF` or `CRLF`: the line break that ends a line), `ESeverity`,
   `TASWTomlMessage` (a warning or error for the application's log callback, with the file, line,
   column, path of the key or table, and system error it is about), `TMessageVector` (a list of
-  messages) and `TASWTomlResult` (an operation's outcome, with the file, line, column and path of
-  the key or value an error is about, which converts to `true` when it succeeded; an edit of a
-  document that fails gives the path it was given). A column counts characters (Unicode code
-  points) from 1, and a path is written in TOML's dotted-key syntax (`server."host name".port`).
-  `ToString()` names a code, a line break or a severity, and writes a message as one line of text.
+  messages), `TStringVector` (a list of names) and `TASWTomlResult` (an operation's outcome, with
+  the file, line, column and path of the key or value an error is about, which converts to `true`
+  when it succeeded; an edit of a document that fails gives the path it was given). A column counts
+  characters (Unicode code points) from 1, and a path is written in TOML's dotted-key syntax
+  (`server."host name".port`). `ToString()` names a code, a line break or a severity, and writes a
+  message as one line of text.
 - `TASWTomlOptions` (`ASWToml_Options.h`), the settings for TOML files in four groups:
   - `Reading` (`TASWTomlReadingOptions`): the largest file loaded (16 MiB) and how many tables,
     arrays and inline tables a value may be inside (100, and at most 128; a deeper value fails the
@@ -242,5 +243,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the list's order, and a key named twice in the list is `InvalidValue`; so a `std::vector` of a
   struct is an array of tables). An application adds its own by specializing the template in
   namespace `ASWToml`, for one type or, with a requires clause, for a group of types.
+- `IASWToml` (`ASWToml_Interface.h`), the interface of a thread-safe TOML object (which
+  `TASWBaseToml` will implement), so code that only reads and writes values can take an
+  `IASWToml&`. Its operations by path are each complete in itself and give out copies, never
+  pointers into the document: `Contains()`, `GetKeyNames()` (a `TStringVector`), `GetComment()`,
+  `GetTrailingComment()`, `Remove()`, `Rename()`, `SetComment()`, `SetTrailingComment()`,
+  `GetDocument()`, `LoadText()`, `ToText()`, `Load()`, `Save()`, `SaveAs()`, `IsModified()`,
+  `GetFilePath()`, `GetOptions()`, `SetOptions()` and `SetLogCallback()` (a `TASWTomlLogCallback`).
+  Typed values are built on them with `TASWTomlConverter<T>`: `GetValue(path, defaultValue)` gives
+  the default when there is no value at the path, or when it doesn't convert, which is reported as
+  a Warning, so a setting reads in one line; `TryGetValue(path, value)` fails with `NotFound` or the
+  converter's code, and isn't reported; `SetValue(path, value)` sets a value (merging a table or
+  array that is there) and `Append(path, value)` adds one to an array (a struct is a new `[[path]]`
+  element of an array of tables). Each takes value options too, and text (a string literal, a char
+  pointer or a `std::string_view`) is read and written as a TOML string. A failure's `Path` is the
+  place in the document that failed, e.g. `servers[1].port`, and every failed operation but
+  `TryGetValue()` is reported to the log callback as an Error (a path that isn't valid for
+  `GetValue()` too).
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

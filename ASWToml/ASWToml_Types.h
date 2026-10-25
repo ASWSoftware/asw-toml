@@ -122,6 +122,9 @@ struct TASWTomlMessage
 // The messages an operation reports, e.g. the warnings of a save
 using TMessageVector = std::vector<TASWTomlMessage>;
 
+// Names or texts, e.g. the keys of a table
+using TStringVector = std::vector<std::string>;
+
 
 /////////////////////////////////////////////////////////////////////////////
 // TASWTomlResult
