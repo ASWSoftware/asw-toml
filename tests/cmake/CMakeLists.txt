@@ -75,6 +75,13 @@ else()
     target_compile_options(ASWTomlTests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# The converter tests instantiate thousands of templates, so an unoptimized build of them has more sections than a
+# Windows object file holds in its usual format (MSVC's error C1128); the big object format holds them. MSVC needs
+# the option, while Clang and GNU as (binutils 2.47) switch to that format by themselves when a file needs it.
+if(MSVC)
+    target_compile_options(ASWTomlTests PRIVATE /bigobj)
+endif()
+
 if(MINGW)
     # Statically link the MinGW runtime so the executable launches without MinGW's bin directory on PATH (e.g. on a
     # CI runner).
