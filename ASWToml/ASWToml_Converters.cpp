@@ -20,6 +20,7 @@ SPDX-License-Identifier: MIT
 #include <algorithm>
 #include <bit>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -45,13 +46,25 @@ namespace
 constexpr double FloatRoundingLimit = 0x1.FFFFFFp127;
 static_assert(FloatRoundingLimit - std::numeric_limits<float>::max() == 0x1p103, "half the step above FLT_MAX");
 
+// The days from 1970-01-01 to 0000-01-01 and to 9999-12-31, the first and last dates TOML writes
+constexpr std::int64_t FirstDay = -719528;
+constexpr std::int64_t LastDay = 2932896;
+
 char AsciiLower(char c) noexcept;
+std::int64_t CountOfSeconds(std::int64_t seconds, Detail::TDurationUnit const& unit) noexcept;
+std::string DateText(std::chrono::year_month_day const& date);
+TASWTomlResult DaysToValue(std::int64_t days, TASWTomlValue& value);
 TASWTomlResult Failure(ETomlCode code, std::string message);
 bool HeldExactly(std::int64_t number, int digits) noexcept;
+std::string LocalDateTimeEnd(std::int64_t count, Detail::TDurationUnit const& unit,
+    TASWTomlLocalDateTime const& tomlEnd);
 bool NearestFloat(double number, float& nearest) noexcept;
 TASWTomlResult NotHeldExactly(TASWTomlValue const& value, int digits);
+std::string OffsetDateTimeEnd(std::int64_t count, Detail::TDurationUnit const& unit,
+    TASWTomlOffsetDateTime const& tomlEnd);
 TASWTomlResult OutOfRange(std::string_view text, std::string_view min, std::string_view max);
 std::string PrefixedPath(std::string part, std::string const& path);
+TASWTomlResult RealDateFromValue(TASWTomlValue const& value, std::chrono::year_month_day& date);
 std::string ValidUtf8(std::string_view text);
 
 //---------------------------------------------------------------------------
@@ -66,6 +79,62 @@ char AsciiLower(char c) noexcept
         return static_cast<char>(c - 'A' + 'a');
 
     return c;
+}
+//---------------------------------------------------------------------------
+/*
+    CountOfSeconds
+
+    The smallest count of 'unit' that is 'seconds' seconds (at most a day and a second) or more: seconds * Den / Num
+    units, rounded up; 1 for a unit of that many seconds or more
+*/
+std::int64_t CountOfSeconds(std::int64_t seconds, Detail::TDurationUnit const& unit) noexcept
+{
+    std::int64_t const scaled = seconds * unit.Den;
+    if (unit.Num >= scaled)
+        return 1;
+
+    return (scaled + unit.Num - 1) / unit.Num;
+}
+//---------------------------------------------------------------------------
+/*
+    DateText
+
+    'date' as a message shows it, as TOML writes a date (YYYY-MM-DD) whether it is real or not: the year with at
+    least four digits and its sign when it is negative, the month and the day with two
+*/
+std::string DateText(std::chrono::year_month_day const& date)
+{
+    int const year = static_cast<int>(date.year());
+    std::string const digits = std::to_string(year < 0 ? -year : year);
+    std::string text = year < 0 ? "-" : "";
+    if (digits.size() < 4)
+        text.append(4 - digits.size(), '0');
+
+    text += digits;
+    unsigned const fields[] = { static_cast<unsigned>(date.month()), static_cast<unsigned>(date.day()) };
+    for (unsigned const field : fields)
+    {
+        text += field < 10 ? "-0" : "-";
+        text += std::to_string(field);
+    }
+
+    return text;
+}
+//---------------------------------------------------------------------------
+/*
+    DaysToValue
+
+    Sets 'value' to the date 'days' days after 1970-01-01 as a local date, or leaves it as it was and fails with
+    ValueOutOfRange when that is outside the years 0 to 9999
+*/
+TASWTomlResult DaysToValue(std::int64_t days, TASWTomlValue& value)
+{
+    if (days < FirstDay || days > LastDay)
+        return Detail::TimePointOutOfRange();
+
+    value = TASWTomlValue(std::chrono::year_month_day(std::chrono::sys_days(std::chrono::days(days))));
+
+    return TASWTomlResult();
 }
 //---------------------------------------------------------------------------
 /*
@@ -97,6 +166,27 @@ bool HeldExactly(std::int64_t number, int digits) noexcept
         magnitude = 0 - magnitude;
 
     return static_cast<int>(std::bit_width(magnitude)) - std::countr_zero(magnitude) <= digits;
+}
+//---------------------------------------------------------------------------
+/*
+    LocalDateTimeEnd
+
+    The text of the local date-time 'count' units of 'unit' after 1970-01-01T00:00:00, the first or last count of the
+    unit, or, when that is outside the years 0 to 9999, of 'tomlEnd', TOML's first or last date-time, as the unit
+    counts it: rounded down, or up when that is before the year 0
+*/
+std::string LocalDateTimeEnd(std::int64_t count, Detail::TDurationUnit const& unit,
+    TASWTomlLocalDateTime const& tomlEnd)
+{
+    TASWTomlLocalDateTime dateTime;
+    if (!Detail::LocalDateTimeFromCount(count, unit, dateTime))
+    {
+        static_cast<void>(Detail::LocalDateTimeToCount(tomlEnd, unit, count));
+        if (!Detail::LocalDateTimeFromCount(count, unit, dateTime))
+            static_cast<void>(Detail::LocalDateTimeFromCount(count + 1, unit, dateTime));
+    }
+
+    return Detail::ValueText(dateTime);
 }
 //---------------------------------------------------------------------------
 /*
@@ -138,6 +228,27 @@ TASWTomlResult NotHeldExactly(TASWTomlValue const& value, int digits)
 }
 //---------------------------------------------------------------------------
 /*
+    OffsetDateTimeEnd
+
+    As LocalDateTimeEnd(), for an offset date-time in UTC: the text of the instant 'count' units of 'unit' after
+    1970-01-01T00:00:00Z, or of 'tomlEnd' as the unit counts it
+*/
+std::string OffsetDateTimeEnd(std::int64_t count, Detail::TDurationUnit const& unit,
+    TASWTomlOffsetDateTime const& tomlEnd)
+{
+    std::chrono::minutes const utc(0);
+    TASWTomlOffsetDateTime dateTime;
+    if (!Detail::OffsetDateTimeFromCount(count, unit, utc, dateTime))
+    {
+        static_cast<void>(Detail::OffsetDateTimeToCount(tomlEnd, unit, count));
+        if (!Detail::OffsetDateTimeFromCount(count, unit, utc, dateTime))
+            static_cast<void>(Detail::OffsetDateTimeFromCount(count + 1, unit, utc, dateTime));
+    }
+
+    return Detail::ValueText(dateTime);
+}
+//---------------------------------------------------------------------------
+/*
     OutOfRange
 
     The ValueOutOfRange result of a number, shown as 'text', outside the range 'min' to 'max' (as text): "The value
@@ -176,6 +287,26 @@ std::string PrefixedPath(std::string part, std::string const& path)
 }
 //---------------------------------------------------------------------------
 /*
+    RealDateFromValue
+
+    Sets 'date' to 'value', a local date, and returns Ok, or leaves it as it was and fails with TypeMismatch for a
+    value of another type, InvalidValue for a date that isn't real
+*/
+TASWTomlResult RealDateFromValue(TASWTomlValue const& value, std::chrono::year_month_day& date)
+{
+    std::chrono::year_month_day const* const read = value.AsLocalDate();
+    if (read == nullptr)
+        return Detail::TypeMismatch(value, "a local date");
+
+    if (!read->ok())
+        return Detail::ValueFailure(ETomlCode::InvalidValue, value, "isn't a real date.");
+
+    date = *read;
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+/*
     ValidUtf8
 
     'text' with each byte that doesn't belong to a valid UTF-8 sequence as '?'
@@ -202,6 +333,41 @@ std::string ValidUtf8(std::string_view text)
 
 //---------------------------------------------------------------------------
 
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::DateTimeOutOfRange(TASWTomlValue const& value, TDurationUnit const& unit)
+{
+    // The first and last values the unit's count holds, each as far as TOML's first and last values go: 0000-01-01 at
+    // midnight, the last nanosecond of 9999-12-31, and for a time of day midnight and the last nanosecond of the leap
+    // second 23:59:60
+    TASWTomlLocalDateTime const firstDateTime{ std::chrono::year(0) / std::chrono::January / 1, TASWTomlLocalTime() };
+    TASWTomlLocalDateTime const lastDateTime{ std::chrono::year(9999) / std::chrono::December / 31,
+        TASWTomlLocalTime{ std::chrono::hours(23), std::chrono::minutes(59), std::chrono::seconds(59),
+            std::chrono::nanoseconds(999999999) } };
+    std::string first;
+    std::string last;
+    if (value.IsOffsetDateTime())
+    {
+        std::chrono::minutes const utc(0);
+        first = OffsetDateTimeEnd(unit.Min, unit, TASWTomlOffsetDateTime{ firstDateTime.Date, firstDateTime.Time, utc });
+        last = OffsetDateTimeEnd(unit.Max, unit, TASWTomlOffsetDateTime{ lastDateTime.Date, lastDateTime.Time, utc });
+    }
+    else if (value.IsLocalDateTime())
+    {
+        first = LocalDateTimeEnd(unit.Min, unit, firstDateTime);
+        last = LocalDateTimeEnd(unit.Max, unit, lastDateTime);
+    }
+    else
+    {
+        TASWTomlLocalTime time;
+        if (!TimeOfDayFromCount(unit.Max, unit, time))
+            static_cast<void>(TimeOfDayFromCount(CountOfSeconds(86401, unit) - 1, unit, time));
+
+        first = "00:00:00";
+        last = ValueText(time);
+    }
+
+    return OutOfRange(ValueText(value), first, last);
+}
 //---------------------------------------------------------------------------
 TASWTomlResult Detail::ElementFailure(TASWTomlResult result, std::size_t index)
 {
@@ -276,6 +442,38 @@ TASWTomlResult Detail::KeyFailure(TASWTomlResult result, std::string_view key)
     result.Path = PrefixedPath(std::move(part), result.Path);
 
     return result;
+}
+//---------------------------------------------------------------------------
+bool Detail::TimeOfDayFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalTime& time) noexcept
+{
+    std::int64_t const day = CountOfSeconds(86400, unit);
+    if (count < 0 || count >= CountOfSeconds(86401, unit))
+        return false;
+
+    // A count from a day on is less than a day and a second, so taken modulo a day it is that second's fraction
+    TASWTomlLocalTime result;
+    LocalTimeFromCount(count, unit, result);
+    if (count >= day)
+    {
+        result.Hour = std::chrono::hours(23);
+        result.Minute = std::chrono::minutes(59);
+        result.Second = std::chrono::seconds(60);
+    }
+
+    time = result;
+
+    return true;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::TimeOfDayOutOfRange()
+{
+    return Failure(ETomlCode::ValueOutOfRange, "The time of day can't be written: it must be at least 0 and less "
+        "than a day and a second (24:00:00 is written as the leap second 23:59:60).");
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::TimePointOutOfRange()
+{
+    return Failure(ETomlCode::ValueOutOfRange, "The time point can't be written: TOML's years are from 0 to 9999.");
 }
 //---------------------------------------------------------------------------
 char const* Detail::TypeName(TASWTomlValue const& value) noexcept
@@ -380,6 +578,99 @@ std::string Detail::ValueText(TASWTomlValue const& value)
     }
 
     return text;
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<TASWTomlLocalDateTime>
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<TASWTomlLocalDateTime>::FromValue(TASWTomlValue const& value,
+    TASWTomlLocalDateTime& out, TASWTomlValueOptions const& /*options*/)
+{
+    TASWTomlLocalDateTime const* const dateTime = value.AsLocalDateTime();
+    if (dateTime == nullptr)
+        return Detail::TypeMismatch(value, "a local date-time");
+
+    out = *dateTime;
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<TASWTomlLocalDateTime>::ToValue(TASWTomlLocalDateTime const& in,
+    TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
+{
+    // Written once, as a document writes it, to check that it can be
+    std::string text;
+    TASWTomlResult const result = Detail::WriteLocalDateTime(in, text);
+    if (result.IsOk())
+        value = TASWTomlValue(in);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<TASWTomlLocalTime>
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<TASWTomlLocalTime>::FromValue(TASWTomlValue const& value, TASWTomlLocalTime& out,
+    TASWTomlValueOptions const& /*options*/)
+{
+    TASWTomlLocalTime const* const time = value.AsLocalTime();
+    if (time == nullptr)
+        return Detail::TypeMismatch(value, "a local time");
+
+    out = *time;
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<TASWTomlLocalTime>::ToValue(TASWTomlLocalTime const& in, TASWTomlValue& value,
+    TASWTomlValueOptions const& /*options*/)
+{
+    // Written once, as a document writes it, to check that it can be
+    std::string text;
+    TASWTomlResult const result = Detail::WriteLocalTime(in, text);
+    if (result.IsOk())
+        value = TASWTomlValue(in);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<TASWTomlOffsetDateTime>
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<TASWTomlOffsetDateTime>::FromValue(TASWTomlValue const& value,
+    TASWTomlOffsetDateTime& out, TASWTomlValueOptions const& /*options*/)
+{
+    TASWTomlOffsetDateTime const* const dateTime = value.AsOffsetDateTime();
+    if (dateTime == nullptr)
+        return Detail::TypeMismatch(value, "an offset date-time");
+
+    out = *dateTime;
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<TASWTomlOffsetDateTime>::ToValue(TASWTomlOffsetDateTime const& in,
+    TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
+{
+    // Written once, as a document writes it, to check that it can be
+    std::string text;
+    TASWTomlResult const result = Detail::WriteOffsetDateTime(in, text);
+    if (result.IsOk())
+        value = TASWTomlValue(in);
+
+    return result;
 }
 //---------------------------------------------------------------------------
 
@@ -534,6 +825,90 @@ TASWTomlResult TASWTomlConverter<float>::ToValue(float const& in, TASWTomlValue&
     }
 
     value = TASWTomlValue(written);
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::local_days>
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<std::chrono::local_days>::FromValue(TASWTomlValue const& value,
+    std::chrono::local_days& out, TASWTomlValueOptions const& /*options*/)
+{
+    std::chrono::year_month_day date{};
+    TASWTomlResult const result = RealDateFromValue(value, date);
+    if (result.IsOk())
+        out = std::chrono::local_days(date);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<std::chrono::local_days>::ToValue(std::chrono::local_days const& in,
+    TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
+{
+    return DaysToValue(static_cast<std::int64_t>(in.time_since_epoch().count()), value);
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::sys_days>
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<std::chrono::sys_days>::FromValue(TASWTomlValue const& value,
+    std::chrono::sys_days& out, TASWTomlValueOptions const& /*options*/)
+{
+    std::chrono::year_month_day date{};
+    TASWTomlResult const result = RealDateFromValue(value, date);
+    if (result.IsOk())
+        out = std::chrono::sys_days(date);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<std::chrono::sys_days>::ToValue(std::chrono::sys_days const& in,
+    TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
+{
+    return DaysToValue(static_cast<std::int64_t>(in.time_since_epoch().count()), value);
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::year_month_day>
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<std::chrono::year_month_day>::FromValue(TASWTomlValue const& value,
+    std::chrono::year_month_day& out, TASWTomlValueOptions const& /*options*/)
+{
+    std::chrono::year_month_day const* const date = value.AsLocalDate();
+    if (date == nullptr)
+        return Detail::TypeMismatch(value, "a local date");
+
+    out = *date;
+
+    return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlConverter<std::chrono::year_month_day>::ToValue(std::chrono::year_month_day const& in,
+    TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
+{
+    if (!in.ok())
+        return Failure(ETomlCode::InvalidValue, "The date " + DateText(in) + " can't be written: it isn't a real date.");
+
+    if (in.year() < std::chrono::year(0) || in.year() > std::chrono::year(9999))
+    {
+        return Failure(ETomlCode::ValueOutOfRange, "The date " + DateText(in) +
+            " can't be written: TOML's years are from 0 to 9999.");
+    }
+
+    value = TASWTomlValue(in);
 
     return TASWTomlResult();
 }

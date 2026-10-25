@@ -342,6 +342,27 @@ static_assert(!ASWToml::TomlConvertible<ASWUnitTests::EColor const> &&
     !ASWToml::TomlConvertible<ASWUnitTests::EFlags const>, "an enum with const should have no converter");
 static_assert(!ASWToml::TomlConvertible<ASWUnitTests::TColorHolder>, "nor should a class that converts to an enum");
 
+// The dates, time points and times of day, of any duration the date and time types convert, and the TOML date and
+// time types; not a duration (TOML has none), nor a time point or time of day that counts in a floating-point type
+static_assert(ASWToml::TomlConvertible<std::chrono::year_month_day>, "year_month_day should have a converter");
+static_assert(ASWToml::TomlConvertible<std::chrono::sys_days> && ASWToml::TomlConvertible<std::chrono::local_days>,
+    "sys_days and local_days should have converters");
+static_assert(ASWToml::TomlConvertible<std::chrono::sys_seconds> &&
+    ASWToml::TomlConvertible<std::chrono::system_clock::time_point>, "sys_seconds and system_clock should have one");
+static_assert(ASWToml::TomlConvertible<std::chrono::local_seconds> &&
+    ASWToml::TomlConvertible<std::chrono::local_time<std::chrono::nanoseconds> >, "local times should have one");
+static_assert(ASWToml::TomlConvertible<std::chrono::hh_mm_ss<std::chrono::seconds> > &&
+    ASWToml::TomlConvertible<std::chrono::hh_mm_ss<std::chrono::nanoseconds> >, "hh_mm_ss should have one");
+static_assert(ASWToml::TomlConvertible<ASWToml::TASWTomlLocalDateTime> &&
+    ASWToml::TomlConvertible<ASWToml::TASWTomlLocalTime> && ASWToml::TomlConvertible<ASWToml::TASWTomlOffsetDateTime>,
+    "the TOML date and time types should have converters");
+static_assert(!ASWToml::TomlConvertible<std::chrono::seconds>, "a duration should have no converter");
+static_assert(!ASWToml::TomlConvertible<std::chrono::sys_time<std::chrono::duration<double> > >,
+    "a time point that counts in a double should have no converter");
+static_assert(!ASWToml::TomlConvertible<std::chrono::hh_mm_ss<std::chrono::duration<double> > >,
+    "nor a time of day that counts in one");
+static_assert(!ASWToml::TomlConvertible<std::chrono::year>, "a year alone should have no converter");
+
 namespace ASWUnitTests
 {
 
@@ -354,6 +375,9 @@ using ASWToml::ETomlCode;
 using ASWToml::ETomlType;
 using ASWToml::TASWTomlConverter;
 using ASWToml::TASWTomlDocument;
+using ASWToml::TASWTomlLocalDateTime;
+using ASWToml::TASWTomlLocalTime;
+using ASWToml::TASWTomlOffsetDateTime;
 using ASWToml::TASWTomlResult;
 using ASWToml::TASWTomlValue;
 using ASWToml::TASWTomlValueOptions;
@@ -362,6 +386,7 @@ using ASWToml::TomlConvertible;
 using TArray = TASWTomlValue::TValueVector;
 using TTable = TASWTomlValue::TKeyValueVector;
 
+std::chrono::year_month_day Date(int year, unsigned month, unsigned day);
 template <TomlConvertible T>
 std::string EnumRoundTripProblem(std::initializer_list<T> values);
 std::string Escaped(std::string const& text);
@@ -383,9 +408,21 @@ template <typename T>
 bool SameBits(T a, T b);
 template <TomlConvertible T>
 TASWTomlResult ThroughDocument(T const& in, T& out, std::string& text);
+ASWToml::TASWTomlLocalTime TimeOfDay(int hour, int minute, int second, std::int64_t nanoseconds = 0);
 template <TomlConvertible T>
 std::string Written(T const& in);
 
+//---------------------------------------------------------------------------
+/*
+    Date
+
+    The date 'year'-'month'-'day', real or not
+*/
+std::chrono::year_month_day Date(int year, unsigned month, unsigned day)
+{
+    return std::chrono::year_month_day{ std::chrono::year{ year }, std::chrono::month{ month },
+        std::chrono::day{ day } };
+}
 //---------------------------------------------------------------------------
 /*
     EnumRoundTripProblem
@@ -719,6 +756,22 @@ TASWTomlResult ThroughDocument(T const& in, T& out, std::string& text)
 }
 //---------------------------------------------------------------------------
 /*
+    TimeOfDay
+
+    The time of day 'hour':'minute':'second' and 'nanoseconds', valid or not
+*/
+ASWToml::TASWTomlLocalTime TimeOfDay(int hour, int minute, int second, std::int64_t nanoseconds)
+{
+    ASWToml::TASWTomlLocalTime time;
+    time.Hour = std::chrono::hours(hour);
+    time.Minute = std::chrono::minutes(minute);
+    time.Second = std::chrono::seconds(second);
+    time.Fraction = std::chrono::nanoseconds(nanoseconds);
+
+    return time;
+}
+//---------------------------------------------------------------------------
+/*
     Written
 
     'in' as TASWTomlConverter<T>::ToValue() writes it, into a value that is a table first: the value as TOML text (see
@@ -826,6 +879,592 @@ ASW_TEST(TTest_ASWToml_BoolConverter, ToValue_ReplacesTheValue)
     // Assert
     CheckTrue(result.IsOk(), "writing a bool never fails");
     CheckTrue(value == TASWTomlValue(false), "the table should be replaced by the boolean");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DateTimeConverters
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DateTimeConverters::TTest_ASWToml_DateTimeConverters()
+    : inherited("ASWToml_DateTimeConverters_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DateTimeConverters::~TTest_ASWToml_DateTimeConverters()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeConverters::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeConverters::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeConverters::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DateTimeConverters::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, Date_ReadsLocalDatesOnly)
+{
+    // Arrange
+    std::chrono::year_month_day const date = Date(1979, 5, 27);
+    std::chrono::year_month_day const unreal = Date(2023, 2, 30);
+    std::chrono::year_month_day readDate{};
+    std::chrono::year_month_day readUnreal{};
+    std::chrono::sys_days sysDays;
+    std::chrono::local_days localDays;
+    std::chrono::sys_days const kept = std::chrono::sys_days(Date(2000, 1, 1));
+    std::chrono::sys_days refused = kept;
+
+    // Act
+    TASWTomlResult const asDate = TASWTomlConverter<std::chrono::year_month_day>::FromValue(date, readDate,
+        TASWTomlValueOptions());
+    TASWTomlResult const asUnreal = TASWTomlConverter<std::chrono::year_month_day>::FromValue(unreal, readUnreal,
+        TASWTomlValueOptions());
+    TASWTomlResult const asSysDays = TASWTomlConverter<std::chrono::sys_days>::FromValue(date, sysDays,
+        TASWTomlValueOptions());
+    TASWTomlResult const asLocalDays = TASWTomlConverter<std::chrono::local_days>::FromValue(date, localDays,
+        TASWTomlValueOptions());
+    TASWTomlResult const unrealDays = TASWTomlConverter<std::chrono::sys_days>::FromValue(unreal, refused,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(asDate.IsOk() && readDate == date, "a local date should read as a year_month_day");
+    CheckTrue(asUnreal.IsOk() && readUnreal == unreal, "as it is, even when it isn't a real date");
+    CheckTrue(asSysDays.IsOk() && sysDays == std::chrono::sys_days(date), "as sys_days");
+    CheckTrue(asLocalDays.IsOk() && localDays == std::chrono::local_days(date), "and as local_days");
+    CheckEquals(ETomlCode::InvalidValue, unrealDays.Code, "a date that isn't real has no days to count");
+    CheckEquals("The value of type LocalDate isn't a real date."s, unrealDays.Message, "the message");
+    CheckTrue(refused == kept, "a value refused should leave the days as they were");
+    CheckEmpty(RefusalProblem(date, { ETomlType::LocalDate }, "a local date"), "year_month_day refuses other types");
+    CheckEmpty(RefusalProblem(kept, { ETomlType::LocalDate }, "a local date"), "and so do sys_days");
+    CheckEmpty(RefusalProblem(std::chrono::local_days(Date(2000, 1, 1)), { ETomlType::LocalDate }, "a local date"),
+        "and local_days");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, Date_WritesTomlsYearsOnly)
+{
+    // Arrange
+    // The days of 0000-01-01 and 9999-12-31, and those just beyond them
+    std::chrono::sys_days const first = std::chrono::sys_days(Date(0, 1, 1));
+    std::chrono::sys_days const last = std::chrono::sys_days(Date(9999, 12, 31));
+    std::string const outOfRange = "failed: The time point can't be written: TOML's years are from 0 to 9999.";
+    TASWTomlValue kept = "kept";
+
+    // Act
+    TASWTomlResult const unreal = TASWTomlConverter<std::chrono::year_month_day>::ToValue(Date(2023, 2, 30), kept,
+        TASWTomlValueOptions());
+    TASWTomlResult const tooLate = TASWTomlConverter<std::chrono::year_month_day>::ToValue(Date(10000, 1, 1), kept,
+        TASWTomlValueOptions());
+    TASWTomlResult const daysTooLate = TASWTomlConverter<std::chrono::sys_days>::ToValue(last + std::chrono::days(1),
+        kept, TASWTomlValueOptions());
+
+    // Assert
+    CheckEquals("0000-01-01"s, Written(Date(0, 1, 1)), "the first date TOML writes");
+    CheckEquals("9999-12-31"s, Written(Date(9999, 12, 31)), "the last");
+    CheckEquals(ETomlCode::InvalidValue, unreal.Code, "a date that isn't real can't be written");
+    CheckEquals("The date 2023-02-30 can't be written: it isn't a real date."s, unreal.Message, "the message");
+    CheckEquals(ETomlCode::ValueOutOfRange, tooLate.Code, "nor a date after 9999");
+    CheckEquals("The date 10000-01-01 can't be written: TOML's years are from 0 to 9999."s, tooLate.Message,
+        "the message");
+    CheckEquals("failed: The date -0001-12-31 can't be written: TOML's years are from 0 to 9999."s,
+        Written(Date(-1, 12, 31)), "nor one before 0, with its sign");
+    CheckEquals("0000-01-01"s, Written(first), "sys_days of the first date");
+    CheckEquals("9999-12-31"s, Written(last), "and of the last");
+    CheckEquals(outOfRange, Written(first - std::chrono::days(1)), "the day before the first");
+    CheckEquals(outOfRange, Written(last + std::chrono::days(1)), "the day after the last");
+    CheckEquals(ETomlCode::ValueOutOfRange, daysTooLate.Code, "out of range");
+    CheckEquals("0000-01-01"s, Written(std::chrono::local_days(Date(0, 1, 1))), "local_days of the first date");
+    CheckEquals("9999-12-31"s, Written(std::chrono::local_days(Date(9999, 12, 31))), "and of the last");
+    CheckEquals(outOfRange, Written(std::chrono::local_days(Date(10000, 1, 1))), "a local day after the last");
+    CheckEquals(outOfRange, Written(std::chrono::local_days(Date(-1, 12, 31))), "and before the first");
+    CheckTrue(kept == TASWTomlValue("kept"), "a date refused should leave the value as it was");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, Helpers_DateTimeOutOfRange)
+{
+    // Arrange
+    // Units with ranges no standard duration has: counts of seconds and of 100 ns from -10 that TOML ends at 9999,
+    // a count of 7 seconds to 10 that TOML starts at 0000 (its first count there is 2 seconds into the year), and
+    // counts of seconds and nanoseconds that hold more than a day
+    using TUnit = ASWToml::Detail::TDurationUnit;
+    std::int64_t const max = std::numeric_limits<std::int64_t>::max();
+    std::int64_t const min = std::numeric_limits<std::int64_t>::min();
+    TUnit const fromBefore1970{ 1, 1, -10, max };
+    TUnit const ticksFromBefore1970{ 1, 10000000, -10, max };
+    TUnit const sevenSeconds{ 7, 1, min, 10 };
+    TUnit const nanoseconds{ 1, 1000000000, min, max };
+    TUnit const hundredSeconds{ 1, 1, min, 100 };
+    TASWTomlOffsetDateTime const instant{ Date(1979, 5, 27), TimeOfDay(7, 32, 0), std::chrono::minutes(0) };
+    TASWTomlLocalDateTime const local{ Date(1979, 5, 27), TimeOfDay(7, 32, 0) };
+    TASWTomlLocalTime const time = TimeOfDay(7, 32, 0);
+
+    // Act & Assert
+    CheckEquals("The value 1979-05-27T07:32:00Z is out of range: it must be from 1969-12-31T23:59:50Z to "
+        "9999-12-31T23:59:59Z."s, ASWToml::Detail::DateTimeOutOfRange(instant, fromBefore1970).Message,
+        "an instant's range that TOML ends at its last second");
+    CheckEquals("The value 1979-05-27T07:32:00 is out of range: it must be from 1969-12-31T23:59:50 to "
+        "9999-12-31T23:59:59."s, ASWToml::Detail::DateTimeOutOfRange(local, fromBefore1970).Message,
+        "a local date-time's too");
+    CheckEquals("The value 1979-05-27T07:32:00Z is out of range: it must be from 1969-12-31T23:59:59.999999Z to "
+        "9999-12-31T23:59:59.9999999Z."s, ASWToml::Detail::DateTimeOutOfRange(instant, ticksFromBefore1970).Message,
+        "at its last 100 ns");
+    CheckEquals("The value 1979-05-27T07:32:00 is out of range: it must be from 1969-12-31T23:59:59.999999 to "
+        "9999-12-31T23:59:59.9999999."s, ASWToml::Detail::DateTimeOutOfRange(local, ticksFromBefore1970).Message,
+        "a local date-time's too");
+    CheckEquals("The value 1979-05-27T07:32:00Z is out of range: it must be from 0000-01-01T00:00:02Z to "
+        "1970-01-01T00:01:10Z."s, ASWToml::Detail::DateTimeOutOfRange(instant, sevenSeconds).Message,
+        "a range that TOML starts at the unit's first count in the year 0");
+    CheckEquals("The value 1979-05-27T07:32:00 is out of range: it must be from 0000-01-01T00:00:02 to "
+        "1970-01-01T00:01:10."s, ASWToml::Detail::DateTimeOutOfRange(local, sevenSeconds).Message,
+        "a local date-time's too");
+    CheckEquals("The value 07:32:00 is out of range: it must be from 00:00:00 to 00:01:40."s,
+        ASWToml::Detail::DateTimeOutOfRange(time, hundredSeconds).Message, "a time of day's range");
+    CheckEquals("The value 07:32:00 is out of range: it must be from 00:00:00 to 23:59:60."s,
+        ASWToml::Detail::DateTimeOutOfRange(time, fromBefore1970).Message, "one that a day ends at the leap second");
+    CheckEquals("The value 07:32:00 is out of range: it must be from 00:00:00 to 23:59:60.999999999."s,
+        ASWToml::Detail::DateTimeOutOfRange(time, nanoseconds).Message, "at its last nanosecond");
+    CheckEquals(ETomlCode::ValueOutOfRange, ASWToml::Detail::DateTimeOutOfRange(time, nanoseconds).Code, "the code");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, Helpers_TimeOfDayFromCount)
+{
+    // Arrange
+    // Seconds, milliseconds, units of 7 seconds (a day isn't a whole number of them) and the largest unit there is
+    using TUnit = ASWToml::Detail::TDurationUnit;
+    std::int64_t const max = std::numeric_limits<std::int64_t>::max();
+    std::int64_t const min = std::numeric_limits<std::int64_t>::min();
+    TUnit const seconds{ 1, 1, min, max };
+    TUnit const milliseconds{ 1, 1000, min, max };
+    TUnit const sevenSeconds{ 7, 1, min, max };
+    TUnit const largest{ max, 1, min, max };
+    TASWTomlLocalTime time = TimeOfDay(1, 2, 3);
+    TASWTomlLocalTime const kept = time;
+
+    // Act & Assert
+    CheckTrue(ASWToml::Detail::TimeOfDayFromCount(0, seconds, time) && time == TimeOfDay(0, 0, 0), "midnight");
+    CheckTrue(ASWToml::Detail::TimeOfDayFromCount(86399, seconds, time) && time == TimeOfDay(23, 59, 59),
+        "the last second of the day");
+    CheckTrue(ASWToml::Detail::TimeOfDayFromCount(86400, seconds, time) && time == TimeOfDay(23, 59, 60),
+        "a day as the leap second");
+    CheckTrue(ASWToml::Detail::TimeOfDayFromCount(86400500, milliseconds, time) &&
+        time == TimeOfDay(23, 59, 60, 500000000), "with its fraction");
+    CheckTrue(ASWToml::Detail::TimeOfDayFromCount(12342, sevenSeconds, time) && time == TimeOfDay(23, 59, 54),
+        "the last 7 seconds that start in the day");
+    CheckTrue(ASWToml::Detail::TimeOfDayFromCount(0, largest, time) && time == TimeOfDay(0, 0, 0),
+        "the only count of the largest unit that is a time of day");
+
+    time = kept;
+    CheckFalse(ASWToml::Detail::TimeOfDayFromCount(86401, seconds, time), "a day and a second is too late");
+    CheckFalse(ASWToml::Detail::TimeOfDayFromCount(-1, seconds, time), "a second before midnight too early");
+    CheckFalse(ASWToml::Detail::TimeOfDayFromCount(12343, sevenSeconds, time), "86401 seconds in units of 7");
+    CheckFalse(ASWToml::Detail::TimeOfDayFromCount(1, largest, time), "one count of the largest unit");
+    CheckTrue(time == kept, "a count refused should leave the time as it was");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, LocalTime_ReadsLocalDateTimesOnly)
+{
+    // Arrange
+    // Rounded down, before 1970 too; second 60 is the next minute's second 0
+    TASWTomlLocalDateTime const dateTime{ Date(1979, 5, 27), TimeOfDay(7, 32, 0, 500000000) };
+    TASWTomlLocalDateTime const before1970{ Date(1969, 12, 31), TimeOfDay(23, 59, 59, 500000000) };
+    TASWTomlLocalDateTime const leap{ Date(1998, 12, 31), TimeOfDay(23, 59, 60) };
+    TASWTomlOffsetDateTime const instant{ Date(1979, 5, 27), TimeOfDay(7, 32, 0), std::chrono::minutes(0) };
+    TASWTomlLocalDateTime const unreal{ Date(2023, 2, 30), TimeOfDay(0, 0, 0) };
+    std::chrono::local_seconds const expected = std::chrono::local_days(Date(1979, 5, 27)) + std::chrono::seconds(27120);
+    std::chrono::local_seconds const kept{ std::chrono::seconds(1) };
+    std::chrono::local_seconds seconds;
+    std::chrono::local_time<std::chrono::milliseconds> milliseconds;
+    std::chrono::local_seconds early;
+    std::chrono::local_seconds leapRead;
+    std::chrono::local_seconds refused = kept;
+
+    // Act
+    TASWTomlResult const readSeconds = TASWTomlConverter<std::chrono::local_seconds>::FromValue(dateTime, seconds,
+        TASWTomlValueOptions());
+    TASWTomlResult const readMilliseconds = TASWTomlConverter<std::chrono::local_time<std::chrono::milliseconds> >::
+        FromValue(dateTime, milliseconds, TASWTomlValueOptions());
+    TASWTomlResult const readEarly = TASWTomlConverter<std::chrono::local_seconds>::FromValue(before1970, early,
+        TASWTomlValueOptions());
+    TASWTomlResult const readLeap = TASWTomlConverter<std::chrono::local_seconds>::FromValue(leap, leapRead,
+        TASWTomlValueOptions());
+    TASWTomlResult const offset = TASWTomlConverter<std::chrono::local_seconds>::FromValue(instant, refused,
+        TASWTomlValueOptions());
+    TASWTomlResult const invalid = TASWTomlConverter<std::chrono::local_seconds>::FromValue(unreal, refused,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(readSeconds.IsOk() && seconds == expected, "a local date-time should read as local_seconds rounded down");
+    CheckTrue(readMilliseconds.IsOk() && milliseconds == expected + std::chrono::milliseconds(500),
+        "and as milliseconds with its fraction");
+    CheckEquals(std::int64_t(-1), static_cast<std::int64_t>(early.time_since_epoch().count()),
+        "half a second before 1970 should round down to the second before");
+    CheckTrue(readEarly.IsOk(), "that reads");
+    CheckTrue(readLeap.IsOk() && leapRead == std::chrono::local_days(Date(1999, 1, 1)),
+        "a leap second should read as the next minute's second 0");
+    CheckEquals("The value 1979-05-27T07:32:00Z is an offset date-time, not a local date-time."s, offset.Message,
+        "an offset date-time isn't a local one: its offset would be lost");
+    CheckEquals(ETomlCode::InvalidValue, invalid.Code, "a local date-time that isn't valid has no time point");
+    CheckEquals("The value of type LocalDateTime isn't a valid date-time."s, invalid.Message, "the message");
+    CheckTrue(refused == kept, "a value refused should leave the time point as it was");
+    CheckEmpty(RefusalProblem(kept, { ETomlType::LocalDateTime }, "a local date-time"), "every other type");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, LocalTime_ReadsWhatItsDurationCounts)
+{
+    // Arrange
+    // Nanoseconds count only from 1677 to 2262; seconds count every date-time TOML writes; 32-bit minutes count back
+    // past 0000 but forward only to 6053
+    using TMinutes32 = std::chrono::duration<std::int32_t, std::ratio<60> >;
+    TASWTomlLocalDateTime const late{ Date(9999, 12, 31), TimeOfDay(23, 59, 59) };
+    std::chrono::local_time<std::chrono::nanoseconds> nanoseconds;
+    std::chrono::local_seconds seconds;
+    std::chrono::local_time<TMinutes32> minutes;
+
+    // Act
+    TASWTomlResult const asNanoseconds = TASWTomlConverter<std::chrono::local_time<std::chrono::nanoseconds> >::
+        FromValue(late, nanoseconds, TASWTomlValueOptions());
+    TASWTomlResult const asSeconds = TASWTomlConverter<std::chrono::local_seconds>::FromValue(late, seconds,
+        TASWTomlValueOptions());
+    TASWTomlResult const asMinutes = TASWTomlConverter<std::chrono::local_time<TMinutes32> >::FromValue(late, minutes,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckEquals(ETomlCode::ValueOutOfRange, asNanoseconds.Code, "9999 should be beyond nanoseconds");
+    CheckEquals("The value 9999-12-31T23:59:59 is out of range: it must be from 1677-09-21T00:12:43.145224192 to "
+        "2262-04-11T23:47:16.854775807."s, asNanoseconds.Message, "the message gives the range nanoseconds hold");
+    CheckTrue(asSeconds.IsOk() && seconds.time_since_epoch() == std::chrono::seconds(253402300799),
+        "seconds should hold it");
+    CheckEquals("9999-12-31T23:59:59"s, Written(seconds), "and write it back");
+    CheckEquals("2262-04-11T23:47:16.854775807"s, Written(std::chrono::local_time<std::chrono::nanoseconds>::max()),
+        "the last nanosecond");
+    CheckEquals("failed: The time point can't be written: TOML's years are from 0 to 9999."s,
+        Written(seconds + std::chrono::seconds(1)), "a second after 9999 can't be written");
+    CheckEquals("The value 9999-12-31T23:59:59 is out of range: it must be from 0000-01-01T00:00:00 to "
+        "6053-01-23T02:07:00."s, asMinutes.Message, "a range that TOML ends on one side");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, RoundTrip_EveryType_ThroughADocument)
+{
+    // Arrange
+    // A value of each type and the line it is written as; an instant in UTC
+    std::chrono::sys_seconds const instant = std::chrono::sys_days(Date(1979, 5, 27)) + std::chrono::seconds(27120);
+    std::chrono::local_seconds const local = std::chrono::local_days(Date(1979, 5, 27)) + std::chrono::seconds(27120);
+    std::chrono::sys_time<std::chrono::milliseconds> const withFraction = instant + std::chrono::milliseconds(250);
+    std::chrono::system_clock::time_point const clock = std::chrono::time_point_cast<
+        std::chrono::system_clock::duration>(instant) + std::chrono::microseconds(5);
+    std::chrono::local_time<std::chrono::microseconds> const localFraction = local + std::chrono::microseconds(5);
+    std::chrono::hh_mm_ss<std::chrono::seconds> const time{ std::chrono::seconds(27120) };
+    std::chrono::hh_mm_ss<std::chrono::nanoseconds> const timeFraction{ std::chrono::nanoseconds(27120000000001) };
+    std::chrono::minutes const offset{ -420 };
+    TASWTomlOffsetDateTime const offsetDateTime{ Date(1979, 5, 27), TimeOfDay(0, 32, 0, 999999), offset };
+    TASWTomlLocalDateTime const localDateTime{ Date(1979, 5, 27), TimeOfDay(7, 32, 0) };
+    TASWTomlLocalTime const localTime = TimeOfDay(23, 59, 60, 5);
+    std::string text;
+
+    // Act & Assert
+    std::chrono::year_month_day date{};
+    CheckTrue(ThroughDocument(Date(1979, 5, 27), date, text).IsOk() && date == Date(1979, 5, 27), "a year_month_day");
+    CheckEquals("v = 1979-05-27"s, FirstLine(text), "as a local date");
+    std::chrono::sys_days sysDays;
+    CheckTrue(ThroughDocument(std::chrono::sys_days(Date(1979, 5, 27)), sysDays, text).IsOk() &&
+        sysDays == std::chrono::sys_days(Date(1979, 5, 27)), "sys_days");
+    CheckEquals("v = 1979-05-27"s, FirstLine(text), "as a local date");
+    std::chrono::local_days localDays;
+    CheckTrue(ThroughDocument(std::chrono::local_days(Date(1979, 5, 27)), localDays, text).IsOk() &&
+        localDays == std::chrono::local_days(Date(1979, 5, 27)), "local_days");
+    CheckEquals("v = 1979-05-27"s, FirstLine(text), "as a local date");
+    std::chrono::sys_seconds instantRead;
+    CheckTrue(ThroughDocument(instant, instantRead, text).IsOk() && instantRead == instant, "sys_seconds");
+    CheckEquals("v = 1979-05-27T07:32:00Z"s, FirstLine(text), "as an offset date-time in UTC");
+    std::chrono::sys_time<std::chrono::milliseconds> withFractionRead;
+    CheckTrue(ThroughDocument(withFraction, withFractionRead, text).IsOk() && withFractionRead == withFraction,
+        "milliseconds");
+    CheckEquals("v = 1979-05-27T07:32:00.25Z"s, FirstLine(text), "with the fraction");
+    std::chrono::system_clock::time_point clockRead;
+    CheckTrue(ThroughDocument(clock, clockRead, text).IsOk() && clockRead == clock, "system_clock::time_point");
+    CheckEquals("v = 1979-05-27T07:32:00.000005Z"s, FirstLine(text), "with the fraction");
+    std::chrono::local_seconds localRead;
+    CheckTrue(ThroughDocument(local, localRead, text).IsOk() && localRead == local, "local_seconds");
+    CheckEquals("v = 1979-05-27T07:32:00"s, FirstLine(text), "as a local date-time");
+    std::chrono::local_time<std::chrono::microseconds> localFractionRead;
+    CheckTrue(ThroughDocument(localFraction, localFractionRead, text).IsOk() && localFractionRead == localFraction,
+        "microseconds");
+    CheckEquals("v = 1979-05-27T07:32:00.000005"s, FirstLine(text), "with the fraction");
+    std::chrono::hh_mm_ss<std::chrono::seconds> timeRead;
+    CheckTrue(ThroughDocument(time, timeRead, text).IsOk() && timeRead.to_duration() == time.to_duration(),
+        "hh_mm_ss of seconds");
+    CheckEquals("v = 07:32:00"s, FirstLine(text), "as a local time");
+    std::chrono::hh_mm_ss<std::chrono::nanoseconds> timeFractionRead;
+    CheckTrue(ThroughDocument(timeFraction, timeFractionRead, text).IsOk() &&
+        timeFractionRead.to_duration() == timeFraction.to_duration(), "hh_mm_ss of nanoseconds");
+    CheckEquals("v = 07:32:00.000000001"s, FirstLine(text), "with the fraction");
+    TASWTomlOffsetDateTime offsetDateTimeRead;
+    CheckTrue(ThroughDocument(offsetDateTime, offsetDateTimeRead, text).IsOk() && offsetDateTimeRead == offsetDateTime,
+        "an offset date-time");
+    CheckEquals("v = 1979-05-27T00:32:00.000999999-07:00"s, FirstLine(text), "with its offset");
+    TASWTomlLocalDateTime localDateTimeRead;
+    CheckTrue(ThroughDocument(localDateTime, localDateTimeRead, text).IsOk() && localDateTimeRead == localDateTime,
+        "a local date-time");
+    CheckEquals("v = 1979-05-27T07:32:00"s, FirstLine(text), "as it is");
+    TASWTomlLocalTime localTimeRead;
+    CheckTrue(ThroughDocument(localTime, localTimeRead, text).IsOk() && localTimeRead == localTime, "a local time");
+    CheckEquals("v = 23:59:60.000000005"s, FirstLine(text), "as it is, a leap second too");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, SysTime_ReadsTheInstantAtAnyOffset)
+{
+    // Arrange
+    // 00:32 at -07:00 is 07:32 in UTC; rounded down, before 1970 too; second 60 is the next minute's second 0
+    std::chrono::minutes const offset{ -420 };
+    std::chrono::minutes const utc{ 0 };
+    TASWTomlOffsetDateTime const dateTime{ Date(1979, 5, 27), TimeOfDay(0, 32, 0, 999999999), offset };
+    TASWTomlOffsetDateTime const before1970{ Date(1969, 12, 31), TimeOfDay(23, 59, 59, 500000000), utc };
+    TASWTomlOffsetDateTime const leap{ Date(1998, 12, 31), TimeOfDay(23, 59, 60), utc };
+    std::chrono::sys_seconds const expected = std::chrono::sys_days(Date(1979, 5, 27)) + std::chrono::seconds(27120);
+    TASWTomlLocalDateTime const local{ Date(1979, 5, 27), TimeOfDay(7, 32, 0) };
+    TASWTomlOffsetDateTime const dayOffset{ Date(1979, 5, 27), TimeOfDay(0, 0, 0), std::chrono::minutes(1440) };
+    std::chrono::sys_seconds const kept{ std::chrono::seconds(1) };
+    std::chrono::sys_seconds seconds;
+    std::chrono::sys_time<std::chrono::milliseconds> milliseconds;
+    std::chrono::sys_seconds early;
+    std::chrono::sys_seconds leapRead;
+    std::chrono::sys_seconds refused = kept;
+
+    // Act
+    TASWTomlResult const readSeconds = TASWTomlConverter<std::chrono::sys_seconds>::FromValue(dateTime, seconds,
+        TASWTomlValueOptions());
+    TASWTomlResult const readMilliseconds = TASWTomlConverter<std::chrono::sys_time<std::chrono::milliseconds> >::
+        FromValue(dateTime, milliseconds, TASWTomlValueOptions());
+    TASWTomlResult const readEarly = TASWTomlConverter<std::chrono::sys_seconds>::FromValue(before1970, early,
+        TASWTomlValueOptions());
+    TASWTomlResult const readLeap = TASWTomlConverter<std::chrono::sys_seconds>::FromValue(leap, leapRead,
+        TASWTomlValueOptions());
+    TASWTomlResult const localRead = TASWTomlConverter<std::chrono::sys_seconds>::FromValue(local, refused,
+        TASWTomlValueOptions());
+    TASWTomlResult const invalid = TASWTomlConverter<std::chrono::sys_seconds>::FromValue(dayOffset, refused,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(readSeconds.IsOk() && seconds == expected, "the instant in UTC, rounded down to seconds");
+    CheckTrue(readMilliseconds.IsOk() && milliseconds == expected + std::chrono::milliseconds(999),
+        "and to milliseconds");
+    CheckTrue(readEarly.IsOk() && early.time_since_epoch() == std::chrono::seconds(-1),
+        "half a second before 1970 should round down to the second before");
+    CheckTrue(readLeap.IsOk() && leapRead == std::chrono::sys_days(Date(1999, 1, 1)),
+        "a leap second should read as the next minute's second 0");
+    CheckEquals("The value 1979-05-27T07:32:00 is a local date-time, not an offset date-time."s, localRead.Message,
+        "a local date-time isn't an instant: its offset is unknown");
+    CheckEquals(ETomlCode::InvalidValue, invalid.Code, "an offset date-time that isn't valid has no instant");
+    CheckEquals("The value of type OffsetDateTime isn't a valid date-time."s, invalid.Message, "the message");
+    CheckTrue(refused == kept, "a value refused should leave the time point as it was");
+    CheckEmpty(RefusalProblem(kept, { ETomlType::OffsetDateTime }, "an offset date-time"), "every other type");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, SysTime_ReadsWhatItsDurationCounts)
+{
+    // Arrange
+    // Nanoseconds count only from 1677 to 2262, and so does system_clock with libstdc++; seconds count every instant
+    // TOML writes; 32-bit minutes count back past 0000 but forward only to 6053
+    using TMinutes32 = std::chrono::duration<std::int32_t, std::ratio<60> >;
+    TASWTomlOffsetDateTime const late{ Date(9999, 12, 31), TimeOfDay(23, 59, 59), std::chrono::minutes(0) };
+    TASWTomlOffsetDateTime const first{ Date(0, 1, 1), TimeOfDay(0, 0, 0), std::chrono::minutes(0) };
+    std::chrono::sys_time<std::chrono::nanoseconds> nanoseconds;
+    std::chrono::sys_seconds seconds;
+    std::chrono::sys_seconds firstSeconds;
+    std::chrono::system_clock::time_point clock;
+    std::chrono::sys_time<TMinutes32> minutes;
+
+    // Act
+    TASWTomlResult const asNanoseconds = TASWTomlConverter<std::chrono::sys_time<std::chrono::nanoseconds> >::
+        FromValue(late, nanoseconds, TASWTomlValueOptions());
+    TASWTomlResult const asSeconds = TASWTomlConverter<std::chrono::sys_seconds>::FromValue(late, seconds,
+        TASWTomlValueOptions());
+    TASWTomlResult const firstAsSeconds = TASWTomlConverter<std::chrono::sys_seconds>::FromValue(first, firstSeconds,
+        TASWTomlValueOptions());
+    TASWTomlResult const asClock = TASWTomlConverter<std::chrono::system_clock::time_point>::FromValue(late, clock,
+        TASWTomlValueOptions());
+    TASWTomlResult const asMinutes = TASWTomlConverter<std::chrono::sys_time<TMinutes32> >::FromValue(late, minutes,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckEquals(ETomlCode::ValueOutOfRange, asNanoseconds.Code, "9999 should be beyond nanoseconds");
+    CheckEquals("The value 9999-12-31T23:59:59Z is out of range: it must be from 1677-09-21T00:12:43.145224192Z to "
+        "2262-04-11T23:47:16.854775807Z."s, asNanoseconds.Message, "the message gives the range nanoseconds hold");
+    CheckTrue(asSeconds.IsOk() && seconds.time_since_epoch() == std::chrono::seconds(253402300799),
+        "seconds should hold the last second TOML writes");
+    CheckTrue(firstAsSeconds.IsOk() && firstSeconds.time_since_epoch() == std::chrono::seconds(-62167219200),
+        "and the first");
+    if (std::is_same_v<std::chrono::system_clock::duration, std::chrono::nanoseconds>)
+        CheckEquals(ETomlCode::ValueOutOfRange, asClock.Code, "system_clock counts nanoseconds here (libstdc++)");
+    else
+        CheckTrue(asClock.IsOk() && clock == seconds, "system_clock holds 9999 here (libc++, MSVC)");
+
+    CheckEquals("The value 9999-12-31T23:59:59Z is out of range: it must be from 0000-01-01T00:00:00Z to "
+        "6053-01-23T02:07:00Z."s, asMinutes.Message, "a range that TOML ends on one side");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, SysTime_WritesInUtc)
+{
+    // Arrange
+    // The first and last seconds TOML writes, and the seconds beyond them
+    std::chrono::sys_seconds const first{ std::chrono::seconds(-62167219200) };
+    std::chrono::sys_seconds const last{ std::chrono::seconds(253402300799) };
+    std::string const outOfRange = "failed: The time point can't be written: TOML's years are from 0 to 9999.";
+    TASWTomlValue kept = "kept";
+
+    // Act
+    TASWTomlResult const tooLate = TASWTomlConverter<std::chrono::sys_seconds>::ToValue(last + std::chrono::seconds(1),
+        kept, TASWTomlValueOptions());
+
+    // Assert
+    CheckEquals("0000-01-01T00:00:00Z"s, Written(first), "the first second, in UTC");
+    CheckEquals("9999-12-31T23:59:59Z"s, Written(last), "the last");
+    CheckEquals(outOfRange, Written(first - std::chrono::seconds(1)), "the second before the first");
+    CheckEquals(outOfRange, Written(last + std::chrono::seconds(1)), "the second after the last");
+    CheckEquals(ETomlCode::ValueOutOfRange, tooLate.Code, "out of range");
+    CheckTrue(kept == TASWTomlValue("kept"), "a time point refused should leave the value as it was");
+    CheckEquals("1677-09-21T00:12:43.145224192Z"s, Written(std::chrono::sys_time<std::chrono::nanoseconds>::min()),
+        "the first nanosecond");
+    CheckEquals("1969-12-31T23:59:59.999Z"s, Written(std::chrono::sys_time<std::chrono::milliseconds>(
+        std::chrono::milliseconds(-1))), "a millisecond before 1970");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, TimeOfDay_ReadsLocalTimesOnly)
+{
+    // Arrange
+    // Rounded down to the duration; 23:59:60 is 24:00:00, as hh_mm_ss makes it; a count of 8 bits holds only 127
+    // seconds
+    using TSeconds8 = std::chrono::duration<std::int8_t>;
+    std::chrono::hh_mm_ss<std::chrono::milliseconds> milliseconds;
+    std::chrono::hh_mm_ss<std::chrono::seconds> leap;
+    std::chrono::hh_mm_ss<TSeconds8> small;
+    std::chrono::hh_mm_ss<std::chrono::seconds> refused{ std::chrono::seconds(5) };
+
+    // Act
+    TASWTomlResult const readMilliseconds = TASWTomlConverter<std::chrono::hh_mm_ss<std::chrono::milliseconds> >::
+        FromValue(TimeOfDay(7, 32, 0, 123456789), milliseconds, TASWTomlValueOptions());
+    TASWTomlResult const readLeap = TASWTomlConverter<std::chrono::hh_mm_ss<std::chrono::seconds> >::FromValue(
+        TimeOfDay(23, 59, 60), leap, TASWTomlValueOptions());
+    TASWTomlResult const tooFar = TASWTomlConverter<std::chrono::hh_mm_ss<TSeconds8> >::FromValue(TimeOfDay(0, 3, 0),
+        small, TASWTomlValueOptions());
+    TASWTomlResult const dateTime = TASWTomlConverter<std::chrono::hh_mm_ss<std::chrono::seconds> >::FromValue(
+        TASWTomlLocalDateTime(), refused, TASWTomlValueOptions());
+    TASWTomlResult const text = TASWTomlConverter<std::chrono::hh_mm_ss<std::chrono::seconds> >::FromValue("07:32:00",
+        refused, TASWTomlValueOptions());
+    TASWTomlResult const invalid = TASWTomlConverter<std::chrono::hh_mm_ss<std::chrono::seconds> >::FromValue(
+        TimeOfDay(24, 0, 0), refused, TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(readMilliseconds.IsOk() && milliseconds.to_duration() == std::chrono::milliseconds(27120123),
+        "a local time should read rounded down to milliseconds");
+    CheckTrue(readLeap.IsOk() && leap.hours() == std::chrono::hours(24) && leap.minutes() == std::chrono::minutes(0),
+        "a leap second should read as 24:00:00");
+    CheckEquals(ETomlCode::ValueOutOfRange, tooFar.Code, "a time an 8-bit count can't hold should be out of range");
+    CheckEquals("The value 00:03:00 is out of range: it must be from 00:00:00 to 00:02:07."s, tooFar.Message,
+        "the message gives the range the count holds");
+    CheckEquals("The value 1970-01-01T00:00:00 is a local date-time, not a local time."s, dateTime.Message,
+        "a local date-time isn't a time of day");
+    CheckEquals(ETomlCode::TypeMismatch, text.Code, "nor is a string");
+    CheckEquals(ETomlCode::InvalidValue, invalid.Code, "a time that isn't valid has no duration");
+    CheckEquals("The value of type LocalTime isn't a valid time."s, invalid.Message, "the message");
+    CheckTrue(refused.to_duration() == std::chrono::seconds(5), "a value refused should leave the time as it was");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, TimeOfDay_WritesUpToTheLeapSecond)
+{
+    // Arrange
+    // 24:00:00 up to a second more is what 23:59:60 reads as, so it is written as that
+    std::chrono::hh_mm_ss<std::chrono::milliseconds> const leapHalf{ std::chrono::milliseconds(86400500) };
+    std::chrono::hh_mm_ss<std::chrono::milliseconds> leapHalfBack;
+    std::string text;
+    std::string const outOfRange = "failed: The time of day can't be written: it must be at least 0 and less than a "
+        "day and a second (24:00:00 is written as the leap second 23:59:60).";
+    TASWTomlValue kept = "kept";
+
+    // Act
+    TASWTomlResult const leapThrough = ThroughDocument(leapHalf, leapHalfBack, text);
+    TASWTomlResult const tooLate = TASWTomlConverter<std::chrono::hh_mm_ss<std::chrono::seconds> >::ToValue(
+        std::chrono::hh_mm_ss<std::chrono::seconds>(std::chrono::seconds(86401)), kept, TASWTomlValueOptions());
+
+    // Assert
+    CheckEquals("00:00:00"s, Written(std::chrono::hh_mm_ss<std::chrono::seconds>(std::chrono::seconds(0))), "midnight");
+    CheckEquals("23:59:59.999"s, Written(std::chrono::hh_mm_ss<std::chrono::milliseconds>(std::chrono::milliseconds(
+        86399999))), "the last millisecond of the day");
+    CheckEquals("01:30:00"s, Written(std::chrono::hh_mm_ss<std::chrono::minutes>(std::chrono::minutes(90))),
+        "a time of day in minutes");
+    CheckEquals("23:59:60"s, Written(std::chrono::hh_mm_ss<std::chrono::seconds>(std::chrono::hours(24))),
+        "24:00:00 as the leap second");
+    CheckTrue(leapThrough.IsOk() && leapHalfBack.to_duration() == leapHalf.to_duration(),
+        "24:00:00.5 should go through a document");
+    CheckEquals("v = 23:59:60.5"s, FirstLine(text), "as 23:59:60.5");
+    CheckEquals(outOfRange, Written(std::chrono::hh_mm_ss<std::chrono::seconds>(std::chrono::seconds(-1))),
+        "a negative time can't be written");
+    CheckEquals(outOfRange, Written(std::chrono::hh_mm_ss<std::chrono::seconds>(std::chrono::seconds(86401))),
+        "nor a day and a second");
+    CheckEquals(ETomlCode::ValueOutOfRange, tooLate.Code, "out of range");
+    CheckTrue(kept == TASWTomlValue("kept"), "a time refused should leave the value as it was");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DateTimeConverters, TomlTypes_AsTheyAre)
+{
+    // Arrange
+    TASWTomlOffsetDateTime const offsetDateTime{ Date(1979, 5, 27), TimeOfDay(0, 32, 0), std::chrono::minutes(-420) };
+    TASWTomlLocalDateTime const localDateTime{ Date(1979, 5, 27), TimeOfDay(7, 32, 0) };
+    TASWTomlLocalTime const localTime = TimeOfDay(23, 59, 60);
+    TASWTomlOffsetDateTime const dayOffset{ Date(1979, 5, 27), TimeOfDay(0, 0, 0), std::chrono::minutes(1440) };
+    TASWTomlLocalDateTime const unrealDate{ Date(2023, 2, 30), TimeOfDay(0, 0, 0) };
+    TASWTomlOffsetDateTime offsetDateTimeRead;
+    TASWTomlLocalDateTime localDateTimeRead;
+    TASWTomlLocalTime localTimeRead;
+    TASWTomlValue kept = "kept";
+
+    // Act
+    TASWTomlResult const readOffset = TASWTomlConverter<TASWTomlOffsetDateTime>::FromValue(offsetDateTime,
+        offsetDateTimeRead, TASWTomlValueOptions());
+    TASWTomlResult const readLocal = TASWTomlConverter<TASWTomlLocalDateTime>::FromValue(localDateTime,
+        localDateTimeRead, TASWTomlValueOptions());
+    TASWTomlResult const readTime = TASWTomlConverter<TASWTomlLocalTime>::FromValue(localTime, localTimeRead,
+        TASWTomlValueOptions());
+    TASWTomlResult const badOffset = TASWTomlConverter<TASWTomlOffsetDateTime>::ToValue(dayOffset, kept,
+        TASWTomlValueOptions());
+    TASWTomlResult const badDate = TASWTomlConverter<TASWTomlLocalDateTime>::ToValue(unrealDate, kept,
+        TASWTomlValueOptions());
+    TASWTomlResult const badTime = TASWTomlConverter<TASWTomlLocalTime>::ToValue(TimeOfDay(24, 0, 0), kept,
+        TASWTomlValueOptions());
+
+    // Assert
+    CheckTrue(readOffset.IsOk() && offsetDateTimeRead == offsetDateTime, "an offset date-time should read as it is");
+    CheckTrue(readLocal.IsOk() && localDateTimeRead == localDateTime, "a local date-time too");
+    CheckTrue(readTime.IsOk() && localTimeRead == localTime, "and a local time, a leap second too");
+    CheckEquals("1979-05-27T00:32:00-07:00"s, Written(offsetDateTime), "written with its offset");
+    CheckEquals("1979-05-27T07:32:00"s, Written(localDateTime), "a local date-time written as it is");
+    CheckEquals("23:59:60"s, Written(localTime), "a local time written as it is");
+    CheckEquals(ETomlCode::InvalidValue, badOffset.Code, "an offset of a day can't be written");
+    CheckEquals("The offset can't be written: it must be from -23:59 to +23:59."s, badOffset.Message,
+        "the writer's message");
+    CheckEquals("The date can't be written: it must be a real date with a year from 0 to 9999."s, badDate.Message,
+        "nor a date that isn't real");
+    CheckEquals(ETomlCode::InvalidValue, badTime.Code, "nor a time that isn't valid");
+    CheckTrue(kept == TASWTomlValue("kept"), "a value refused should leave the value as it was");
+    CheckEmpty(RefusalProblem(offsetDateTime, { ETomlType::OffsetDateTime }, "an offset date-time"),
+        "an offset date-time refuses the other types");
+    CheckEmpty(RefusalProblem(localDateTime, { ETomlType::LocalDateTime }, "a local date-time"),
+        "a local date-time too");
+    CheckEmpty(RefusalProblem(localTime, { ETomlType::LocalTime }, "a local time"), "and a local time");
 }
 //---------------------------------------------------------------------------
 
@@ -1863,6 +2502,7 @@ ASW_TEST(TTest_ASWToml_TextConverters, Value_AsItIs)
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_BoolConverter, "Converters")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DateTimeConverters, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_EnumConverters, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_FloatConverters, "Converters")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_IntegerConverters, "Converters")

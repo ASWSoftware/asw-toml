@@ -207,10 +207,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the enum, returning its `TASWTomlEnumName<T>`s: a string that is a name with the ASCII letters'
   case ignored, or the number of a value listed with a name, reads; the first name listed for a
   value is written, and a value without one can't be; an enum without names converts as an integer
-  of its underlying type, so `std::byte` is an integer from 0 to 255), `std::string` and
-  `std::u8string` (strings only; text that isn't valid UTF-8 can't be written) and
-  `std::filesystem::path` (a string, the path in UTF-8 on every platform, so a Windows path is
-  written as `'C:\Users\me'`; a path that wouldn't read back the same can't be written). An
+  of its underlying type, so `std::byte` is an integer from 0 to 255), the TOML date and time types
+  (as they are) and the `std::chrono` ones (`year_month_day`, `sys_days` and `local_days` as a local
+  date; `sys_time<D>`, such as `system_clock::time_point` and `sys_seconds`, as an offset date-time,
+  read as the instant at any offset and written in UTC; `local_time<D>` as a local date-time;
+  `hh_mm_ss<D>` as a local time, 24:00:00, which 23:59:60 reads as, written as 23:59:60; each read
+  rounded down to D; another TOML date or time type is `TypeMismatch`, and a value outside the years
+  0 to 9999 or one D can't count is `ValueOutOfRange`: `system_clock` counts nanoseconds with
+  libstdc++, so it holds only 1677 to 2262 there, while `sys_seconds` holds every instant TOML
+  writes), `std::string` and `std::u8string` (strings only; text that isn't valid UTF-8 can't be
+  written) and `std::filesystem::path` (a string, the path in UTF-8 on every platform, so a Windows
+  path is written as `'C:\Users\me'`; a path that wouldn't read back the same can't be written). An
   application adds its own by specializing the template in namespace `ASWToml`, for one type or,
   with a requires clause, for a group of types.
 

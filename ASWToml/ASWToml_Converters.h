@@ -8,9 +8,10 @@ TASWTomlConverter<T>, which converts a value of an application's type T to
 and from a TASWTomlValue, and the concept TomlConvertible, which says that a
 type has one. The library has converters for TASWTomlValue itself,
 std::string, std::u8string, std::filesystem::path, bool, the integer types,
-float, double and enums (by name when the application gives the enum names,
-see TASWTomlEnumName, else as integers); an application adds its own by
-specializing TASWTomlConverter for its type.
+float, double, enums (by name when the application gives the enum names,
+see TASWTomlEnumName, else as integers), the TOML date and time types and
+the std::chrono dates, time points and times of day; an application adds its
+own by specializing TASWTomlConverter for its type.
 
 Requires C++ 20 or higher.
 
@@ -28,11 +29,13 @@ SPDX-License-Identifier: MIT
 #ifndef ASWToml_ConvertersH
 #define ASWToml_ConvertersH
 //---------------------------------------------------------------------------
+#include <chrono>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -145,6 +148,12 @@ concept EnumWithNames = std::is_enum_v<T> && std::same_as<T, std::remove_cv_t<T>
 template <typename T>
 concept EnumWithoutNames = std::is_enum_v<T> && std::same_as<T, std::remove_cv_t<T> > && !EnumWithNames<T>;
 
+// The ValueOutOfRange result of reading 'value', an offset date-time, a local date-time or a local time, as a type
+// that counts in 'unit' and can't hold it: the message gives the first and last values the unit's count holds, as far
+// as TOML's years 0 to 9999 (or a day, up to the leap second 23:59:60) go, e.g. "The value 9999-12-31T00:00:00Z is
+// out of range: it must be from 1677-09-21T00:12:43.145224192Z to 2262-04-11T23:47:16.854775807Z." for nanoseconds
+TASWTomlResult DateTimeOutOfRange(TASWTomlValue const& value, TDurationUnit const& unit);
+
 // 'result' (a failure of a part of a value) as the failure of the array that holds it as its element 'index':
 // "[index]" put in front of its Path, e.g. [2] or [2].port
 TASWTomlResult ElementFailure(TASWTomlResult result, std::size_t index);
@@ -170,6 +179,17 @@ bool IsEnumName(std::string_view text, std::string_view name) noexcept;
 // can be, else a basic string (each byte of it that isn't valid UTF-8 as '?'), put in front of its Path, e.g. port,
 // "host name" or servers[2]
 TASWTomlResult KeyFailure(TASWTomlResult result, std::string_view key);
+
+// Sets 'time' to the time of day 'count' units of 'unit' after midnight and returns true, or returns false (and leaves
+// 'time' as it was) when that is before midnight or a day and a second or more after it. From a day on, the time is
+// the leap second 23:59:60 (and the fraction past a day), which a local time of 23:59:60 reads back as.
+bool TimeOfDayFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalTime& time) noexcept;
+
+// The ValueOutOfRange result of writing a time of day that is negative or a day and a second or more
+TASWTomlResult TimeOfDayOutOfRange();
+
+// The ValueOutOfRange result of writing a date or time point outside the years 0 to 9999, which TOML writes
+TASWTomlResult TimePointOutOfRange();
 
 // The TOML type of 'value' with an article, as messages name it: "a string", "an integer", "a float", "a boolean", "an
 // offset date-time", "a local date-time", "a local date", "a local time", "an array" or "a table"
@@ -239,6 +259,54 @@ struct TIntegerConverter
 template <typename T>
 concept TomlConvertible = std::same_as<Detail::TFromValueResult<T>, TASWTomlResult> &&
     std::same_as<Detail::TToValueResult<T>, TASWTomlResult>;
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<TASWTomlLocalDateTime>
+//
+// A local date-time, as it is, both ways; any other type is TypeMismatch, an offset date-time too. Writing one that
+// isn't valid (see TASWTomlLocalDateTime::IsValid()) is InvalidValue.
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TASWTomlConverter<TASWTomlLocalDateTime>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, TASWTomlLocalDateTime& out,
+        TASWTomlValueOptions const& options);
+    static TASWTomlResult ToValue(TASWTomlLocalDateTime const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<TASWTomlLocalTime>
+//
+// A local time, as it is, both ways; any other type is TypeMismatch. Writing one that isn't valid (see
+// TASWTomlLocalTime::IsValid()) is InvalidValue.
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TASWTomlConverter<TASWTomlLocalTime>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, TASWTomlLocalTime& out,
+        TASWTomlValueOptions const& options);
+    static TASWTomlResult ToValue(TASWTomlLocalTime const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<TASWTomlOffsetDateTime>
+//
+// An offset date-time, as it is (with its offset), both ways; any other type is TypeMismatch, a local date-time too.
+// Writing one that isn't valid (see TASWTomlOffsetDateTime::IsValid()) is InvalidValue.
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TASWTomlConverter<TASWTomlOffsetDateTime>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, TASWTomlOffsetDateTime& out,
+        TASWTomlValueOptions const& options);
+    static TASWTomlResult ToValue(TASWTomlOffsetDateTime const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options);
+};
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -452,6 +520,194 @@ struct TASWTomlConverter<float>
 template <Detail::ConvertibleInteger T>
 struct TASWTomlConverter<T> : Detail::TIntegerConverter<T>
 {
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::hh_mm_ss<D> >
+//
+// A local time, both ways, for a duration D the date and time types convert (see Detail::TomlDuration, e.g. seconds
+// or nanoseconds); any other type is TypeMismatch. Reads the time rounded down to D (23:59:60, a leap second, is
+// 24:00:00, as hh_mm_ss makes 24 hours); a time D's count can't hold is ValueOutOfRange. Writes the time of day, from
+// 24:00:00 on as 23:59:60 (and the fraction), so what was read reads back the same; one that is negative or a day and a
+// second or more is ValueOutOfRange.
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::TomlDuration D>
+struct TASWTomlConverter<std::chrono::hh_mm_ss<D> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::chrono::hh_mm_ss<D>& out,
+        TASWTomlValueOptions const& /*options*/)
+    {
+        TASWTomlLocalTime const* const time = value.AsLocalTime();
+        if (time == nullptr)
+            return Detail::TypeMismatch(value, "a local time");
+
+        if (!time->IsValid())
+            return Detail::ValueFailure(ETomlCode::InvalidValue, value, "isn't a valid time.");
+
+        std::optional<D> const sinceMidnight = time->ToDuration<D>();
+        if (!sinceMidnight)
+            return Detail::DateTimeOutOfRange(value, Detail::DurationUnit<D>());
+
+        out = std::chrono::hh_mm_ss<D>(*sinceMidnight);
+
+        return TASWTomlResult();
+    }
+
+    static TASWTomlResult ToValue(std::chrono::hh_mm_ss<D> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& /*options*/)
+    {
+        using TPrecision = typename std::chrono::hh_mm_ss<D>::precision;
+
+        std::int64_t const count = static_cast<std::int64_t>(in.to_duration().count());
+        TASWTomlLocalTime time;
+        if (!Detail::TimeOfDayFromCount(count, Detail::DurationUnit<TPrecision>(), time))
+            return Detail::TimeOfDayOutOfRange();
+
+        value = TASWTomlValue(time);
+
+        return TASWTomlResult();
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::local_days>
+//
+// A local date, both ways (any other type is TypeMismatch); reading a date that isn't real is InvalidValue, writing
+// one outside the years 0 to 9999 is ValueOutOfRange
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TASWTomlConverter<std::chrono::local_days>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::chrono::local_days& out,
+        TASWTomlValueOptions const& options);
+    static TASWTomlResult ToValue(std::chrono::local_days const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::local_time<D> >
+//
+// A local date-time, both ways, for a duration D the date and time types convert (see Detail::TomlDuration, e.g.
+// std::chrono::local_seconds) but days (a local date, see TASWTomlConverter<std::chrono::local_days>); any other type
+// is TypeMismatch, an offset date-time too, since its offset would be lost. Reads the date and time rounded down to D;
+// one D's count can't hold is ValueOutOfRange. Writing one outside the years 0 to 9999 is ValueOutOfRange.
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::TomlDuration D>
+struct TASWTomlConverter<std::chrono::local_time<D> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::chrono::local_time<D>& out,
+        TASWTomlValueOptions const& /*options*/)
+    {
+        TASWTomlLocalDateTime const* const dateTime = value.AsLocalDateTime();
+        if (dateTime == nullptr)
+            return Detail::TypeMismatch(value, "a local date-time");
+
+        if (!dateTime->IsValid())
+            return Detail::ValueFailure(ETomlCode::InvalidValue, value, "isn't a valid date-time.");
+
+        std::optional<std::chrono::local_time<D> > const localTime = dateTime->ToLocalTime<D>();
+        if (!localTime)
+            return Detail::DateTimeOutOfRange(value, Detail::DurationUnit<D>());
+
+        out = *localTime;
+
+        return TASWTomlResult();
+    }
+
+    static TASWTomlResult ToValue(std::chrono::local_time<D> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& /*options*/)
+    {
+        std::optional<TASWTomlLocalDateTime> const dateTime = TASWTomlLocalDateTime::FromLocalTime(in);
+        if (!dateTime)
+            return Detail::TimePointOutOfRange();
+
+        value = TASWTomlValue(*dateTime);
+
+        return TASWTomlResult();
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::sys_days>
+//
+// A local date, both ways, as TASWTomlConverter<std::chrono::local_days> (a date has no offset, so it reads as the
+// day it names in UTC)
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TASWTomlConverter<std::chrono::sys_days>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::chrono::sys_days& out,
+        TASWTomlValueOptions const& options);
+    static TASWTomlResult ToValue(std::chrono::sys_days const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::sys_time<D> >
+//
+// An offset date-time, both ways, for a duration D the date and time types convert (see Detail::TomlDuration) but
+// days (a local date, see TASWTomlConverter<std::chrono::sys_days>), so std::chrono::system_clock::time_point and
+// sys_seconds too; any other type is TypeMismatch, a local date-time too, since its offset is unknown. Reads the
+// instant in UTC, at any offset (a leap second, second 60, is the next minute's second 0), rounded down to D; one D's
+// count can't hold is ValueOutOfRange: system_clock counts nanoseconds with libstdc++ (GCC, MinGW), so it holds only
+// 1677-09-21T00:12:43.145224192Z to 2262-04-11T23:47:16.854775807Z there, while sys_seconds holds every instant TOML
+// can write on every library. Writes the instant in UTC (with Z); one outside the years 0 to 9999 is ValueOutOfRange.
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::TomlDuration D>
+struct TASWTomlConverter<std::chrono::sys_time<D> >
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::chrono::sys_time<D>& out,
+        TASWTomlValueOptions const& /*options*/)
+    {
+        TASWTomlOffsetDateTime const* const dateTime = value.AsOffsetDateTime();
+        if (dateTime == nullptr)
+            return Detail::TypeMismatch(value, "an offset date-time");
+
+        if (!dateTime->IsValid())
+            return Detail::ValueFailure(ETomlCode::InvalidValue, value, "isn't a valid date-time.");
+
+        std::optional<std::chrono::sys_time<D> > const utc = dateTime->ToSysTime<D>();
+        if (!utc)
+            return Detail::DateTimeOutOfRange(value, Detail::DurationUnit<D>());
+
+        out = *utc;
+
+        return TASWTomlResult();
+    }
+
+    static TASWTomlResult ToValue(std::chrono::sys_time<D> const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& /*options*/)
+    {
+        std::optional<TASWTomlOffsetDateTime> const dateTime = TASWTomlOffsetDateTime::FromSysTime(in);
+        if (!dateTime)
+            return Detail::TimePointOutOfRange();
+
+        value = TASWTomlValue(*dateTime);
+
+        return TASWTomlResult();
+    }
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<std::chrono::year_month_day>
+//
+// A local date, as it is, both ways; any other type is TypeMismatch, an offset date-time too. Writing a date that
+// isn't real (2023-02-30) is InvalidValue, one outside the years 0 to 9999 ValueOutOfRange, each with a message that
+// shows the date.
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TASWTomlConverter<std::chrono::year_month_day>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, std::chrono::year_month_day& out,
+        TASWTomlValueOptions const& options);
+    static TASWTomlResult ToValue(std::chrono::year_month_day const& in, TASWTomlValue& value,
+        TASWTomlValueOptions const& options);
 };
 
 

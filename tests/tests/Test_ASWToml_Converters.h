@@ -46,6 +46,40 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DateTimeConverters
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DateTimeConverters : public TAutoTestGroup<TTest_ASWToml_DateTimeConverters>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DateTimeConverters> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Date_ReadsLocalDatesOnly();
+    void Test_Date_WritesTomlsYearsOnly();
+    void Test_Helpers_DateTimeOutOfRange();
+    void Test_Helpers_TimeOfDayFromCount();
+    void Test_LocalTime_ReadsLocalDateTimesOnly();
+    void Test_LocalTime_ReadsWhatItsDurationCounts();
+    void Test_RoundTrip_EveryType_ThroughADocument();
+    void Test_SysTime_ReadsTheInstantAtAnyOffset();
+    void Test_SysTime_ReadsWhatItsDurationCounts();
+    void Test_SysTime_WritesInUtc();
+    void Test_TimeOfDay_ReadsLocalTimesOnly();
+    void Test_TimeOfDay_WritesUpToTheLeapSecond();
+    void Test_TomlTypes_AsTheyAre();
+
+public:
+    TTest_ASWToml_DateTimeConverters();
+    ~TTest_ASWToml_DateTimeConverters() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_EnumConverters
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_EnumConverters : public TAutoTestGroup<TTest_ASWToml_EnumConverters>
