@@ -191,15 +191,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `InvalidValue`.
 - `TASWTomlConverter<T>` (`ASWToml_Converters.h`), which converts a value of an application's type
   to and from a `TASWTomlValue`: `FromValue(value, out, options)` and `ToValue(in, value,
-  options)`, each returning a `TASWTomlResult` and leaving `out` or `value` as it was on failure.
-  A value of a TOML type the C++ type doesn't read fails with `TypeMismatch`, one it doesn't accept
-  (or that TOML can't hold) with `InvalidValue`, each with a message that shows the value as TOML
-  text, e.g. `The value 80 is an integer, not a string.`; a failure inside a value gives its place
-  in `Path`. The concept `TomlConvertible<T>` says whether a type has a converter. Converters come
-  for `TASWTomlValue` (as it is), `bool` (booleans only), `std::string` and `std::u8string` (strings
-  only; text that isn't valid UTF-8 can't be written) and `std::filesystem::path` (a string, the
-  path in UTF-8 on every platform, so a Windows path is written as `'C:\Users\me'`; a path that
-  wouldn't read back the same can't be written). An application adds its own by specializing the
-  template in namespace `ASWToml`, for one type or, with a requires clause, for a group of types.
+  options)`, each returning a `TASWTomlResult` and leaving `out` or `value` as it was on failure. A
+  value of a TOML type the C++ type doesn't read fails with `TypeMismatch`, a number outside the
+  type's range with `ValueOutOfRange`, one it doesn't accept (or that TOML can't hold) with
+  `InvalidValue`, each with a message that shows the value as TOML text, e.g.
+  `The value 80 is an integer, not a string.`; a failure inside a value gives its place in `Path`.
+  The concept `TomlConvertible<T>` says whether a type has a converter. Converters come for
+  `TASWTomlValue` (as it is), `bool` (booleans only), every integer type but `bool` and the
+  character types (`char`, `wchar_t`, `char8_t`, `char16_t`, `char32_t`; integers only, e.g.
+  `The value 300 is out of range: it must be from 0 to 255.`, and an unsigned 64-bit value above
+  `INT64_MAX` can't be written), `float` and `double` (floats, and integers they hold exactly; inf
+  and nan keep their sign; a float beyond the range of `float` is `ValueOutOfRange` for it, and a
+  `float` is written as the double nearest its shortest text, so `0.1f` is written as `0.1` and
+  reads back the same), `std::string` and `std::u8string` (strings only; text that isn't valid UTF-8
+  can't be written) and `std::filesystem::path` (a string, the path in UTF-8 on every platform, so a
+  Windows path is written as `'C:\Users\me'`; a path that wouldn't read back the same can't be
+  written). An application adds its own by specializing the template in namespace `ASWToml`, for one
+  type or, with a requires clause, for a group of types.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

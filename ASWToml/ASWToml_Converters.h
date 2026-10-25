@@ -7,8 +7,9 @@ A TOML file reader/writer library.
 TASWTomlConverter<T>, which converts a value of an application's type T to
 and from a TASWTomlValue, and the concept TomlConvertible, which says that a
 type has one. The library has converters for TASWTomlValue itself,
-std::string, std::u8string, std::filesystem::path and bool; an application
-adds its own by specializing TASWTomlConverter for its type.
+std::string, std::u8string, std::filesystem::path, bool, the integer types,
+float and double; an application adds its own by specializing
+TASWTomlConverter for its type.
 
 Requires C++ 20 or higher.
 
@@ -28,9 +29,12 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 //---------------------------------------------------------------------------
 #include "ASWToml_Options.h"
@@ -85,9 +89,21 @@ using TToValueResult = decltype(TASWTomlConverter<T>::ToValue(std::declval<T con
 // The longest part of a value's text a message shows (see ValueText())
 constexpr std::size_t MaxValueTextSize = 40;
 
+// Whether T is one of the integer types TASWTomlConverter converts as TOML integers: an integral type of at most 64
+// bits, without const or volatile, other than bool, plain char and the wide and Unicode character types
+template <typename T>
+concept ConvertibleInteger = std::integral<T> && std::same_as<T, std::remove_cv_t<T> > &&
+    sizeof(T) <= sizeof(std::int64_t) && !std::same_as<T, bool> && !std::same_as<T, char> &&
+    !std::same_as<T, wchar_t> && !std::same_as<T, char8_t> && !std::same_as<T, char16_t> && !std::same_as<T, char32_t>;
+
 // 'result' (a failure of a part of a value) as the failure of the array that holds it as its element 'index':
 // "[index]" put in front of its Path, e.g. [2] or [2].port
 TASWTomlResult ElementFailure(TASWTomlResult result, std::size_t index);
+
+// Reads 'value' as an integer type with the range 'min' to 'max' reads it (see TASWTomlConverter<integer types>)
+// into 'out', which is left as it was on failure: TypeMismatch for a value that isn't an integer, ValueOutOfRange
+// outside the range, whose message gives it ('max' as at most INT64_MAX, the largest TOML integer)
+TASWTomlResult IntegerFromValue(TASWTomlValue const& value, std::int64_t min, std::uint64_t max, std::int64_t& out);
 
 // 'result' (a failure of a part of a value) as the failure of the table that holds it at 'key': the key, bare when it
 // can be, else a basic string (each byte of it that isn't valid UTF-8 as '?'), put in front of its Path, e.g. port,
@@ -101,6 +117,10 @@ char const* TypeName(TASWTomlValue const& value) noexcept;
 // The TypeMismatch result of reading 'value' as a type that reads 'wanted' (e.g. "a string"): "The value 5 is an
 // integer, not a string."
 TASWTomlResult TypeMismatch(TASWTomlValue const& value, std::string_view wanted);
+
+// Sets 'value' to 'number' as an unsigned integer type writes it (see TASWTomlConverter<integer types>), or leaves it
+// as it was and fails with ValueOutOfRange when 'number' is above INT64_MAX, which a TOML integer can't hold
+TASWTomlResult UnsignedIntegerToValue(std::uint64_t number, TASWTomlValue& value);
 
 // A failed result with 'code' and the message "The value <text> <problem>", the text as ValueText() gives it, e.g.
 // ValueFailure(InvalidValue, value, "isn't one of the names: Red, Green, Blue.")
@@ -145,6 +165,79 @@ struct TASWTomlConverter<bool>
 {
     static TASWTomlResult FromValue(TASWTomlValue const& value, bool& out, TASWTomlValueOptions const& options);
     static TASWTomlResult ToValue(bool const& in, TASWTomlValue& value, TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<double>
+//
+// Reads a float as it is, or an integer that a double holds exactly: one with at most 53 significant bits (from its
+// highest set bit to its lowest), so every integer from -2^53 to 2^53 and larger ones with enough trailing zero bits;
+// ratio = 1 reads as 1.0. Another integer is InvalidValue, any other type TypeMismatch. Writes a float; inf and nan
+// keep their sign.
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TASWTomlConverter<double>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, double& out, TASWTomlValueOptions const& options);
+    static TASWTomlResult ToValue(double const& in, TASWTomlValue& value, TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<float>
+//
+// As TASWTomlConverter<double>, with float's range and precision. A TOML float (a double) reads as the nearest float,
+// 0.0 for one too small (with its sign); one beyond float's range that doesn't round to its largest value is
+// ValueOutOfRange. An integer must have at most 24 significant bits. A float is written as the double nearest its
+// shortest text, so 0.1f is written as 0.1, not 0.10000000149011612, and reads back as the same float; the one pair
+// of floats for which that double would read back as another float, 7.038531e-26 and its negative, is written as its
+// exact value instead. inf and nan keep their sign.
+/////////////////////////////////////////////////////////////////////////////
+template <>
+struct TASWTomlConverter<float>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, float& out, TASWTomlValueOptions const& options);
+    static TASWTomlResult ToValue(float const& in, TASWTomlValue& value, TASWTomlValueOptions const& options);
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TASWTomlConverter<integer types>
+//
+// Every integral type of at most 64 bits but bool, plain char and the wide and Unicode character types (wchar_t,
+// char8_t, char16_t, char32_t), so signed char and unsigned char (std::int8_t, std::uint8_t) are numbers. Reads an
+// integer only (3.0 is a float, so TypeMismatch); one outside the type's range is ValueOutOfRange, with the range in
+// the message: "The value 300 is out of range: it must be from 0 to 255.". Writes an integer. TOML integers are 64-bit
+// signed, so an unsigned 64-bit type's range is 0 to 9223372036854775807 (INT64_MAX) both ways: a larger value can't
+// be written (ValueOutOfRange).
+/////////////////////////////////////////////////////////////////////////////
+template <Detail::ConvertibleInteger T>
+struct TASWTomlConverter<T>
+{
+    static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& /*options*/)
+    {
+        std::int64_t number = 0;
+        TASWTomlResult result = Detail::IntegerFromValue(value, static_cast<std::int64_t>(std::numeric_limits<T>::min()),
+            static_cast<std::uint64_t>(std::numeric_limits<T>::max()), number);
+        if (result.IsOk())
+            out = static_cast<T>(number);
+
+        return result;
+    }
+
+    static TASWTomlResult ToValue(T const& in, TASWTomlValue& value, TASWTomlValueOptions const& /*options*/)
+    {
+        if constexpr (std::is_signed_v<T>)
+        {
+            value = TASWTomlValue(static_cast<std::int64_t>(in));
+            return TASWTomlResult();
+        }
+        else
+        {
+            return Detail::UnsignedIntegerToValue(static_cast<std::uint64_t>(in), value);
+        }
+    }
 };
 
 

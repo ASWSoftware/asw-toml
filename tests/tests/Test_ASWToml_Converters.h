@@ -46,6 +46,61 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_FloatConverters
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_FloatConverters : public TAutoTestGroup<TTest_ASWToml_FloatConverters>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_FloatConverters> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Double_FromValue_ReadsFloatsAndExactIntegers();
+    void Test_Double_RoundTrip_ThroughADocument();
+    void Test_Float_FromValue_ReadsTheNearestFloat();
+    void Test_Float_FromValue_RefusesWhatIsBeyondItsRange();
+    void Test_Float_RandomValues_ReadBackTheSame();
+    void Test_Float_RoundTrip_ThroughADocument();
+    void Test_Float_ToValue_WritesTheShortestText();
+    void Test_InfinityAndNan_KeepTheirSign();
+
+public:
+    TTest_ASWToml_FloatConverters();
+    ~TTest_ASWToml_FloatConverters() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_IntegerConverters
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_IntegerConverters : public TAutoTestGroup<TTest_ASWToml_IntegerConverters>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_IntegerConverters> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_FromValue_ReadsEachTypesRange();
+    void Test_FromValue_ReadsIntegersOnly();
+    void Test_Messages_GiveTheRange();
+    void Test_RoundTrip_EveryType_ThroughADocument();
+    void Test_ToValue_RefusesWhatATomlIntegerCantHold();
+
+public:
+    TTest_ASWToml_IntegerConverters();
+    ~TTest_ASWToml_IntegerConverters() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_TextConverters
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_TextConverters : public TAutoTestGroup<TTest_ASWToml_TextConverters>
