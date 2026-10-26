@@ -1,0 +1,286 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel a superseded run on the same branch/PR instead of letting it finish.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only on purpose: a pull request from a fork gets a read-only token anyway, so nothing here needs to write
+# (the test report goes to each job's summary page, which needs no permission).
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # Safety net: a hung/looping test should fail the job quickly instead of burning the runner's full time
+    # allotment. --test-timeout-seconds below covers a single hung test; this covers everything else. A sanitizer
+    # build compiles and runs several times slower, so it gets longer.
+    timeout-minutes: ${{ matrix.sanitize && 15 || 10 }}
+    env:
+      # cmake --build compiles up to 4 files at once (the runners have 4 cores). The Visual Studio generator only
+      # builds projects in parallel with it, so the MSVC job also compiles with -MP (its cxxflags).
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows (MSVC)
+            os: windows-latest
+            generator: ""
+            build_args: "--config Release"
+            exe_path: build/bin/Release/ASWTomlTests.exe
+            # cl takes -MP as well as /MP; Git Bash would turn "/MP" into a path when it starts CMake.
+            cxxflags: -MP
+            # A multi-config generator, so the package check builds and installs both into the same prefix (the Debug
+            # library is ASWTomld)
+            package_configs: Debug Release
+            sanitize: ""
+          - name: Windows (MinGW)
+            os: windows-latest
+            generator: "MinGW Makefiles"
+            build_args: ""
+            exe_path: build/bin/ASWTomlTests.exe
+            sanitize: ""
+          - name: Linux (GCC)
+            os: ubuntu-latest
+            generator: ""
+            build_args: ""
+            exe_path: build/bin/ASWTomlTests
+            cc: gcc
+            cxx: g++
+            sanitize: ""
+          - name: Linux (Clang)
+            os: ubuntu-latest
+            generator: ""
+            build_args: ""
+            exe_path: build/bin/ASWTomlTests
+            cc: clang
+            cxx: clang++
+            sanitize: ""
+          # The sanitizer jobs build with ASWTOML_SANITIZE (see the root CMakeLists.txt). A sanitizer report fails the
+          # run with a non-zero exit code, even when every test passed.
+          - name: Linux (Clang, ThreadSanitizer)
+            os: ubuntu-latest
+            generator: ""
+            build_args: ""
+            exe_path: build/bin/ASWTomlTests
+            cc: clang
+            cxx: clang++
+            sanitize: thread
+          - name: Linux (Clang, AddressSanitizer + UBSan)
+            os: ubuntu-latest
+            generator: ""
+            build_args: ""
+            exe_path: build/bin/ASWTomlTests
+            cc: clang
+            cxx: clang++
+            sanitize: address
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # The ASWUnitTests framework is the third_party/asw-unit-tests submodule. tests/cmake/CMakeLists.txt
+          # fails the configure step if it's missing, rather than silently building something else.
+          submodules: true
+
+      - name: Set up MinGW
+        if: matrix.generator == 'MinGW Makefiles'
+        uses: egor-tensin/setup-mingw@v3
+        with:
+          platform: x64
+
+      - name: Limit address space randomization for the sanitizers
+        # Ubuntu runners use more mmap randomization bits than some sanitizer runtimes support, which makes them
+        # fail at startup (e.g. "ThreadSanitizer: unexpected memory mapping"). 28 bits is the usual workaround.
+        if: matrix.sanitize
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.cc }}" ]; then
+            export CC="${{ matrix.cc }}"
+            export CXX="${{ matrix.cxx }}"
+          fi
+          # CMake adds CXXFLAGS to its default flags (setting CMAKE_CXX_FLAGS instead would replace them).
+          if [ -n "${{ matrix.cxxflags }}" ]; then
+            export CXXFLAGS="${{ matrix.cxxflags }}"
+          fi
+          if [ -n "${{ matrix.generator }}" ]; then
+            cmake -S tests/cmake -B build -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=Release \
+              -DASWTOML_SANITIZE="${{ matrix.sanitize }}"
+          else
+            cmake -S tests/cmake -B build -DCMAKE_BUILD_TYPE=Release -DASWTOML_SANITIZE="${{ matrix.sanitize }}"
+          fi
+
+      - name: Build
+        shell: bash
+        run: cmake --build build ${{ matrix.build_args }}
+
+      - name: Verify executable exists
+        shell: bash
+        run: |
+          if [ ! -f "${{ matrix.exe_path }}" ]; then
+            echo "ERROR: Executable not found at ${{ matrix.exe_path }}"
+            echo "Contents of build directory:"
+            find build -type f \( -name "ASWTomlTests" -o -name "*.exe" \) 2>/dev/null || echo "No executables found"
+            exit 1
+          fi
+
+      - name: Run unit tests
+        id: tests
+        shell: bash
+        # --test-timeout-seconds and --catch-crashes turn a hung or natively crashing test into a clean, reported
+        # failure instead of relying on the job's timeout-minutes or an opaque crashed job. A sanitizer job leaves out
+        # --catch-crashes, whose signal handlers would replace the sanitizer's own crash report (with its call stack),
+        # and allows a slower test.
+        env:
+          TSAN_OPTIONS: second_deadlock_stack=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: >-
+          ./${{ matrix.exe_path }} --project-name "ASWToml-CI" --report-junit junit-results.xml
+          ${{ matrix.sanitize && '--test-timeout-seconds 300' || '--test-timeout-seconds 60 --catch-crashes' }}
+
+      - name: Test results summary
+        # Runs whenever the tests ran, pass or fail, so failures show up in the report too. In this mode the reporter
+        # only writes this job's summary page and makes no GitHub API calls, so it also works for pull requests from
+        # forks, whose token is read-only. It also fails if the tests ran but the report is missing or unreadable.
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        uses: dorny/test-reporter@v3
+        with:
+          name: Test Results - ${{ matrix.name }}
+          path: junit-results.xml
+          reporter: java-junit
+          use-actions-summary: true
+
+      - name: Upload test results
+        # Keeps the JUnit report as a downloadable artifact of the run.
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.name }}
+          path: junit-results.xml
+          if-no-files-found: error
+
+      - name: Build and run the example
+        # Builds example/cmake (with the library from the source tree) with the job's sanitizer, and runs it: it
+        # returns 0 only when every step did what it shows, and a sanitizer report fails it too. Its output (the
+        # messages and the TOML file of each step) is in this step's log.
+        shell: bash
+        env:
+          TSAN_OPTIONS: second_deadlock_stack=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: |
+          if [ -n "${{ matrix.cc }}" ]; then
+            export CC="${{ matrix.cc }}"
+            export CXX="${{ matrix.cxx }}"
+          fi
+          if [ -n "${{ matrix.cxxflags }}" ]; then
+            export CXXFLAGS="${{ matrix.cxxflags }}"
+          fi
+          generatorArgs=()
+          if [ -n "${{ matrix.generator }}" ]; then
+            generatorArgs=(-G "${{ matrix.generator }}")
+          fi
+          cmake -S example/cmake -B build-example "${generatorArgs[@]}" -DCMAKE_BUILD_TYPE=Release \
+            -DASWTOML_SANITIZE="${{ matrix.sanitize }}"
+          cmake --build build-example ${{ matrix.build_args }}
+          # The tests' path with the example's folder and name, e.g. build-example/bin/Release/ASWTomlExample.exe
+          exe="${{ matrix.exe_path }}"
+          exe="${exe/#build\//build-example/}"
+          exe="${exe/ASWTomlTests/ASWTomlExample}"
+          "./$exe"
+
+      - name: Check the installed CMake package
+        # Builds and installs the library (the root project) to a temporary prefix, then builds tests/package against
+        # it with find_package() and runs it, which checks the install rules and the package files. Not in the
+        # sanitizer jobs: they build the same CMake files, and the package would pass their flags on to the consumer.
+        if: ${{ !matrix.sanitize }}
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.cc }}" ]; then
+            export CC="${{ matrix.cc }}"
+            export CXX="${{ matrix.cxx }}"
+          fi
+          if [ -n "${{ matrix.cxxflags }}" ]; then
+            export CXXFLAGS="${{ matrix.cxxflags }}"
+          fi
+          generatorArgs=()
+          if [ -n "${{ matrix.generator }}" ]; then
+            generatorArgs=(-G "${{ matrix.generator }}")
+          fi
+          # Forward slashes, which CMake takes on Windows too (RUNNER_TEMP has backslashes there)
+          prefix="${RUNNER_TEMP//\\//}/aswtoml"
+          configs="${{ matrix.package_configs || 'Release' }}"
+          cmake -S . -B build-install "${generatorArgs[@]}" -DCMAKE_BUILD_TYPE=Release
+          for config in $configs; do
+            cmake --build build-install --config "$config"
+            cmake --install build-install --config "$config" --prefix "$prefix"
+          done
+          cmake -S tests/package -B build-package "${generatorArgs[@]}" -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$prefix"
+          for config in $configs; do
+            cmake --build build-package --config "$config"
+            ctest --test-dir build-package -C "$config" --output-on-failure
+          done
+
+  coverage:
+    # Which lines of the library (ASWToml/) the tests run, on Linux: a table on this job's summary page, and an HTML
+    # report (each source line marked) as an artifact. Informational: continue-on-error keeps it from failing the run;
+    # the jobs above are the ones that must pass.
+    name: Linux (GCC, coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Configure
+        # Debug (no optimization), so each line is counted as written. -fprofile-update=atomic keeps the counts right
+        # in the tests that use one object from several threads at once; without it the threads' updates race and get
+        # lost.
+        env:
+          CC: gcc
+          CXX: g++
+          CXXFLAGS: "--coverage -fprofile-update=atomic"
+        run: cmake -S tests/cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run unit tests
+        # A failing test fails the jobs above; the coverage of this run is still worth reporting
+        continue-on-error: true
+        run: ./build/bin/ASWTomlTests --test-timeout-seconds 120 --catch-crashes
+
+      - name: Install gcovr
+        # 8.4 added the Markdown report. pipx installs it in an environment of its own (the runner's system Python
+        # refuses pip installs).
+        run: pipx install "gcovr>=8.4"
+
+      - name: Coverage report
+        run: |
+          mkdir -p coverage-html
+          gcovr --root . --filter 'ASWToml/' --print-summary --markdown coverage.md \
+            --html-details coverage-html/index.html
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage-html/
+          if-no-files-found: error

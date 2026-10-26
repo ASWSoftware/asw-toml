@@ -1,0 +1,70 @@
+/* **************************************************************************
+Test_ASWToml_Utils.h
+Author: Anthony S. West - ASW Software
+
+Copyright 2026 ASW Software
+
+Licensed under the MIT License: see the LICENSE file that comes with this
+library for its full text.
+
+SPDX-License-Identifier: MIT
+
+************************************************************************** */
+
+//---------------------------------------------------------------------------
+#ifndef Test_ASWToml_UtilsH
+#define Test_ASWToml_UtilsH
+//---------------------------------------------------------------------------
+#include <cstddef>
+#include <source_location>
+#include <string>
+#include <string_view>
+//---------------------------------------------------------------------------
+#include "ASWUnitTests_TestBase.h"
+//---------------------------------------------------------------------------
+
+namespace ASWUnitTests
+{
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_Utils
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_Utils : public TAutoTestGroup<TTest_ASWToml_Utils>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_Utils> inherited;
+
+private:
+    // Checks that SetLineAndColumn() gives the byte at 'offset' in 'text' 'line' and 'column'
+    void CheckLineAndColumn(std::string_view text, std::size_t offset, std::size_t line, std::size_t column,
+        std::string const& msg, std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_BomSize_MatchesEachMark();
+    void Test_CountCodePoints_CountsEachCharacterOnce();
+    void Test_CountCodePoints_InvalidText();
+    void Test_DetectBom_FindsEachMark();
+    void Test_DetectBom_IgnoresPartialMarks();
+    void Test_FindInvalidUtf8_FindsFirstInvalidSequence();
+    void Test_IsBlank_SpaceAndTabOnly();
+    void Test_IsValidUtf8_AcceptsValidText();
+    void Test_IsValidUtf8_RejectsInvalidSequences();
+    void Test_LineBreakText_MatchesEachBreak();
+    void Test_MessageText_QuotesAndCuts();
+    void Test_NativeLineBreak_MatchesPlatform();
+    void Test_SetLineAndColumn_CountsLinesAndCharacters();
+
+public:
+    TTest_ASWToml_Utils();
+    ~TTest_ASWToml_Utils() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+} // namespace ASWUnitTests
+
+//---------------------------------------------------------------------------
+#endif // #ifndef Test_ASWToml_UtilsH
