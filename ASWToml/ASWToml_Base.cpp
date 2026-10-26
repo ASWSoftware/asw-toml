@@ -606,6 +606,49 @@ TASWTomlResult TASWBaseToml::SetOptions(TASWTomlOptions const& options)
     return result;
 }
 //---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::SetSettingValue(TASWTomlPath const& path, TASWTomlValue const& value,
+    TASWTomlValueOptions const& values, std::string_view comment)
+{
+    TASWTomlResult result;
+
+    try
+    {
+        std::lock_guard<Detail::TSharedMutex> lock(m_Mutex);
+        if (comment.empty() || m_Document.Find(path) != nullptr)
+        {
+            result = m_Document.SetValue(path, value, values);
+        }
+        else
+        {
+            // The key and its comment are added to a copy, which replaces the document only when both succeed; a key
+            // without a line of its own (InvalidArgument: in an inline table) can't have a comment, and is kept
+            TASWTomlDocument changed = m_Document;
+            result = changed.SetValue(path, value, values);
+            if (result.IsOk())
+            {
+                TASWTomlResult const commented = changed.SetComment(path, comment);
+                if (!commented.IsOk() && commented.Code != ETomlCode::InvalidArgument)
+                    result = commented;
+            }
+
+            if (result.IsOk())
+                m_Document = std::move(changed);
+        }
+
+        if (result.IsOk())
+            ++m_EditCount;
+    }
+    catch (...)
+    {
+        result = CaughtException(path);
+    }
+
+    if (!result.IsOk())
+        ReportFailure(result);
+
+    return result;
+}
+//---------------------------------------------------------------------------
 TASWTomlResult TASWBaseToml::SetTrailingComment(TASWTomlPath const& path, std::string_view text)
 {
     return Edit(&TASWTomlDocument::SetTrailingComment, path, text);

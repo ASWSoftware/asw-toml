@@ -46,6 +46,8 @@ namespace ASWToml
 namespace Detail
 {
 
+class TSettingBase;
+
 /////////////////////////////////////////////////////////////////////////////
 // TMutex
 //
@@ -108,11 +110,14 @@ public:
 // Lookups share a reader/writer lock; edits take it alone. Load() reads and parses the file (and LoadText() the text)
 // without that lock, and Save() writes the file without it, so lookups and edits go on meanwhile; a second lock keeps
 // loads, saves and SetOptions() from overlapping. Failures and warnings are reported after the locks are released (see
-// TASWTomlLogCallback). An application's settings class derives from it. Neither copyable nor movable.
+// TASWTomlLogCallback). An application's settings class derives from it, and declares its settings (TASWTomlTable,
+// TASWTomlSetting<T>, in ASWToml_Settings.h). Neither copyable nor movable.
 /////////////////////////////////////////////////////////////////////////////
 class TASWBaseToml : public IASWToml
 {
 private:
+    friend class Detail::TSettingBase;
+
     // The log callback, shared with the reports that are calling it, so SetLogCallback() may replace it meanwhile
     using TLogCallbackPtr = std::shared_ptr<TASWTomlLogCallback const>;
 
@@ -152,6 +157,12 @@ private:
     // Save() (when 'filePath' is nullptr) or SaveAs(*filePath): SaveFile() with an exception caught, and its warnings
     // and failure reported
     TASWTomlResult SaveTo(std::string_view const* filePath);
+
+    // DocumentSetValue() for a setting (see TASWTomlSetting::Set()): when it adds the key and 'comment' isn't empty,
+    // also sets the key's comment to 'comment' in the same edit, so a failure of either changes nothing; a key that
+    // has no line of its own for a comment (in an inline table) is added without it
+    TASWTomlResult SetSettingValue(TASWTomlPath const& path, TASWTomlValue const& value,
+        TASWTomlValueOptions const& values, std::string_view comment);
 
 protected:
     TASWTomlResult DocumentAppend(TASWTomlPath const& path, TASWTomlValue const& value,

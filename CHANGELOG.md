@@ -287,5 +287,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   throws is dropped. Any thread may replace the callback at any time; a report already under way may
   still go to the callback it replaced. The files are read and written by the protected virtual
   `ReadFile()` and `WriteFile()`, which a derived class may override.
+- The settings binding (`ASWToml_Settings.h`), so an application declares each setting once, as a
+  member of its settings class (derived from `TASWBaseToml`): a `TASWTomlTable` (its owner, its
+  path from the root, e.g. `"logging"`, and a comment) and, for each key of it, a
+  `TASWTomlSetting<T>` with its key, its type (any type `TASWTomlConverter` converts, a struct or a
+  `std::vector` of one included), its default value, a comment and `TASWTomlSettingOptions<T>`,
+  given with designated initializers: a range (`{ .Min = 0, .Max = 4 }`, only for a type that
+  `operator<` compares), a validator that says what is wrong with a value, and value options of its
+  own. A setting holds no value: `Get()` reads the owner's document, giving the default for a
+  missing key and, with a Warning, for a value that doesn't convert, is out of range or that the
+  validator refuses; `Set()` writes it, adding a missing key with the setting's comment above it in
+  the same edit, and fails (an Error, nothing changed) for a value that is out of range, refused or
+  can't be written; `Reset()` sets the default and `IsPresent()` says whether the key is there.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

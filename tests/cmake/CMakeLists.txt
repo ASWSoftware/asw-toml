@@ -52,6 +52,7 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Options.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Path.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Scalars.cpp"
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Settings.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Types.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Utils.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Value.cpp"
