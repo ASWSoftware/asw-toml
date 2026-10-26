@@ -159,6 +159,11 @@ TASWTomlDocument const& TSettingsApply::GetDocument() const noexcept
     return m_Document;
 }
 //---------------------------------------------------------------------------
+TASWTomlResult TSettingsApply::Rename(TASWTomlPath const& path, std::string_view newKey)
+{
+    return m_Document.Rename(path, newKey);
+}
+//---------------------------------------------------------------------------
 void TSettingsApply::Write(TMessageVector& messages)
 {
     for (TTableChanges const& table : m_Tables)
@@ -311,6 +316,38 @@ void TSettingBase::ApplyDefault(TSettingsApply& apply, TASWTomlValue const& defa
 
     apply.AddValue(m_TablePath, m_Path, m_Key, defaultValue, values, problem == nullptr ? &added : nullptr);
     ApplyComment(apply);
+}
+//---------------------------------------------------------------------------
+bool TSettingBase::ApplyOldKeys(TSettingsApply& apply, TStringVector const& oldKeys) const
+{
+    for (std::string const& oldKey : oldKeys)
+    {
+        TASWTomlPath oldPath = m_TablePath;
+        oldPath.Append(oldKey);
+        if (apply.GetDocument().Find(oldPath) == nullptr)
+            continue;
+
+        // A failure is the setting's, with its path
+        TASWTomlResult result = apply.Rename(oldPath, m_Key);
+        if (!result.IsOk())
+        {
+            result.Path = m_Path.ToString();
+            AddFailure(apply, result);
+            return false;
+        }
+
+        TASWTomlMessage renamed;
+        renamed.Severity = ESeverity::Info;
+        renamed.Code = ETomlCode::KeyRenamed;
+        renamed.Path = m_Path.ToString();
+        renamed.Text = "The key " + renamed.Path + " is missing: its earlier name " +
+            TASWTomlPath({ TASWTomlPathPart(oldKey) }).ToString() + " is renamed to it.";
+        apply.AddMessage(std::move(renamed));
+
+        break;
+    }
+
+    return true;
 }
 //---------------------------------------------------------------------------
 TASWTomlResult TSettingBase::CaughtSetFailure() const noexcept

@@ -83,11 +83,15 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Load_DeclaredTableThatIsntOneIsReplaced();
     void Test_Load_FailureAppliesNothing();
     void Test_Load_InvalidDefaultIsAnError();
+    void Test_Load_KeyWinsOverItsOldKeys();
     void Test_Load_LeavesAValidDocumentAsItIs();
     void Test_Load_MessagesNameTheFileLoaded();
     void Test_Load_MissingFileGetsEverySetting();
     void Test_Load_OptionalKeyIsNotAdded();
     void Test_Load_PathsThatCantBeUsedAreErrors();
+    void Test_Load_RenamedKeyIsAppliedAsAnyOther();
+    void Test_Load_RenamesAnOldKey();
+    void Test_Load_RenamesOldTablesAndArraysOfTables();
     void Test_Load_ReplacesAnInvalidValueWithTheDefault();
     void Test_Load_TablesWithoutSettingsGetTheirComments();
     void Test_Load_WriteFailuresAreErrors();

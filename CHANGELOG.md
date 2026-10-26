@@ -289,27 +289,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still go to the callback it replaced. The files are read and written by the protected virtual
   `ReadFile()` and `WriteFile()`, which a derived class may override.
 - The settings binding (`ASWToml_Settings.h`), so an application declares each setting once, as a
-  member of its settings class (derived from `TASWBaseToml`): a `TASWTomlTable` (its owner, its
-  path from the root, e.g. `"logging"`, and a comment) and, for each key of it, a
-  `TASWTomlSetting<T>` with its key, its type (any type `TASWTomlConverter` converts, a struct or a
-  `std::vector` of one included), its default value, a comment and `TASWTomlSettingOptions<T>`,
-  given with designated initializers: a range (`{ .Min = 0, .Max = 4 }`, only for a type that
-  `operator<` compares), a validator that says what is wrong with a value, and value options of its
-  own, and whether it is optional. A setting holds no value: `Get()` reads the owner's document,
-  giving the default for a missing key and, with a Warning, for a value that doesn't convert, is
-  out of range or that the validator refuses; `Set()` writes it, adding a missing key with the
-  setting's comment above it in the same edit, and fails (an Error, nothing changed) for a value
-  that is out of range, refused or can't be written; `Reset()` sets the default and `IsPresent()`
-  says whether the key is there. `Load()` and `LoadText()` apply the settings to the document they
-  read before anyone sees it, so it holds every setting with a valid value and `IsModified()` says
-  whether it needs saving: a missing key is added with its default value and comment (an Info,
-  `KeyAdded`), unless the setting is optional; a value that isn't valid is replaced by the default
-  (a Warning), a valid one left as written; a table of settings the file holds as another kind of
-  value is replaced by a table of them (a Warning); the comments of the settings, of the tables and
-  the file comment (the root table's) are set as `Writing.CommentPolicy` says, where they have a
-  line of their own. A file that needs nothing stays byte for byte, and a first run (a missing
-  file) gets everything. The values are written with one edit per table and the comments with one
-  more, so applying 200 settings to an empty file takes a few milliseconds. A load that fails
-  changes nothing and reports none of it.
+  member of its settings class (derived from `TASWBaseToml`): a `TASWTomlTable` (its owner, its path
+  from the root, e.g. `"logging"`, and a comment) and, for each key of it, a `TASWTomlSetting<T>`
+  with its key, its type (any type `TASWTomlConverter` converts, a struct or a `std::vector` of one
+  included), its default value, a comment and `TASWTomlSettingOptions<T>`, given with designated
+  initializers: a range (`{ .Min = 0, .Max = 4 }`, only for a type that `operator<` compares), a
+  validator that says what is wrong with a value, and value options of its own, whether it is
+  optional, and earlier names of its key. A setting holds no value: `Get()` reads the owner's
+  document, giving the default for a missing key and, with a Warning, for a value that doesn't
+  convert, is out of range or that the validator refuses; `Set()` writes it, adding a missing key
+  with the setting's comment above it in the same edit, and fails (an Error, nothing changed) for a
+  value that is out of range, refused or can't be written; `Reset()` sets the default and
+  `IsPresent()` says whether the key is there. `Load()` and `LoadText()` apply the settings to the
+  document they read before anyone sees it, so it holds every setting with a valid value and
+  `IsModified()` says whether it needs saving: a missing key whose earlier name (`OldKeys`) its
+  table has is renamed from it, keeping its line or header, value and comment (an Info,
+  `KeyRenamed`), and then applied as any other; any other missing key is added with its default
+  value and comment (an Info, `KeyAdded`), unless the setting is optional; a value that isn't valid
+  is replaced by the default (a Warning), a valid one left as written; a table of settings the file
+  holds as another kind of value is replaced by a table of them (a Warning); the comments of the
+  settings, of the tables and the file comment (the root table's) are set as `Writing.CommentPolicy`
+  says, where they have a line of their own. A file that needs nothing stays byte for byte, and a
+  first run (a missing file) gets everything. The values are written with one edit per table and the
+  comments with one more, so applying 200 settings to an empty file takes a few milliseconds. A load
+  that fails changes nothing and reports none of it.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

@@ -163,10 +163,10 @@ using TTableChangesVector = std::vector<TTableChanges>;
 // TSettingsApply
 //
 // Applies the settings of a TOML object to a document that Load() or LoadText() read, before anyone sees it (see
-// TASWBaseToml::ApplySettings()): each setting adds the value its key gets (AddValue()), its messages (AddMessage())
-// and its comment (AddComment()), and so does each table its comment; Write() then writes the values with one edit
-// per table (a setting with value options of its own with one of its own), and all the comments with one more, as
-// Writing.CommentPolicy says. Not copyable.
+// TASWBaseToml::ApplySettings()): each setting renames an earlier name of its missing key at once (Rename()), and adds
+// the value its key gets (AddValue()), its messages (AddMessage()) and its comment (AddComment()), and so does each
+// table its comment; Write() then writes the values with one edit per table (a setting with value options of its own
+// with one of its own), and all the comments with one more, as Writing.CommentPolicy says. Not copyable.
 /////////////////////////////////////////////////////////////////////////////
 class TSettingsApply
 {
@@ -205,6 +205,10 @@ public:
 
     // The document the settings are applied to, as it was read (Write() changes it)
     TASWTomlDocument const& GetDocument() const noexcept;
+
+    // Renames the key at 'path' to 'newKey' in the document at once, before the values are written (see
+    // TASWTomlDocument::Rename()), and returns the rename's result
+    TASWTomlResult Rename(TASWTomlPath const& path, std::string_view newKey);
 
     // Writes the values, then the comments, to the document, and adds the messages to 'messages', in order. May throw
     // std::bad_alloc, and then the document may be partly changed: the caller drops it.
@@ -260,6 +264,12 @@ protected:
     // (ETomlCode::KeyAdded).
     void ApplyDefault(TSettingsApply& apply, TASWTomlValue const& defaultValue, TASWTomlValueOptions const* values,
         TASWTomlResult const* problem) const;
+
+    // For a setting whose key is missing in the document of 'apply': renames the first of 'oldKeys' (earlier names of
+    // the key) that its table has to the key (TASWTomlDocument::Rename(): its line or header, value and comment stay
+    // where they are), adding the Info that it was renamed (ETomlCode::KeyRenamed). Returns false when that fails
+    // (added as an Error), true otherwise, also when the table has none of them.
+    bool ApplyOldKeys(TSettingsApply& apply, TStringVector const& oldKeys) const;
 
     // The UnexpectedException result of Set() for the exception being handled (call it in a catch block), with the
     // setting's path (see IASWToml's CaughtException())
@@ -399,6 +409,8 @@ struct TASWTomlSettingOptions
     bool Optional = false;
 
     // Earlier names of the setting's key, in its own table, for a key renamed in a later version of the application
+    // (e.g. { .OldKeys = { "log_days" } }): when the key is missing, Load() renames the first of them that the table
+    // has to it; when the key is there, they are left alone
     TStringVector OldKeys = {};
 
     // The value options the setting writes its values with, instead of its owner's (e.g. an integer in hexadecimal);
@@ -418,18 +430,21 @@ struct TASWTomlSettingOptions
 // when it converts, is in the range and the validator accepts it; Get() gives the default value for one that isn't.
 // A setting is bound to its owner from its constructor to its destructor, in the order settings are declared. When
 // the owner's Load() or LoadText() has read a document, before anyone sees it, each setting bound to it is applied to
-// it, in that order: a missing key is added with the default value and the setting's comment, reported as an Info
-// message (ETomlCode::KeyAdded), unless the setting is optional (see TASWTomlSettingOptions::Optional); a value that
-// isn't valid is replaced by the default value, reported as a Warning (as Get() reports it), and a valid one is left
-// as it is; the key's comment is set to the setting's (if it has one) as the options' Writing.CommentPolicy says. A
-// table of settings that the document holds as another kind of value is replaced by a table of its settings' default
-// values, with a Warning. So the document then holds every setting with a valid value, and the owner's IsModified()
-// says whether that changed it (whether it needs saving). A default value that can't be written, or that the range or
-// the validator refuses, is reported as an Error, and the key is left as it is. The values are written with one edit
-// per table (a setting with value options of its own with an edit of its own), and the comments with one more. The
-// converter and the validator are called with the owner's file lock held, so they must not call its Load(),
-// LoadText(), Save(), SaveAs() or SetOptions(). SetOptions() doesn't apply the settings. A setting must not outlive
-// its table's owner (see TASWTomlTable). Neither copyable nor movable.
+// it, in that order: a missing key whose earlier name (see TASWTomlSettingOptions::OldKeys) its table has is renamed
+// from it, keeping its line or header, value and comment, reported as an Info message (ETomlCode::KeyRenamed), and is
+// then applied as a key that was there; any other missing key is added with the default value and the setting's
+// comment, reported as an Info message (ETomlCode::KeyAdded), unless the setting is optional (see
+// TASWTomlSettingOptions::Optional); a value that isn't valid is replaced by the default value, reported as a Warning
+// (as Get() reports it), and a valid one is left as it is; the key's comment is set to the setting's (if it has one)
+// as the options' Writing.CommentPolicy says. A table of settings that the document holds as another kind of value is
+// replaced by a table of its settings' default values, with a Warning. So the document then holds every setting with
+// a valid value, and the owner's IsModified() says whether that changed it (whether it needs saving). A default value
+// that can't be written, or that the range or the validator refuses, is reported as an Error, and the key is left as
+// it is; so is an earlier name that can't be renamed. The earlier names are renamed at once, and the values are
+// written with one edit per table (a setting with value options of its own with an edit of its own), and the comments
+// with one more. The converter and the validator are called with the owner's file lock held, so they must not call
+// its Load(), LoadText(), Save(), SaveAs() or SetOptions(). SetOptions() doesn't apply the settings. A setting must
+// not outlive its table's owner (see TASWTomlTable). Neither copyable nor movable.
 /////////////////////////////////////////////////////////////////////////////
 template <TomlConvertible T>
 class TASWTomlSetting : public Detail::TSettingBase
@@ -463,7 +478,15 @@ private:
             return;
         }
 
-        TASWTomlValue const* const found = document.Find(GetPath());
+        TASWTomlValue const* found = document.Find(GetPath());
+        if (found == nullptr)
+        {
+            if (!ApplyOldKeys(apply, m_Options.OldKeys))
+                return;
+
+            found = document.Find(GetPath());
+        }
+
         if (found == nullptr)
         {
             if (!m_Options.Optional)

@@ -1172,6 +1172,29 @@ ASW_TEST(TTest_ASWToml_SettingsLoad, Load_InvalidDefaultIsAnError)
     }
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_KeyWinsOverItsOldKeys)
+{
+    // Arrange
+    TPreloaded toml("");
+    TASWTomlTable general{ toml, "general" };
+    TASWTomlSetting<int> width{ general, "width", 640, "", { .OldKeys = { "w" } } };
+    TASWTomlSetting<TServerVector> servers{ general, "servers", TServerVector(), "", { .OldKeys = { "mirrors" } } };
+    std::string const text = "[general]\nw = 800\nwidth = 900\n\n[[general.mirrors]]\nhost = \"a\"\nport = 1\n\n"
+        "[[general.servers]]\nhost = \"b\"\nport = 2\n";
+
+    // Act
+    TASWTomlResult const loaded = toml.LoadText(text);
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped(text), Escaped(toml.ToText()), "the keys and their old keys stay as they are");
+    CheckFalse(toml.IsModified(), "nothing changes");
+    CheckTrue(toml.Messages.empty(), "nothing is reported: " + MessagesText(toml.Messages));
+    CheckEquals(900, width.Get(), "the setting reads its own key");
+    TServerVector const read = servers.Get();
+    CheckTrue(read.size() == 1 && read[0].Host == "b", "and so does a setting of an array of tables");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsLoad, Load_LeavesAValidDocumentAsItIs)
 {
     // Arrange
@@ -1316,6 +1339,126 @@ ASW_TEST(TTest_ASWToml_SettingsLoad, Load_PathsThatCantBeUsedAreErrors)
         CheckTrue(message.Severity == ESeverity::Error && message.Code == ETomlCode::InvalidArgument,
             "as an Error (InvalidArgument): " + ASWToml::ToString(message));
     }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_RenamedKeyIsAppliedAsAnyOther)
+{
+    // Arrange
+    TASWTomlOptions fileWins = LfOptions();
+    fileWins.Writing.CommentPolicy = ASWToml::ECommentPolicy::FileWins;
+    TPreloaded toml("");
+    CheckTrue(toml.SetOptions(fileWins).IsOk(), "the options should be taken");
+    TASWTomlTable general{ toml, "general" };
+    TASWTomlSetting<unsigned> level{ general, "level", 2, "From 0 to 4.",
+        { .Min = 0, .Max = 4, .OldKeys = { "lvl" } } };
+    TASWTomlSetting<bool> cheats{ general, "cheats", false, "", { .Optional = true, .OldKeys = { "cheats_on" } } };
+    TASWTomlSetting<int> width{ general, "width", 640, "In pixels.", { .OldKeys = { "w" } } };
+
+    // Act
+    TASWTomlResult const loaded = toml.LoadText("[general]\nlvl = 9\ncheats_on = \"maybe\"\n# The user's note\n"
+        "w = 800\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("[general]\n# From 0 to 4.\nlevel = 2\ncheats = false\n# The user's note\nwidth = 800\n"),
+        Escaped(toml.ToText()), "a renamed key's value is checked and its comment written as any key's, also an "
+        "optional one's");
+    CheckEquals(std::size_t(5), toml.Messages.size(), "each key renamed and each value replaced: " +
+        MessagesText(toml.Messages));
+    if (toml.Messages.size() == 5)
+    {
+        CheckEquals(ETomlCode::KeyRenamed, toml.Messages[0].Code, "the rename first");
+        TASWTomlMessage const& replaced = toml.Messages[1];
+        CheckTrue(replaced.Severity == ESeverity::Warning && replaced.Code == ETomlCode::ValueOutOfRange,
+            "then the value replaced, a Warning");
+        CheckEquals("general.level"s, replaced.Path, "at the key's new path");
+        CheckEquals("general.cheats"s, toml.Messages[2].Path, "an optional key is renamed");
+        CheckEquals(ETomlCode::TypeMismatch, toml.Messages[3].Code, "and its value checked");
+        CheckEquals(ETomlCode::KeyRenamed, toml.Messages[4].Code, "then the last key renamed");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_RenamesAnOldKey)
+{
+    // Arrange
+    TPreloaded toml("");
+    TASWTomlTable logging{ toml, "logging" };
+    TASWTomlSetting<int> days{ logging, "days_kept", 7, "Days to keep the logs.",
+        { .OldKeys = { "days", "log days" } } };
+    TASWTomlSetting<int> width{ logging, "width", 640, "", { .OldKeys = { "w", "size_x" } } };
+    TASWTomlSetting<int> height{ logging, "height", 480, "", { .OldKeys = { "h" } } };
+
+    // Act
+    // An old key is looked for in the setting's own table only
+    TASWTomlResult const loaded = toml.LoadText("[logging]\n# The user's note\n  \"log days\"  = 0x1E  # Mine\n"
+        "size_x = 800\nw = 900\n\n[other]\nh = 1\n");
+    std::string const text = toml.ToText();
+    bool const modified = toml.IsModified();
+    int const daysValue = days.Get();
+    int const widthValue = width.Get();
+    TMessageVector const messages = toml.Messages;
+    TASWTomlResult const reloaded = toml.LoadText(text);
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("[logging]\n  # Days to keep the logs.\n  days_kept  = 0x1E  # Mine\nsize_x = 800\n"
+        "width = 900\nheight = 480\n\n[other]\nh = 1\n"), Escaped(text), "the first old key in the setting's order "
+        "is renamed in place, keeping its spacing, value and end-of-line comment");
+    CheckTrue(modified, "renaming a key modifies the document");
+    CheckEquals(30, daysValue, "the setting reads the renamed key's value");
+    CheckEquals(900, widthValue, "the setting reads the renamed key's value");
+    CheckEquals(std::size_t(3), messages.size(), "each key renamed or added: " + MessagesText(messages));
+    if (messages.size() == 3)
+    {
+        TASWTomlMessage const& renamed = messages[0];
+        CheckTrue(renamed.Severity == ESeverity::Info && renamed.Code == ETomlCode::KeyRenamed, "an Info, KeyRenamed");
+        CheckEquals("The key logging.days_kept is missing: its earlier name \"log days\" is renamed to it."s,
+            renamed.Text, "its text names the key and its earlier name");
+        CheckEquals("logging.days_kept"s, renamed.Path, "its path is the setting's");
+        CheckEquals("logging.width"s, messages[1].Path, "in declaration order");
+        CheckEquals(ETomlCode::KeyAdded, messages[2].Code, "a key whose old key is in another table is added");
+    }
+
+    CheckTrue(reloaded.IsOk(), "the text with the new keys should load");
+    CheckEquals(Escaped(text), Escaped(toml.ToText()), "and stays as it is");
+    CheckFalse(toml.IsModified(), "without a change");
+    CheckEquals(messages.size(), toml.Messages.size(), "or a message: " + MessagesText(toml.Messages));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_RenamesOldTablesAndArraysOfTables)
+{
+    // Arrange
+    TPreloaded toml("");
+    TASWTomlTable net{ toml, "net" };
+    TASWTomlSetting<TTestServer> server{ net, "server", TTestServer{ "localhost", 80, true, std::nullopt },
+        "The server.", { .OldKeys = { "host" } } };
+    TASWTomlSetting<TServerVector> servers{ net, "servers", TServerVector(), "The servers.",
+        { .OldKeys = { "mirrors" } } };
+    TASWTomlTable ui{ toml, "ui" };
+    TASWTomlSetting<int> width{ ui, "width", 640, "In pixels.", { .OldKeys = { "w" } } };
+    TASWTomlTable limits{ toml, "limits" };
+    TASWTomlSetting<int> most{ limits, "most", 1, "The most.", { .OldKeys = { "max" } } };
+
+    // Act
+    // A table, an array of tables with a sub-table, a dotted key and an entry of an inline table
+    TASWTomlResult const loaded = toml.LoadText("ui.w = 800\nlimits = { max = 5, min = 1 }\n\n# Mine\n[net.host]\n"
+        "host = \"example.com\"\nport = 8080\n\n[[net.mirrors]]\nhost = \"a\"\nport = 1\n\n[net.mirrors.extra]\n"
+        "x = 1\n\n[[net.mirrors]]\nhost = \"b\"\nport = 2\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("# In pixels.\nui.width = 800\nlimits = { most = 5, min = 1 }\n\n# The server.\n[net.server]\n"
+        "host = \"example.com\"\nport = 8080\n\n# The servers.\n[[net.servers]]\nhost = \"a\"\nport = 1\n\n"
+        "[net.servers.extra]\nx = 1\n\n[[net.servers]]\nhost = \"b\"\nport = 2\n"), Escaped(toml.ToText()),
+        "each is renamed in every header and key that names it, and gets its comment where it has a line");
+    CheckEquals(std::size_t(4), toml.Messages.size(), "each rename: " + MessagesText(toml.Messages));
+    for (TASWTomlMessage const& message : toml.Messages)
+        CheckEquals(ETomlCode::KeyRenamed, message.Code, "is KeyRenamed: " + ASWToml::ToString(message));
+
+    CheckEquals("example.com"s, server.Get().Host, "the struct is read from the renamed table");
+    CheckEquals(std::size_t(2), servers.Get().size(), "the vector from the renamed array of tables");
+    CheckEquals(800, width.Get(), "the dotted key's value");
+    CheckEquals(5, most.Get(), "the inline table's");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsLoad, Load_ReplacesAnInvalidValueWithTheDefault)
