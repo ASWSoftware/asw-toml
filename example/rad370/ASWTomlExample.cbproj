@@ -108,6 +108,10 @@
             <DependentOn>..\..\ASWToml\ASWToml_Document.h</DependentOn>
             <BuildOrder>2</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Edits.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Edits.h</DependentOn>
+            <BuildOrder>17</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_File.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_File.h</DependentOn>
             <BuildOrder>3</BuildOrder>

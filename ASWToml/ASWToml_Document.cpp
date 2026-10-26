@@ -25,6 +25,7 @@ SPDX-License-Identifier: MIT
 #include <utility>
 #include <vector>
 //---------------------------------------------------------------------------
+#include "ASWToml_Edits.h"
 #include "ASWToml_Parser.h"
 #include "ASWToml_Scalars.h"
 #include "ASWToml_Utils.h"
@@ -2912,6 +2913,70 @@ TIndexVector Detail::Partners(std::size_t oldSize, std::size_t size, Detail::TEl
 TASWTomlDocument::TASWTomlDocument()
     : m_Index(EmptyIndex())
 {
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits)
+{
+    TASWTomlResult result = edits.GetResult();
+    if (!result.IsOk() || edits.IsEmpty())
+        return result;
+
+    // Made on a copy, which the document takes only when every edit succeeded
+    TASWTomlDocument edited = *this;
+    edited.m_Modified = false;
+    for (TASWTomlEdit const& edit : edits.GetEdits())
+    {
+        result = edited.ApplyEdit(edit);
+        if (!result.IsOk())
+            return result;
+    }
+
+    if (edited.m_Modified)
+        Commit(edited.m_Model, edited.m_Index, edited.m_Root);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::ApplyEdit(TASWTomlEdit const& edit)
+{
+    TASWTomlValueOptions const& values = edit.Values.has_value() ? *edit.Values : m_Options.Values;
+    switch (edit.Kind)
+    {
+        case EEditKind::Append:
+            return Append(edit.Path, edit.Value, values);
+
+        case EEditKind::Remove:
+            break;
+
+        case EEditKind::Rename:
+            return Rename(edit.Path, edit.Text);
+
+        case EEditKind::SetComment:
+            return SetComment(edit.Path, edit.Text);
+
+        case EEditKind::SetTrailingComment:
+            return SetTrailingComment(edit.Path, edit.Text);
+
+        case EEditKind::SetValue:
+            return SetValue(edit.Path, edit.Value, values);
+    }
+
+    // A removal. Remove() returns false for nothing to remove as for a removal that failed; in a batch, the first
+    // changes nothing and isn't a failure
+    if (!edit.Path.IsValid())
+        return WithPath(Failure(ETomlCode::InvalidArgument, edit.Path.GetError()), edit.Path);
+
+    if (edit.Path.IsRoot())
+        return WithPath(Failure(ETomlCode::InvalidArgument, "Can't remove the root table."), edit.Path);
+
+    TASWTomlResult result;
+    if (Detail::FindNode(m_Index, edit.Path) != NoIndex && !Remove(edit.Path))
+    {
+        result = WithPath(Failure(ETomlCode::InvalidValue, "Can't remove " + MessagePath(edit.Path) +
+            ": the text without it doesn't read back as the values without it."), edit.Path);
+    }
+
+    return result;
 }
 //---------------------------------------------------------------------------
 TASWTomlResult TASWTomlDocument::Append(TASWTomlPath const& path, TASWTomlValue const& value)

@@ -27,6 +27,7 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_File.h"
 #include "ASWToml_Index.h"
 #include "ASWToml_Interface.h"

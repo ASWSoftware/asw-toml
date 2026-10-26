@@ -20,40 +20,10 @@ SPDX-License-Identifier: MIT
 #include <exception>
 #include <string>
 #include <string_view>
-#include <utility>
 //---------------------------------------------------------------------------
 
 namespace ASWToml
 {
-
-namespace Detail
-{
-
-//---------------------------------------------------------------------------
-TASWTomlResult PathFailure(TASWTomlResult result, TASWTomlPath const& path)
-{
-    std::string place = path.ToString();
-    if (place.empty())
-        return result;
-
-    if (!result.Path.empty())
-    {
-        if (result.Path.front() != '[')
-            place += '.';
-
-        place += result.Path;
-    }
-
-    result.Path = std::move(place);
-
-    return result;
-}
-//---------------------------------------------------------------------------
-
-} // namespace Detail
-
-//---------------------------------------------------------------------------
-
 
 /////////////////////////////////////////////////////////////////////////////
 // IASWToml

@@ -35,6 +35,7 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
+#include "ASWToml_Edits.h"
 #include "ASWToml_Index.h"
 #include "ASWToml_Parser.h"
 #include "ASWToml_Scalars.h"
@@ -52,6 +53,7 @@ namespace
 
 using namespace std::string_literals;
 
+using ASWToml::EEditKind;
 using ASWToml::ELineBreak;
 using ASWToml::ELineEnding;
 using ASWToml::ETomlCode;
@@ -177,6 +179,10 @@ constexpr std::size_t FuzzTextCount = 4000;
 // and how many random texts are edited
 constexpr std::uint32_t EditFuzzFirstSeed = 20261024;
 constexpr std::size_t EditFuzzEditCount = 20;
+
+// How many random batches the batch fuzz test makes on each text, and how many edits a batch has at most
+constexpr std::size_t EditFuzzBatchCount = 10;
+constexpr std::size_t EditFuzzBatchSize = 6;
 constexpr std::size_t EditFuzzTextCount = 500;
 
 // What the random edits use: keys (some of them the corpus's own, so keys meet), comments and trailing comments, and
@@ -236,6 +242,7 @@ struct TFuzzEdit
 
 
 void AddPaths(TASWTomlValue const& value, ASWToml::TASWTomlPath const& path, TPathVector& paths);
+void AddToBatch(TFuzzEdit const& edit, ASWToml::TASWTomlEdits& edits);
 ASWToml::TASWTomlResult ApplyEdit(TASWTomlDocument& document, TFuzzEdit const& edit);
 std::size_t ChangedLineCount(std::string const& before, std::string const& after);
 std::string CodeLines(std::string const& text);
@@ -265,6 +272,7 @@ std::string NestedInlineTables(std::size_t depth);
 std::size_t NestingDepth(TASWTomlValue const& value) noexcept;
 ASWToml::Detail::TIndexNode const& NodeAt(TDocIndex const& index, std::string const& path);
 std::string NormalizedComment(std::string_view text);
+ASWToml::TASWTomlResult OneByOne(TASWTomlDocument& document, ASWToml::TASWTomlEdits const& edits);
 std::string RandomDocumentText(std::mt19937& generator);
 TFuzzEdit RandomEdit(std::mt19937& generator, TASWTomlDocument const& document);
 std::string RandomKey(std::mt19937& generator);
@@ -276,6 +284,7 @@ std::string RandomValueText(std::mt19937& generator, std::size_t depth);
 TASWTomlValue RemovedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath const& path,
     TASWTomlDocument const& edited);
 TASWTomlValue RenamedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath const& path, std::string const& newKey);
+std::string ResultsDiffer(ASWToml::TASWTomlResult const& expected, ASWToml::TASWTomlResult const& actual);
 TCorpusTextVector RoundTripCorpus();
 bool SameValue(std::string const& expected, TASWTomlValue const& value);
 bool SetAt(TASWTomlValue& root, ASWToml::TASWTomlPath const& path, TASWTomlValue const& value);
@@ -317,6 +326,27 @@ void AddPaths(TASWTomlValue const& value, ASWToml::TASWTomlPath const& path, TPa
             AddPaths((*array)[i], child, paths);
         }
     }
+}
+//---------------------------------------------------------------------------
+/*
+    AddToBatch
+
+    Adds 'edit' to 'edits' as the batch edit of its kind; nothing for the no-op edit, which is several edits
+*/
+void AddToBatch(TFuzzEdit const& edit, ASWToml::TASWTomlEdits& edits)
+{
+    if (edit.Kind == EFuzzEdit::SetExisting || edit.Kind == EFuzzEdit::SetNew)
+        edits.SetValue(edit.Path, edit.Value);
+    else if (edit.Kind == EFuzzEdit::Append)
+        edits.Append(edit.Path, edit.Value);
+    else if (edit.Kind == EFuzzEdit::Remove)
+        edits.Remove(edit.Path);
+    else if (edit.Kind == EFuzzEdit::Rename)
+        edits.Rename(edit.Path, edit.Text);
+    else if (edit.Kind == EFuzzEdit::SetComment)
+        edits.SetComment(edit.Path, edit.Text);
+    else if (edit.Kind == EFuzzEdit::SetTrailingComment)
+        edits.SetTrailingComment(edit.Path, edit.Text);
 }
 //---------------------------------------------------------------------------
 /*
@@ -1205,6 +1235,61 @@ std::string NormalizedComment(std::string_view text)
 }
 //---------------------------------------------------------------------------
 /*
+    OneByOne
+
+    Makes the edits of 'edits' on 'document' one after another with the document's edits of their names, as
+    TASWTomlDocument::Apply() says it makes them, up to the first that fails, and gives its result (or the failure of
+    'edits' to convert a value, before any edit): Apply()'s result, and when it is Ok, the document Apply() makes
+*/
+ASWToml::TASWTomlResult OneByOne(TASWTomlDocument& document, ASWToml::TASWTomlEdits const& edits)
+{
+    ASWToml::TASWTomlResult result = edits.GetResult();
+    for (std::size_t i = 0; result.IsOk() && i < edits.GetEdits().size(); ++i)
+    {
+        ASWToml::TASWTomlEdit const& edit = edits.GetEdits()[i];
+        ASWToml::TASWTomlValueOptions const values = edit.Values.value_or(document.GetOptions().Values);
+        switch (edit.Kind)
+        {
+            case EEditKind::Append:
+                result = document.Append(edit.Path, edit.Value, values);
+                break;
+
+            case EEditKind::Remove:
+                if (!edit.Path.IsValid() || edit.Path.IsRoot())
+                {
+                    result.Code = ETomlCode::InvalidArgument;
+                    result.Message = edit.Path.IsRoot() ? "Can't remove the root table." : edit.Path.GetError();
+                    result.Path = edit.Path.ToString();
+                }
+                else
+                {
+                    static_cast<void>(document.Remove(edit.Path));
+                }
+
+                break;
+
+            case EEditKind::Rename:
+                result = document.Rename(edit.Path, edit.Text);
+                break;
+
+            case EEditKind::SetComment:
+                result = document.SetComment(edit.Path, edit.Text);
+                break;
+
+            case EEditKind::SetTrailingComment:
+                result = document.SetTrailingComment(edit.Path, edit.Text);
+                break;
+
+            case EEditKind::SetValue:
+                result = document.SetValue(edit.Path, edit.Value, values);
+                break;
+        }
+    }
+
+    return result;
+}
+//---------------------------------------------------------------------------
+/*
     RandomDocumentText
 
     A random TOML text of up to 11 lines: blank and comment lines, headers, headers of arrays of tables, and keys
@@ -1585,6 +1670,23 @@ TASWTomlValue RenamedValues(TASWTomlValue const& root, ASWToml::TASWTomlPath con
     }
 
     return expected;
+}
+//---------------------------------------------------------------------------
+/*
+    ResultsDiffer
+
+    How 'actual' differs from 'expected' (code, message, path, line or column), for a message; empty when it doesn't
+*/
+std::string ResultsDiffer(ASWToml::TASWTomlResult const& expected, ASWToml::TASWTomlResult const& actual)
+{
+    std::string const expectedText = std::string(ASWToml::ToString(expected.Code)) + " \"" + expected.Message +
+        "\" at " + expected.Path + " (" + std::to_string(expected.Line) + ":" + std::to_string(expected.Column) + ")";
+    std::string const actualText = std::string(ASWToml::ToString(actual.Code)) + " \"" + actual.Message + "\" at " +
+        actual.Path + " (" + std::to_string(actual.Line) + ":" + std::to_string(actual.Column) + ")";
+    if (actualText == expectedText)
+        return std::string();
+
+    return actualText + " instead of " + expectedText;
 }
 //---------------------------------------------------------------------------
 /*
@@ -6202,6 +6304,277 @@ ASW_TEST(TTest_ASWToml_DocumentComments, TrailingComment_GetAndSet)
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentBatch
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentBatch::TTest_ASWToml_DocumentBatch()
+    : inherited("ASWToml_DocumentBatch_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_DocumentBatch::~TTest_ASWToml_DocumentBatch()
+{
+}
+//---------------------------------------------------------------------------
+ASWToml::TASWTomlResult TTest_ASWToml_DocumentBatch::CheckSameAsOneByOne(std::string const& text,
+    ASWToml::TASWTomlEdits const& edits, TASWTomlDocument& applied, std::string const& msg, std::source_location loc)
+{
+    TASWTomlDocument original;
+    CheckTrue(original.Parse(text).IsOk(), msg + ": the text should parse", loc);
+
+    TASWTomlDocument expected = original;
+    ASWToml::TASWTomlResult const expectedResult = OneByOne(expected, edits);
+    applied = original;
+    ASWToml::TASWTomlResult const result = applied.Apply(edits);
+
+    TASWTomlDocument const& wanted = expectedResult.IsOk() ? expected : original;
+    CheckEmpty(ResultsDiffer(expectedResult, result), msg + ": the result should be the edits' one by one", loc);
+    CheckEquals(Escaped(wanted.ToText()), Escaped(applied.ToText()), msg + ": and the text", loc);
+    CheckEquals(wanted.IsModified(), applied.IsModified(), msg + ": and the modified flag", loc);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentBatch::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentBatch::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentBatch::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentBatch::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentBatch, Apply_ConversionFailureMakesNoEdit)
+{
+    // Arrange
+    std::string const text = "a = 1\n";
+    TASWTomlDocument document;
+    static_cast<void>(document.Parse(text));
+    ASWToml::TASWTomlEdits edits;
+    edits.SetValue("a", 2).SetValue("b", std::numeric_limits<std::uint64_t>::max()).Remove("a");
+
+    // Act
+    ASWToml::TASWTomlResult const result = document.Apply(edits);
+
+    // Assert
+    CheckEmpty(ResultsDiffer(edits.GetResult(), result), "it should fail with the conversion's failure");
+    CheckEquals(ETomlCode::ValueOutOfRange, result.Code, "which is the converter's");
+    CheckEquals(text, document.ToText(), "and make none of the edits, not even those before it");
+    CheckFalse(document.IsModified(), "and leave the modified flag as it was");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentBatch, Apply_EmptyBatchChangesNothing)
+{
+    // Arrange
+    std::string const text = "a = 1\n";
+    TASWTomlDocument document;
+    static_cast<void>(document.Parse(text));
+    TASWTomlDocument modified = document;
+    static_cast<void>(modified.SetValue("a", 2));
+    std::string const modifiedText = modified.ToText();
+
+    // Act
+    ASWToml::TASWTomlResult const result = document.Apply(ASWToml::TASWTomlEdits());
+    ASWToml::TASWTomlResult const modifiedResult = modified.Apply(ASWToml::TASWTomlEdits());
+
+    // Assert
+    CheckTrue(result.IsOk() && modifiedResult.IsOk(), "no edits should succeed");
+    CheckEquals(text, document.ToText(), "and change nothing");
+    CheckFalse(document.IsModified(), "leaving the modified flag clear");
+    CheckEquals(modifiedText, modified.ToText(), "or, on a modified document, nothing either");
+    CheckTrue(modified.IsModified(), "leaving the flag set");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentBatch, Apply_FailureChangesNothing)
+{
+    // Arrange
+    std::string const text = "# File\n\n[server]\nhost = \"a\"\nport = 80\n";
+    ASWToml::TASWTomlValueOptions invalid;
+    invalid.IntegerBase = static_cast<ASWToml::EIntegerBase>(99);
+    ETomlCode const codes[] = { ETomlCode::NotFound, ETomlCode::InvalidArgument, ETomlCode::InvalidOptions,
+        ETomlCode::NotFound };
+    TASWTomlDocument modified;
+    static_cast<void>(modified.Parse(text));
+    static_cast<void>(modified.SetValue("server.port", 82));
+    std::string const modifiedText = modified.ToText();
+    ASWToml::TASWTomlEdits failsLast;
+    failsLast.SetValue("server.port", 81).Rename("server.missing", "x");
+
+    // Act & Assert
+    // Each failing edit first, between edits that succeed, and last: a key that doesn't exist, a path through a value
+    // that isn't a table, value options that aren't valid, and the comment of a key an earlier edit of the batch
+    // removed
+    for (std::size_t failing = 0; failing < 4; ++failing)
+    {
+        for (std::size_t place = 0; place < 3; ++place)
+        {
+            ASWToml::TASWTomlEdits edits;
+            if (place > 0)
+                edits.SetValue("server.port", 81).SetComment("server", "The server");
+
+            if (failing == 0)
+                edits.Rename("server.missing", "x");
+            else if (failing == 1)
+                edits.SetValue("server.port.x", 1);
+            else if (failing == 2)
+                edits.SetValue("server.port", 1, invalid);
+            else
+                edits.Remove("server.host").SetComment("server.host", "gone");
+
+            if (place < 2)
+                edits.Append("server.list", 1).SetTrailingComment("server.port", "TCP");
+
+            std::string const msg = "failing edit " + std::to_string(failing) + ", place " + std::to_string(place);
+            TASWTomlDocument applied;
+            ASWToml::TASWTomlResult const result = CheckSameAsOneByOne(text, edits, applied, msg);
+            CheckEquals(codes[failing], result.Code, msg + ": it should fail with the failing edit's code");
+            CheckEquals(text, applied.ToText(), msg + ": and change nothing");
+            CheckFalse(applied.IsModified(), msg + ": not even the modified flag");
+        }
+    }
+
+    ASWToml::TASWTomlResult const modifiedResult = modified.Apply(failsLast);
+    CheckEquals(ETomlCode::NotFound, modifiedResult.Code, "a batch that fails on a modified document should fail");
+    CheckEquals(modifiedText, modified.ToText(), "and change nothing");
+    CheckTrue(modified.IsModified(), "leaving the modified flag set");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentBatch, Apply_LaterEditsSeeEarlierOnes)
+{
+    // Arrange
+    // A key of a table an earlier edit makes, a key renamed and then set, a new array appended to twice, and comments
+    // of what earlier edits added
+    std::string const text = "[a]\nx = 1\n";
+    ASWToml::TASWTomlEdits edits;
+    edits.SetValue("b.c", 1).SetValue("b.d", 2).Rename("a.x", "y").SetValue("a.y", 5).Append("a.list", 1);
+    edits.Append("a.list", 2).SetComment("b.d", "new").SetTrailingComment("a.y", "five");
+
+    // Act
+    TASWTomlDocument applied;
+    ASWToml::TASWTomlResult const result = CheckSameAsOneByOne(text, edits, applied, "edits that build on others");
+
+    // Assert
+    CheckTrue(result.IsOk(), "each edit should see what the ones before it made: " + result.Message);
+    CheckEquals(Escaped("[a]\ny = 5  # five\nlist = [1, 2]\n\n[b]\nc = 1\n# new\nd = 2\n"), Escaped(applied.ToText()),
+        "the text");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentBatch, Apply_MakesEachKindOfEdit)
+{
+    // Arrange
+    std::string const text = "# Settings\n\n[server]\nhost = \"a\"  # name\nport = 80\nold = 1\n\n[[servers]]\n"
+        "name = \"x\"\n";
+    ASWToml::TASWTomlEdits edits;
+    edits.SetValue("server.port", 8080).Append("servers", TASWTomlValue(TTable{ { "name", "y" } }));
+    edits.Remove("server.old").Rename("server.host", "address").SetComment("server.port", "The port");
+    edits.SetTrailingComment("server.address", "host name");
+
+    // Act
+    TASWTomlDocument applied;
+    ASWToml::TASWTomlResult const result = CheckSameAsOneByOne(text, edits, applied, "one edit of each kind");
+
+    // Assert
+    CheckTrue(result.IsOk(), "every edit should be made: " + result.Message);
+    CheckEquals(Escaped("# Settings\n\n[server]\naddress = \"a\"  # host name\n# The port\nport = 8080\n\n"
+        "[[servers]]\nname = \"x\"\n\n[[servers]]\nname = \"y\"\n"), Escaped(applied.ToText()), "the text");
+    CheckTrue(applied.IsModified(), "the document should be modified");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentBatch, Apply_ModifiedFlagAsOneByOne)
+{
+    // Arrange
+    std::string const text = "a = 1  # one\n# b\nb = 2\n";
+    ASWToml::TASWTomlEdits same;
+    same.SetValue("a", 1).Rename("a", "a").SetComment("b", "b").SetTrailingComment("a", "one");
+    ASWToml::TASWTomlEdits undone;
+    undone.SetValue("a", 2).SetValue("a", 1);
+
+    // Act
+    TASWTomlDocument sameApplied;
+    ASWToml::TASWTomlResult const sameResult = CheckSameAsOneByOne(text, same, sameApplied, "edits that change nothing");
+    TASWTomlDocument undoneApplied;
+    ASWToml::TASWTomlResult const undoneResult = CheckSameAsOneByOne(text, undone, undoneApplied,
+        "an edit a later one undoes");
+
+    // Assert
+    CheckTrue(sameResult.IsOk() && undoneResult.IsOk(), "the edits should succeed");
+    CheckEquals(text, sameApplied.ToText(), "edits that change nothing should leave the text");
+    CheckFalse(sameApplied.IsModified(), "and the modified flag clear");
+    CheckEquals(text, undoneApplied.ToText(), "an edit that a later one undoes leaves the text as it was");
+    CheckTrue(undoneApplied.IsModified(), "but sets the flag, as the edits one by one do");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentBatch, Apply_RemoveOfNothingOrTheRoot)
+{
+    // Arrange
+    std::string const text = "a = 1\nb = 2\n";
+    ASWToml::TASWTomlEdits nothing;
+    nothing.Remove("missing").Remove("a").Remove("a");
+    ASWToml::TASWTomlEdits invalid;
+    invalid.Remove("b").Remove("a..b");
+    ASWToml::TASWTomlEdits root;
+    root.Remove("b").Remove(ASWToml::TASWTomlPath());
+
+    // Act
+    TASWTomlDocument nothingApplied;
+    ASWToml::TASWTomlResult const nothingResult = CheckSameAsOneByOne(text, nothing, nothingApplied,
+        "removals of nothing");
+    TASWTomlDocument invalidApplied;
+    ASWToml::TASWTomlResult const invalidResult = CheckSameAsOneByOne(text, invalid, invalidApplied,
+        "a removal at a path that isn't valid");
+    TASWTomlDocument rootApplied;
+    ASWToml::TASWTomlResult const rootResult = CheckSameAsOneByOne(text, root, rootApplied, "a removal of the root");
+
+    // Assert
+    CheckTrue(nothingResult.IsOk(), "a removal of nothing should change nothing, and not fail");
+    CheckEquals("b = 2\n", nothingApplied.ToText(), "while the others remove what they name");
+    CheckEquals(ETomlCode::InvalidArgument, invalidResult.Code, "a path that isn't valid should fail");
+    CheckEquals(ASWToml::TASWTomlPath("a..b").GetError(), invalidResult.Message, "with the path's error");
+    CheckEquals(text, invalidApplied.ToText(), "and change nothing");
+    CheckEquals(ETomlCode::InvalidArgument, rootResult.Code, "the root should fail");
+    CheckEquals("Can't remove the root table.", rootResult.Message, "saying it can't be removed");
+    CheckEquals(text, rootApplied.ToText(), "and change nothing");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentBatch, Apply_ValueOptions)
+{
+    // Arrange
+    TASWTomlOptions options;
+    options.Values.IntegerBase = ASWToml::EIntegerBase::Octal;
+    ASWToml::TASWTomlValueOptions hexadecimal;
+    hexadecimal.IntegerBase = ASWToml::EIntegerBase::Hexadecimal;
+    TASWTomlDocument document;
+    static_cast<void>(document.Parse("x = 1\n", options));
+    ASWToml::TASWTomlEdits edits;
+    edits.SetValue("a", 8).SetValue("b", 8, hexadecimal).Append("c", 8).Append("c", 8, hexadecimal);
+    TASWTomlDocument expected = document;
+    ASWToml::TASWTomlResult const expectedResult = OneByOne(expected, edits);
+
+    // Act
+    ASWToml::TASWTomlResult const result = document.Apply(edits);
+
+    // Assert
+    CheckTrue(expectedResult.IsOk() && result.IsOk(), "the edits should succeed: " + result.Message);
+    CheckEquals("x = 1\na = 0o10\nb = 0x8\nc = [0o10, 0x8]\n", document.ToText(),
+        "a value should be written with its edit's value options, else the document's");
+    CheckEquals(expected.ToText(), document.ToText(), "as the edits one by one write it");
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentEditFuzz
 /////////////////////////////////////////////////////////////////////////////
 
@@ -6239,6 +6612,65 @@ void TTest_ASWToml_DocumentEditFuzz::CheckCounts(TCountVector const& changes, TR
         TResultCountMap::const_iterator const found = results.find(item.first);
         CheckTrue(found != results.end() && found->second > 0,
             "some edits should give " + std::string(ASWToml::ToString(item.first)), loc);
+    }
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentEditFuzz::CheckRandomBatches(std::string const& text, TASWTomlOptions const& options,
+    std::uint32_t seed, std::string const& name, TResultCountMap& results, std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text, options);
+    CheckTrue(parsed.IsOk(), name + ": the text should parse: " + parsed.Message, loc);
+
+    std::mt19937 generator(seed);
+    for (std::size_t batch = 0; parsed.IsOk() && batch < EditFuzzBatchCount; ++batch)
+    {
+        // Each edit is drawn on a copy that has the edits before it, as Apply() makes them, so it may build on them
+        std::size_t const count = 1 + generator() % EditFuzzBatchSize;
+        ASWToml::TASWTomlEdits edits;
+        std::string descriptions;
+        TASWTomlDocument drawn = document;
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            TFuzzEdit const edit = RandomEdit(generator, drawn);
+            ASWToml::TASWTomlEdits one;
+            AddToBatch(edit, one);
+            AddToBatch(edit, edits);
+            static_cast<void>(OneByOne(drawn, one));
+            if (!one.IsEmpty())
+                descriptions += "\n  " + EditDescription(edit);
+        }
+
+        if (generator() % 2 == 0)
+            document.ClearModified();
+
+        TASWTomlDocument expected = document;
+        ASWToml::TASWTomlResult const expectedResult = OneByOne(expected, edits);
+        TASWTomlDocument applied = document;
+        ASWToml::TASWTomlResult const result = applied.Apply(edits);
+
+        // Checked with if, as the checks run thousands of times
+        TASWTomlDocument const& wanted = expectedResult.IsOk() ? expected : document;
+        std::string problem = ResultsDiffer(expectedResult, result);
+        if (!problem.empty())
+            problem = "the result should be the edits' one by one, not " + problem;
+        else if (applied.ToText() != wanted.ToText())
+            problem = "the text should be the edits' one by one, or on a failure as it was";
+        else if (applied.IsModified() != wanted.IsModified())
+            problem = "the modified flag should be the edits' one by one, or on a failure as it was";
+        else if (!ASWToml::Detail::IdenticalValues(applied.GetRoot(), wanted.GetRoot()))
+            problem = "the values should be the edits' one by one, or on a failure as they were";
+
+        if (!problem.empty())
+        {
+            CheckTrue(false, name + ", seed " + std::to_string(seed) + ", batch " + std::to_string(batch + 1) + ":" +
+                descriptions + "\n" + problem + "\nbefore: " + Escaped(document.ToText()) + "\none by one: " +
+                Escaped(wanted.ToText()) + "\nbatch: " + Escaped(applied.ToText()), loc);
+            return;
+        }
+
+        ++results[result.Code];
+        document = applied;
     }
 }
 //---------------------------------------------------------------------------
@@ -6560,6 +6992,55 @@ ASW_TEST(TTest_ASWToml_DocumentEditFuzz, Corpus_EveryTableAndArraySet)
     CheckTrue(sets > 2000, "every table and array of every text set: " + std::to_string(sets));
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentEditFuzz, RandomBatches_CorpusTexts)
+{
+    // Arrange
+    TCorpusTextVector const corpus = EditCorpus();
+    TResultCountMap results;
+
+    // Act & Assert
+    for (std::size_t i = 0; i < corpus.size(); ++i)
+    {
+        std::uint32_t const seed = EditFuzzFirstSeed + static_cast<std::uint32_t>(i);
+        CheckRandomBatches(corpus[i].Text, TASWTomlOptions(), seed, corpus[i].Name, results);
+    }
+
+    // Assert
+    std::size_t const failed = corpus.size() * EditFuzzBatchCount - results[ETomlCode::Ok];
+    CheckTrue(results[ETomlCode::Ok] > corpus.size(), "many batches should succeed: " +
+        std::to_string(results[ETomlCode::Ok]));
+    CheckTrue(failed > corpus.size(), "and many fail: " + std::to_string(failed));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentEditFuzz, RandomBatches_RandomTexts)
+{
+    // Arrange
+    // Random texts that parse, with random options (one in four with a low Reading.MaxNestingDepth)
+    TResultCountMap results;
+    std::size_t edited = 0;
+
+    for (std::uint32_t seed = EditFuzzFirstSeed; edited < EditFuzzTextCount; ++seed)
+    {
+        std::mt19937 generator(seed);
+        std::string const text = RandomDocumentText(generator);
+        TASWTomlOptions const options = RandomOptions(generator);
+        TASWTomlDocument document;
+        if (!document.Parse(text, options).IsOk())
+            continue;
+
+        // Act & Assert
+        ++edited;
+        CheckRandomBatches(text, options, seed, "a random text", results);
+    }
+
+    // Assert
+    std::size_t const failed = EditFuzzTextCount * EditFuzzBatchCount - results[ETomlCode::Ok];
+    CheckTrue(results[ETomlCode::Ok] > EditFuzzTextCount, "many batches should succeed: " +
+        std::to_string(results[ETomlCode::Ok]));
+    CheckTrue(failed > EditFuzzTextCount, "and many fail: " + std::to_string(failed));
+    CheckTrue(results[ETomlCode::NestingTooDeep] > 0, "some with NestingTooDeep");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentEditFuzz, RandomEdits_CorpusTexts)
 {
     // Arrange
@@ -6615,6 +7096,7 @@ ASW_TEST(TTest_ASWToml_DocumentEditFuzz, RandomEdits_RandomTexts)
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentAppend, "Document")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentBatch, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentComments, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentEditFuzz, "Document")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_DocumentErrors, "Document")

@@ -42,6 +42,8 @@ add_library(ASWToml STATIC
     ASWToml/ASWToml_Converters.h
     ASWToml/ASWToml_Document.cpp
     ASWToml/ASWToml_Document.h
+    ASWToml/ASWToml_Edits.cpp
+    ASWToml/ASWToml_Edits.h
     ASWToml/ASWToml_File.cpp
     ASWToml/ASWToml_File.h
     ASWToml/ASWToml_Index.cpp

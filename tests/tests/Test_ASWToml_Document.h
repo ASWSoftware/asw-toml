@@ -25,6 +25,7 @@ SPDX-License-Identifier: MIT
 #include "ASWUnitTests_TestBase.h"
 //---------------------------------------------------------------------------
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_Index.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
@@ -678,6 +679,45 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_DocumentBatch
+//
+// TASWTomlDocument::Apply(): several edits as one, as they are made one after the other
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_DocumentBatch : public TAutoTestGroup<TTest_ASWToml_DocumentBatch>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_DocumentBatch> inherited;
+
+private:
+    // Checks that Apply() of 'edits' to a document of 'text' gives what the edits made one by one give (see
+    // OneByOne()): the same result, and the same text and modified flag, or on a failure, the document as it was; sets
+    // 'applied' to the document Apply() made, and gives its result
+    ASWToml::TASWTomlResult CheckSameAsOneByOne(std::string const& text, ASWToml::TASWTomlEdits const& edits,
+        ASWToml::TASWTomlDocument& applied, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Apply_ConversionFailureMakesNoEdit();
+    void Test_Apply_EmptyBatchChangesNothing();
+    void Test_Apply_FailureChangesNothing();
+    void Test_Apply_LaterEditsSeeEarlierOnes();
+    void Test_Apply_MakesEachKindOfEdit();
+    void Test_Apply_ModifiedFlagAsOneByOne();
+    void Test_Apply_RemoveOfNothingOrTheRoot();
+    void Test_Apply_ValueOptions();
+
+public:
+    TTest_ASWToml_DocumentBatch();
+    ~TTest_ASWToml_DocumentBatch() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentEditFuzz
 //
 // Edits of the texts of our round-trip corpus and toml-test's valid files: each one does what it should, the text
@@ -701,6 +741,15 @@ private:
     void CheckCounts(TCountVector const& changes, TResultCountMap const& results, bool nestingTooDeep,
         std::source_location loc = std::source_location::current());
 
+    // Makes EditFuzzBatchCount random batches of 1 to EditFuzzBatchSize edits (see RandomEdit(), each drawn after the
+    // ones before it are made, so it may build on them), one batch after another, on a document of 'text' parsed with
+    // 'options' (named 'name' in messages), with a generator seeded with 'seed', and checks that Apply() of each gives
+    // what its edits made one by one give (see OneByOne()): the result, and the text, values and modified flag, or on
+    // a failure, the document as it was. Adds the code of each batch's result to 'results'. The first problem ends
+    // the batches.
+    void CheckRandomBatches(std::string const& text, ASWToml::TASWTomlOptions const& options, std::uint32_t seed,
+        std::string const& name, TResultCountMap& results, std::source_location loc = std::source_location::current());
+
     // Makes EditFuzzEditCount random edits (see RandomEdit()) one after another on a document of 'text' parsed with
     // 'options' (named 'name' in messages), with a generator seeded with 'seed', and checks each: that it does what it
     // should (see EditProblem()), that a failed one changes nothing, that the modified flag says whether the text
@@ -716,6 +765,8 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Corpus_EveryKeyRenamed();
     void Test_Corpus_EveryPathRemoved();
     void Test_Corpus_EveryTableAndArraySet();
+    void Test_RandomBatches_CorpusTexts();
+    void Test_RandomBatches_RandomTexts();
     void Test_RandomEdits_CorpusTexts();
     void Test_RandomEdits_RandomTexts();
 

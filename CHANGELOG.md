@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Batches: `TASWTomlEdits` (`ASWToml_Edits.h`) lists edits of a document (`SetValue()`, `Append()`,
+  `Remove()`, `Rename()`, `SetComment()` and `SetTrailingComment()`, chained), and
+  `TASWTomlDocument::Apply()` makes them as one: all of them, giving exactly the text the edits one
+  after the other give, or none, failing with the result of the first edit that fails. A typed value
+  is converted when it is added; one that doesn't convert fails the batch. In a batch, a `Remove()`
+  of nothing changes nothing, and one of a path that isn't valid or of the root fails.
+
 ### Changed
 
 - `TASWTomlDocument::Find()`, and so every lookup through a TOML object (`GetValue()`,

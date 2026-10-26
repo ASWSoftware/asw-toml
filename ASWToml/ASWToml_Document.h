@@ -40,6 +40,9 @@ SPDX-License-Identifier: MIT
 namespace ASWToml
 {
 
+struct TASWTomlEdit;
+class TASWTomlEdits;
+
 //---------------------------------------------------------------------------
 // Internals of the library: the document's model. Not part of the public interface.
 //
@@ -302,6 +305,9 @@ private:
     TASWTomlValue m_Root; // The values of m_Model, as GetRoot() describes
     bool m_Modified = false; // See IsModified()
 
+    // Makes 'edit', an edit of a batch (see Apply()), with the edit of its kind
+    TASWTomlResult ApplyEdit(TASWTomlEdit const& edit);
+
     // The model's text without a byte order mark, each line break as it is (what ToText() writes with the default
     // writing options, but for the byte order mark)
     std::string BodyText() const;
@@ -327,6 +333,17 @@ private:
 public:
     // An empty document with the default options: no keys, tables or byte order mark, so ToText() is empty
     TASWTomlDocument();
+
+    // Makes the edits of 'edits' (see ASWToml_Edits.h) as one: each as the edit of its name makes it (Append(),
+    // Remove(), Rename(), SetComment(), SetTrailingComment() or SetValue(), the value written with the edit's value
+    // options, else the document's Values), in order, each on the text the ones before it made, so the text, the
+    // values and the comments are what those edits made one after the other give, byte for byte. When one of them
+    // fails, it fails with that edit's result (its code, message and Path), and nothing changes. A Remove() fails with
+    // InvalidArgument when its path isn't valid or is the root, and changes nothing when nothing is at its path. When
+    // 'edits' holds a value that didn't convert (see TASWTomlEdits::GetResult()), it fails with that result before any
+    // edit, and nothing changes. The modified flag is set when the text changed, and left as it was otherwise (with no
+    // edits too). Throws only std::bad_alloc, and then nothing changes either.
+    TASWTomlResult Apply(TASWTomlEdits const& edits);
 
     // Adds 'value' at the end of the array at 'path', written with the document's Values options (the second form:
     // with 'values'), as SetValue() writes a value:

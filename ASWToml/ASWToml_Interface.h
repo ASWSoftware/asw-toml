@@ -48,20 +48,6 @@ namespace ASWToml
 // is dropped.
 using TASWTomlLogCallback = std::function<void (TASWTomlMessage const& message)>;
 
-//---------------------------------------------------------------------------
-
-// Helpers of IASWToml's templates
-namespace Detail
-{
-
-// 'result' (a converter's failure for the value at 'path', with a Path relative to that value, see TASWTomlConverter)
-// with 'path' put in front of its Path, so it is the place in the document: servers and [1].port make
-// servers[1].port, server and port make server.port; the root path leaves it as it was, and an empty Path becomes
-// 'path'
-TASWTomlResult PathFailure(TASWTomlResult result, TASWTomlPath const& path);
-
-} // namespace Detail
-
 
 /////////////////////////////////////////////////////////////////////////////
 // IASWToml

@@ -128,6 +128,10 @@
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Document.h</DependentOn>
             <BuildOrder>62</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Edits.cpp">
+            <DependentOn>..\..\..\..\ASWToml\ASWToml_Edits.h</DependentOn>
+            <BuildOrder>83</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\..\ASWToml\ASWToml_File.cpp">
             <DependentOn>..\..\..\..\ASWToml\ASWToml_File.h</DependentOn>
             <BuildOrder>53</BuildOrder>
@@ -203,6 +207,10 @@
         <CppCompile Include="..\..\..\tests\Test_ASWToml_Document.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_Document.h</DependentOn>
             <BuildOrder>64</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\..\tests\Test_ASWToml_Edits.cpp">
+            <DependentOn>..\..\..\tests\Test_ASWToml_Edits.h</DependentOn>
+            <BuildOrder>84</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\tests\Test_ASWToml_File.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_File.h</DependentOn>
