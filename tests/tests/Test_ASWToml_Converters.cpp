@@ -1831,6 +1831,37 @@ ASW_TEST(TTest_ASWToml_IntegerConverters, Messages_GiveTheRange)
         "an unsigned 64-bit type's range should end where a TOML integer's does");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_IntegerConverters, Messages_WriteTheNumbersInTheOptionsBase)
+{
+    // Arrange
+    TASWTomlValueOptions hexadecimal;
+    hexadecimal.IntegerBase = ASWToml::EIntegerBase::Hexadecimal;
+    TASWTomlValueOptions octal;
+    octal.IntegerBase = ASWToml::EIntegerBase::Octal;
+    TASWTomlValueOptions decimal;
+    decimal.IntegerBase = ASWToml::EIntegerBase::Decimal;
+    std::uint8_t byte = 1;
+    std::int8_t small = 1;
+
+    // Act
+    TASWTomlResult const inHexadecimal = TASWTomlConverter<std::uint8_t>::FromValue(300, byte, hexadecimal);
+    TASWTomlResult const inOctal = TASWTomlConverter<std::uint8_t>::FromValue(300, byte, octal);
+    TASWTomlResult const inDecimal = TASWTomlConverter<std::uint8_t>::FromValue(300, byte, decimal);
+    TASWTomlResult const negative = TASWTomlConverter<std::int8_t>::FromValue(-129, small, hexadecimal);
+
+    // Assert
+    CheckEquals("The value 0x12C is out of range: it must be from 0x0 to 0xFF."s, inHexadecimal.Message,
+        "the value and the range in hexadecimal, as the options write a number");
+    CheckEquals("The value 0o454 is out of range: it must be from 0o0 to 0o377."s, inOctal.Message, "in octal");
+    CheckEquals("The value 300 is out of range: it must be from 0 to 255."s, inDecimal.Message, "in decimal");
+    CheckEquals("The value -129 is out of range: it must be from -128 to 0x7F."s, negative.Message,
+        "a negative number in decimal, as it is written");
+    CheckEquals("0x3366CC"s, ASWToml::Detail::ValueText(0x3366CC, hexadecimal), "a value as messages show it");
+    CheckEquals("3368652"s, ASWToml::Detail::ValueText(0x3366CC), "in decimal without options");
+    CheckEquals("[0x1, \"0x2\"]"s, ASWToml::Detail::ValueText(TArray{ 1, "0x2" }, hexadecimal),
+        "the integers in an array too, and a string as it is");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_IntegerConverters, RoundTrip_EveryType_ThroughADocument)
 {
     // Act & Assert

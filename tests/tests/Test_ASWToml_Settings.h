@@ -35,6 +35,7 @@ private:
 public: // Test methods, each defined with ASW_TEST
     void Test_Get_InvalidValueGivesTheDefault();
     void Test_Get_ReadsTheDocument();
+    void Test_Messages_WriteValuesAsTheSettingDoes();
     void Test_New_GivesTheDefaults();
     void Test_OutOfMemory_SetChangesNothing();
     void Test_Paths_ThatCantBeUsedAreErrors();
@@ -87,6 +88,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Load_KeyWinsOverItsOldKeys();
     void Test_Load_LeavesAValidDocumentAsItIs();
     void Test_Load_MessagesNameTheFileLoaded();
+    void Test_Load_MessagesWriteValuesAsTheSettingDoes();
     void Test_Load_MissingFileGetsEverySetting();
     void Test_Load_OptionalKeyIsNotAdded();
     void Test_Load_PathsThatCantBeUsedAreErrors();

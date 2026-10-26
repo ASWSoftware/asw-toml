@@ -95,15 +95,18 @@ template <typename T>
 using TRangeEnd = std::conditional_t<LessComparable<T>, std::optional<T>, TNoRangeEnd>;
 
 // The ValueOutOfRange result of 'value', outside a setting's range from 'min' to 'max' (nullptr for an end the range
-// doesn't have, or that can't be written): "The value 9 is out of the setting's range: it must be from 0 to 4."
-TASWTomlResult OutOfSettingRange(TASWTomlValue const& value, TASWTomlValue const* min, TASWTomlValue const* max);
+// doesn't have, or that can't be written): "The value 9 is out of the setting's range: it must be from 0 to 4.", the
+// values written as the setting writes them, with 'options' (see ValueText())
+TASWTomlResult OutOfSettingRange(TASWTomlValue const& value, TASWTomlValue const* min, TASWTomlValue const* max,
+    TASWTomlValueOptions const& options);
 
 // Whether 'path' can be the path of a table of settings: a valid path of key parts only (the root path too)
 bool IsSettingsTablePath(TASWTomlPath const& path) noexcept;
 
 // The InvalidValue result of 'value', which a setting's validator refused with 'problem': "The value "" isn't valid:
-// it can't be empty." (a '.' is added unless 'problem' ends with one)
-TASWTomlResult RefusedValue(TASWTomlValue const& value, std::string_view problem);
+// it can't be empty." (a '.' is added unless 'problem' ends with one), the value written as the setting writes it,
+// with 'options' (see ValueText())
+TASWTomlResult RefusedValue(TASWTomlValue const& value, std::string_view problem, TASWTomlValueOptions const& options);
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -907,9 +910,11 @@ protected:
 
     // The Warning that the default value is used, as the value at the setting's path failed with 'result' (its
     // converter's, range's or validator's failure, with a Path inside the value): the result's code, its text followed
-    // by " The default value <defaultValue> is used." (or " The default value is used." when 'defaultValue' is nullptr:
-    // it can't be written), and the setting's path joined with the result's
-    TASWTomlMessage DefaultUsedMessage(TASWTomlResult const& result, TASWTomlValue const* defaultValue) const;
+    // by " The default value <defaultValue> is used." (written with 'options', the value options the setting writes
+    // with; or " The default value is used." when 'defaultValue' is nullptr: it can't be written), and the setting's
+    // path joined with the result's
+    TASWTomlMessage DefaultUsedMessage(TASWTomlResult const& result, TASWTomlValue const* defaultValue,
+        TASWTomlValueOptions const& options) const;
 
     TASWBaseToml& GetOwner() const noexcept;
 
@@ -921,15 +926,16 @@ protected:
 
     // Reports DefaultUsedMessage() (Get() gives the default value). A message that can't be made (std::bad_alloc) is
     // dropped.
-    void ReportDefaultUsed(TASWTomlResult const& result, TASWTomlValue const* defaultValue) const noexcept;
+    void ReportDefaultUsed(TASWTomlResult const& result, TASWTomlValue const* defaultValue,
+        TASWTomlValueOptions const& options) const noexcept;
 
     // Reports 'result', a failure of Set(), as an Error message (see IASWToml::ReportFailure())
     void ReportFailure(TASWTomlResult const& result) const noexcept;
 
-    // Reports the Warning of DefaultUsedMessage() for each part of 'repairs' that was replaced (Get() gives the value
-    // with its default), but not a key added (a missing part gives its default silently). A message that can't be made
-    // (std::bad_alloc) is dropped.
-    void ReportRepairs(TPartRepairVector const& repairs) const noexcept;
+    // Reports the Warning of DefaultUsedMessage() (with 'options') for each part of 'repairs' that was replaced (Get()
+    // gives the value with its default), but not a key added (a missing part gives its default silently). A message
+    // that can't be made (std::bad_alloc) is dropped.
+    void ReportRepairs(TPartRepairVector const& repairs, TASWTomlValueOptions const& options) const noexcept;
 
     // 'result', a failure of the setting's value, with the setting's path in front of its Path (see
     // Detail::PathFailure())
@@ -1171,7 +1177,7 @@ private:
                 bool const hasMax = m_Options.Max.has_value() &&
                     TASWTomlConverter<T>::ToValue(*m_Options.Max, max, options).IsOk();
 
-                return Detail::OutOfSettingRange(written, hasMin ? &min : nullptr, hasMax ? &max : nullptr);
+                return Detail::OutOfSettingRange(written, hasMin ? &min : nullptr, hasMax ? &max : nullptr, options);
             }
         }
 
@@ -1179,7 +1185,7 @@ private:
         {
             std::string const problem = m_Options.Validator(value);
             if (!problem.empty())
-                return Detail::RefusedValue(written, problem);
+                return Detail::RefusedValue(written, problem, options);
         }
 
         return TASWTomlResult();
@@ -1234,13 +1240,13 @@ public:
 
         if (result.IsOk())
         {
-            ReportRepairs(repairs);
+            ReportRepairs(repairs, options);
             return value;
         }
 
         TASWTomlValue written;
         bool const hasDefault = TASWTomlConverter<T>::ToValue(m_Default, written, options).IsOk();
-        ReportDefaultUsed(result, hasDefault ? &written : nullptr);
+        ReportDefaultUsed(result, hasDefault ? &written : nullptr, options);
 
         return m_Default;
     }

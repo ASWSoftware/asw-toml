@@ -546,7 +546,7 @@ TASWTomlResult Detail::IntegerFromKey(std::string_view key, std::int64_t min, st
 }
 //---------------------------------------------------------------------------
 TASWTomlResult Detail::IntegerFromValue(TASWTomlValue const& value, std::int64_t min, std::uint64_t max,
-    std::int64_t& out)
+    TASWTomlValueOptions const& options, std::int64_t& out)
 {
     std::int64_t const* const number = value.AsInteger();
     if (number == nullptr)
@@ -555,7 +555,10 @@ TASWTomlResult Detail::IntegerFromValue(TASWTomlValue const& value, std::int64_t
     std::int64_t const highest = static_cast<std::int64_t>(std::min<std::uint64_t>(max,
         std::numeric_limits<std::int64_t>::max()));
     if (*number < min || *number > highest)
-        return OutOfRange(ValueText(value), std::to_string(min), std::to_string(highest));
+    {
+        return OutOfRange(ValueText(value, options), ValueText(TASWTomlValue(min), options),
+            ValueText(TASWTomlValue(highest), options));
+    }
 
     out = *number;
 
@@ -810,8 +813,14 @@ TASWTomlResult Detail::UnsignedIntegerToValue(std::uint64_t number, TASWTomlValu
 //---------------------------------------------------------------------------
 TASWTomlResult Detail::ValueFailure(ETomlCode code, TASWTomlValue const& value, std::string_view problem)
 {
+    return ValueFailure(code, value, problem, TASWTomlValueOptions());
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::ValueFailure(ETomlCode code, TASWTomlValue const& value, std::string_view problem,
+    TASWTomlValueOptions const& options)
+{
     std::string message = "The value ";
-    message += ValueText(value);
+    message += ValueText(value, options);
     message += ' ';
     message += problem;
 
@@ -820,8 +829,15 @@ TASWTomlResult Detail::ValueFailure(ETomlCode code, TASWTomlValue const& value, 
 //---------------------------------------------------------------------------
 std::string Detail::ValueText(TASWTomlValue const& value)
 {
+    return ValueText(value, TASWTomlValueOptions());
+}
+//---------------------------------------------------------------------------
+std::string Detail::ValueText(TASWTomlValue const& value, TASWTomlValueOptions const& options)
+{
+    Detail::TWriteStyle style = TextStyle();
+    style.Values.IntegerBase = options.IntegerBase;
     std::string text;
-    if (!WriteValue(value, TextStyle(), text).IsOk())
+    if (!WriteValue(value, style, text).IsOk())
         return std::string("of type ") + ToString(value.GetType());
 
     return Shortened(std::move(text));

@@ -156,6 +156,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_FromValue_ReadsEachTypesRange();
     void Test_FromValue_ReadsIntegersOnly();
     void Test_Messages_GiveTheRange();
+    void Test_Messages_WriteTheNumbersInTheOptionsBase();
     void Test_RoundTrip_EveryType_ThroughADocument();
     void Test_ToValue_RefusesWhatATomlIntegerCantHold();
 

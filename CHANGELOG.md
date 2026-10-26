@@ -206,16 +206,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The concept `TomlConvertible<T>` says whether a type has a converter. Converters come for
   `TASWTomlValue` (as it is), `bool` (booleans only), every integer type but `bool` and the
   character types (`char`, `wchar_t`, `char8_t`, `char16_t`, `char32_t`; integers only, e.g.
-  `The value 300 is out of range: it must be from 0 to 255.`, and an unsigned 64-bit value above
-  `INT64_MAX` can't be written), `float` and `double` (floats, and integers they hold exactly; inf
-  and nan keep their sign; a float beyond the range of `float` is `ValueOutOfRange` for it, and a
-  `float` is written as the double nearest its shortest text, so `0.1f` is written as `0.1` and
-  reads back the same), enums (by name when the application declares `ASWTomlEnumNames()` next to
-  the enum, returning its `TASWTomlEnumName<T>`s: a string that is a name with the ASCII letters'
-  case ignored, or the number of a value listed with a name, reads; the first name listed for a
-  value is written, and a value without one can't be; an enum without names converts as an integer
-  of its underlying type, so `std::byte` is an integer from 0 to 255), the TOML date and time types
-  (as they are) and the `std::chrono` ones (`year_month_day`, `sys_days` and `local_days` as a local
+  `The value 300 is out of range: it must be from 0 to 255.`, with the numbers in the options'
+  integer base, so `0x12C` and `0xFF` in hexadecimal, and an unsigned 64-bit value above `INT64_MAX`
+  can't be written), `float` and `double` (floats, and integers they hold exactly; inf and nan keep
+  their sign; a float beyond the range of `float` is `ValueOutOfRange` for it, and a `float` is
+  written as the double nearest its shortest text, so `0.1f` is written as `0.1` and reads back the
+  same), enums (by name when the application declares `ASWTomlEnumNames()` next to the enum,
+  returning its `TASWTomlEnumName<T>`s: a string that is a name with the ASCII letters' case
+  ignored, or the number of a value listed with a name, reads; the first name listed for a value is
+  written, and a value without one can't be; an enum without names converts as an integer of its
+  underlying type, so `std::byte` is an integer from 0 to 255), the TOML date and time types (as
+  they are) and the `std::chrono` ones (`year_month_day`, `sys_days` and `local_days` as a local
   date; `sys_time<D>`, such as `system_clock::time_point` and `sys_seconds`, as an offset date-time,
   read as the instant at any offset and written in UTC; `local_time<D>` as a local date-time;
   `hh_mm_ss<D>` as a local time, 24:00:00, which 23:59:60 reads as, written as 23:59:60; each read
@@ -300,31 +301,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   convert, is out of range or that the validator refuses; `Set()` writes it, adding a missing key
   with the setting's comment above it in the same edit, and fails (an Error, nothing changed) for a
   value that is out of range, refused or can't be written; `Reset()` sets the default and
-  `IsPresent()` says whether the key is there. `Load()` and `LoadText()` apply the settings to the
-  document they read before anyone sees it, so it holds every setting with a valid value and
-  `IsModified()` says whether it needs saving: a missing key whose earlier name (`OldKeys`) its
-  table has is renamed from it, keeping its line or header, value and comment (an Info,
-  `KeyRenamed`), and then applied as any other; any other missing key is added with its default
-  value and comment (an Info, `KeyAdded`), unless the setting is optional; a value that isn't valid
-  is replaced by the default (a Warning), a valid one left as written; a table of settings the file
-  holds as another kind of value is replaced by a table of them (a Warning); the comments of the
-  settings, of the tables and the file comment (the root table's) are set as `Writing.CommentPolicy`
-  says, where they have a line of their own. A struct, a `std::vector` or a map is taken by parts:
-  `Load()` and `Get()` replace only the parts that aren't valid by their defaults (a Warning each,
-  with the part's path, e.g. `servers[1].port`), `Load()` adds the missing fields that aren't
-  optional (an Info each), and the keys the struct doesn't know stay; `Set()` keeps them too,
-  pairing a vector's elements with the file's by what the struct knows of them, so removing a server
-  removes its block and the others keep their keys and comments (`IASWToml::SetValue()` sets a value
-  as it is). A file that needs nothing stays byte for byte, and a first run (a missing file) gets
-  everything. The values are written with one edit per table and the comments with one more, so
-  applying 200 settings to an empty file takes a few milliseconds. Any thread may call `Get()` and
-  `Set()`, as the object's other operations: a load applies the settings before another thread sees
-  the document, and `Set()` adds a key with its comment in one edit, so no thread sees a setting
-  half applied. A table or setting is bound to its object from its constructor to its destructor (a
-  destructor waits for a load that is applying it) and must not outlive it; converters and
-  validators run with the object's file lock held while a load applies them, so they must not call
-  its `Load()`, `LoadText()`, `Save()`, `SaveAs()` or `SetOptions()`. A load that fails, even for
-  lack of memory, changes nothing and reports none of what applying the settings did.
+  `IsPresent()` says whether the key is there. The messages show a setting's values (the one read or
+  refused, its default, its range) as the setting writes them, e.g. `0x3366CC` for an integer
+  written in hexadecimal. `Load()` and `LoadText()` apply the settings to the document they read
+  before anyone sees it, so it holds every setting with a valid value and `IsModified()` says
+  whether it needs saving: a missing key whose earlier name (`OldKeys`) its table has is renamed
+  from it, keeping its line or header, value and comment (an Info, `KeyRenamed`), and then applied
+  as any other; any other missing key is added with its default value and comment (an Info,
+  `KeyAdded`), unless the setting is optional; a value that isn't valid is replaced by the default
+  (a Warning), a valid one left as written; a table of settings the file holds as another kind of
+  value is replaced by a table of them (a Warning); the comments of the settings, of the tables and
+  the file comment (the root table's) are set as `Writing.CommentPolicy` says, where they have a
+  line of their own. A struct, a `std::vector` or a map is taken by parts: `Load()` and `Get()`
+  replace only the parts that aren't valid by their defaults (a Warning each, with the part's path,
+  e.g. `servers[1].port`), `Load()` adds the missing fields that aren't optional (an Info each), and
+  the keys the struct doesn't know stay; `Set()` keeps them too, pairing a vector's elements with
+  the file's by what the struct knows of them, so removing a server removes its block and the others
+  keep their keys and comments (`IASWToml::SetValue()` sets a value as it is). A file that needs
+  nothing stays byte for byte, and a first run (a missing file) gets everything. The values are
+  written with one edit per table and the comments with one more, so applying 200 settings to an
+  empty file takes a few milliseconds. Any thread may call `Get()` and `Set()`, as the object's
+  other operations: a load applies the settings before another thread sees the document, and `Set()`
+  adds a key with its comment in one edit, so no thread sees a setting half applied. A table or
+  setting is bound to its object from its constructor to its destructor (a destructor waits for a
+  load that is applying it) and must not outlive it; converters and validators run with the object's
+  file lock held while a load applies them, so they must not call its `Load()`, `LoadText()`,
+  `Save()`, `SaveAs()` or `SetOptions()`. A load that fails, even for lack of memory, changes
+  nothing and reports none of what applying the settings did.
 - An example program, `example/src/main.cpp`: an application's settings class (with a range, a
   validator, an enum written by name, an integer written in hexadecimal, a date, an optional
   setting, an old key, a struct as a table and a `std::vector` of a struct as an array of tables),

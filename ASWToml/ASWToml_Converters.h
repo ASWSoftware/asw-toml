@@ -299,8 +299,10 @@ TASWTomlResult IntegerFromKey(std::string_view key, std::int64_t min, std::uint6
 
 // Reads 'value' as an integer type with the range 'min' to 'max' reads it (see TASWTomlConverter<integer types>)
 // into 'out', which is left as it was on failure: TypeMismatch for a value that isn't an integer, ValueOutOfRange
-// outside the range, whose message gives it ('max' as at most INT64_MAX, the largest TOML integer)
-TASWTomlResult IntegerFromValue(TASWTomlValue const& value, std::int64_t min, std::uint64_t max, std::int64_t& out);
+// outside the range, whose message gives it ('max' as at most INT64_MAX, the largest TOML integer), the numbers
+// written in the integer base of 'options' (see ValueText())
+TASWTomlResult IntegerFromValue(TASWTomlValue const& value, std::int64_t min, std::uint64_t max,
+    TASWTomlValueOptions const& options, std::int64_t& out);
 
 // The InvalidValue result of a map whose key type is an enum with names reading 'key', which is none of its names, as
 // InvalidEnumName(): "The key Purple isn't a name of the enum: it must be Red, Green or Blue."
@@ -387,14 +389,19 @@ TASWTomlResult UnnamedEnumValue(std::string_view number);
 // as it was and fails with ValueOutOfRange when 'number' is above INT64_MAX, which a TOML integer can't hold
 TASWTomlResult UnsignedIntegerToValue(std::uint64_t number, TASWTomlValue& value);
 
-// A failed result with 'code' and the message "The value <text> <problem>", the text as ValueText() gives it, e.g.
-// ValueFailure(InvalidValue, value, "isn't one word.")
+// A failed result with 'code' and the message "The value <text> <problem>", the text as ValueText() gives it (with
+// 'options', when given), e.g. ValueFailure(InvalidValue, value, "isn't one word.")
 TASWTomlResult ValueFailure(ETomlCode code, TASWTomlValue const& value, std::string_view problem);
+TASWTomlResult ValueFailure(ETomlCode code, TASWTomlValue const& value, std::string_view problem,
+    TASWTomlValueOptions const& options);
 
 // 'value' as messages show it: as TOML text on one line (a string as a basic string, its control characters escaped),
 // cut to at most MaxValueTextSize bytes (not inside a UTF-8 sequence) followed by "..." when it is longer; "of type
-// <type>" (e.g. of type String) for a value that can't be written, such as a string that isn't valid UTF-8
+// <type>" (e.g. of type String) for a value that can't be written, such as a string that isn't valid UTF-8. Integers
+// are written in decimal, or with 'options' in their integer base (see TASWTomlValueOptions::IntegerBase: Auto is
+// decimal, and a negative number is always decimal), as a value is written with them, e.g. 0x3366CC.
 std::string ValueText(TASWTomlValue const& value);
+std::string ValueText(TASWTomlValue const& value, TASWTomlValueOptions const& options);
 
 // Sets 'value' to an array of the elements of 'elements', a container of T, in its order, each converted by
 // TASWTomlConverter<T>, or leaves it as it was and fails as the first element that fails, with the element's index in
@@ -640,11 +647,11 @@ template <std::integral T>
 requires(sizeof(T) <= sizeof(std::int64_t))
 struct TIntegerConverter
 {
-    static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& /*options*/)
+    static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& options)
     {
         std::int64_t number = 0;
         TASWTomlResult result = IntegerFromValue(value, static_cast<std::int64_t>(std::numeric_limits<T>::min()),
-            static_cast<std::uint64_t>(std::numeric_limits<T>::max()), number);
+            static_cast<std::uint64_t>(std::numeric_limits<T>::max()), options, number);
         if (result.IsOk())
             out = static_cast<T>(number);
 

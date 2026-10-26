@@ -493,6 +493,7 @@ void LoadAndCheckBindings(TBindingsTest& test, std::size_t index);
 void LoadSettingsRepeatedly(TWholeSettingsTest& test, std::size_t index);
 std::string MessageKinds(TMessageVector const& messages);
 std::string MessagesText(TMessageVector const& messages);
+std::string OddOnly(int const& value);
 std::string OneServer(TServerVector const& value);
 void ReadWholeSettings(TWholeSettingsTest& test, std::size_t index);
 std::string RemovedFirstCluster(std::string const& first, std::string const& second);
@@ -744,6 +745,16 @@ std::string MessagesText(TMessageVector const& messages)
         text += ASWToml::ToString(message) + "\n";
 
     return text;
+}
+//---------------------------------------------------------------------------
+/*
+    OddOnly
+
+    The validator of an odd number
+*/
+std::string OddOnly(int const& value)
+{
+    return value % 2 == 0 ? "it must be odd" : "";
 }
 //---------------------------------------------------------------------------
 /*
@@ -1211,6 +1222,51 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Get_ReadsTheDocument)
     CheckTrue(settings.Remove("general.level"), "a raw removal should succeed");
     CheckEquals(2u, settings.Level.Get(), "a removed key gives the default");
     CheckTrue(settings.Messages.empty(), "nothing is reported: " + MessagesText(settings.Messages));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsAccess, Messages_WriteValuesAsTheSettingDoes)
+{
+    // Arrange
+    // Settings that write their integers in hexadecimal, of a text with values in decimal and hexadecimal
+    TPreloaded toml("[t]\nlevel = 9\nodd = 0x4\nbyte = 300\n");
+    TASWTomlTable table{ toml, "t" };
+    TASWTomlSetting<unsigned> level{ table, "level", 2, "",
+        { .Min = 1, .Max = 4, .Values = TPreloaded::Hexadecimal() } };
+    TASWTomlSetting<int> odd{ table, "odd", 1, "", { .Validator = OddOnly, .Values = TPreloaded::Hexadecimal() } };
+    TASWTomlSetting<std::uint8_t> byte{ table, "byte", 1, "", { .Values = TPreloaded::Hexadecimal() } };
+    TASWTomlSetting<int> atMost{ table, "at_most", 1, "", { .Max = 16, .Values = TPreloaded::Hexadecimal() } };
+    TASWTomlSetting<int> atLeast{ table, "at_least", 16, "", { .Min = 16, .Values = TPreloaded::Hexadecimal() } };
+    TASWTomlSetting<unsigned> plain{ table, "plain", 2, "", { .Max = 4 } };
+    CheckTrue(toml.Parsed, "the text should parse");
+
+    // Act
+    static_cast<void>(level.Get());
+    static_cast<void>(odd.Get());
+    static_cast<void>(byte.Get());
+    TASWTomlResult const refused = level.Set(5);
+    TASWTomlResult const aboveMost = atMost.Set(32);
+    TASWTomlResult const belowLeast = atLeast.Set(1);
+    TASWTomlResult const refusedPlain = plain.Set(5);
+
+    // Assert
+    CheckEquals("The value 0x5 is out of the setting's range: it must be from 0x1 to 0x4."s, refused.Message,
+        "Set() shows the value and the range as the setting writes them");
+    CheckEquals("The value 0x20 is out of the setting's range: it must be at most 0x10."s, aboveMost.Message,
+        "a range with only a largest value");
+    CheckEquals("The value 0x1 is out of the setting's range: it must be at least 0x10."s, belowLeast.Message,
+        "a range with only a smallest value");
+    CheckEquals("The value 5 is out of the setting's range: it must be at most 4."s, refusedPlain.Message,
+        "in decimal for a setting that writes in decimal");
+    CheckEquals(std::size_t(7), toml.Messages.size(), "each failure is reported: " + MessagesText(toml.Messages));
+    if (toml.Messages.size() == 7)
+    {
+        CheckEquals("The value 0x9 is out of the setting's range: it must be from 0x1 to 0x4. The default value 0x2 is "
+            "used."s, toml.Messages[0].Text, "Get()'s Warning shows the value read, the range and the default so");
+        CheckEquals("The value 0x4 isn't valid: it must be odd. The default value 0x1 is used."s, toml.Messages[1].Text,
+            "and with the validator's refusal");
+        CheckEquals("The value 0x12C is out of range: it must be from 0x0 to 0xFF. The default value 0x1 is used."s,
+            toml.Messages[2].Text, "and with the converter's");
+    }
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsAccess, New_GivesTheDefaults)
@@ -2015,6 +2071,53 @@ ASW_TEST(TTest_ASWToml_SettingsLoad, Load_MessagesNameTheFileLoaded)
     CheckEquals(std::size_t(5), messages.size(), "the missing file and the keys added: " + MessagesText(messages));
     for (TASWTomlMessage const& message : messages)
         CheckEquals(file, message.FilePath, "each names the file loaded: " + ASWToml::ToString(message));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_MessagesWriteValuesAsTheSettingDoes)
+{
+    // Arrange
+    // A setting with value options of its own (mask), and settings that write with the document's, in hexadecimal
+    TASWTomlOptions hexadecimal = LfOptions();
+    hexadecimal.Values.IntegerBase = ASWToml::EIntegerBase::Hexadecimal;
+    TLoadSettings own;
+    TPreloaded document("");
+    CheckTrue(document.SetOptions(hexadecimal).IsOk(), "the options should be taken");
+    TASWTomlTable table{ document, "t" };
+    TASWTomlSetting<unsigned> level{ table, "level", 2, "", { .Min = 1, .Max = 4 } };
+    TASWTomlSetting<TServerVector> servers{ table, "servers", TServerVector() };
+    TASWTomlSetting<int> added{ table, "added", 16 };
+
+    // Act
+    TASWTomlResult const loadedOwn = own.LoadText("[logging]\ndays = 30\n");
+    TASWTomlResult const loaded = document.LoadText("[t]\nlevel = 9\n\n[[t.servers]]\nhost = \"a\"\nport = \"x\"\n\n"
+        "[[t.servers]]\nhost = \"b\"\n");
+
+    // Assert
+    CheckTrue(loadedOwn.IsOk() && loaded.IsOk(), "the texts should load");
+    CheckEquals(std::size_t(3), own.Messages.size(), "three keys added: " + MessagesText(own.Messages));
+    if (own.Messages.size() == 3)
+    {
+        CheckEquals("The key general.level is missing: it is added with its default value 2."s, own.Messages[1].Text,
+            "in decimal for a setting that writes in decimal");
+        CheckEquals("The key logging.mask is missing: it is added with its default value 0xFF."s, own.Messages[2].Text,
+            "in hexadecimal for one with value options of its own that write it so");
+    }
+
+    CheckEquals("[t]\nlevel = 0x2\nadded = 0x10\n\n[[t.servers]]\nhost = \"a\"\nport = 0x50\n\n[[t.servers]]\n"
+        "host = \"b\"\nport = 0x50\n"s, document.ToText(), "the document's options write the values in hexadecimal");
+    CheckEquals(std::size_t(4), document.Messages.size(), "a value and a part replaced, a field and a key added: " +
+        MessagesText(document.Messages));
+    if (document.Messages.size() == 4)
+    {
+        CheckEquals("The value 0x9 is out of the setting's range: it must be from 0x1 to 0x4. The default value 0x2 is "
+            "used."s, document.Messages[0].Text, "and so do the messages");
+        CheckEquals("The value \"x\" is a string, not an integer. The default value 0x50 is used."s,
+            document.Messages[1].Text, "of a part too");
+        CheckEquals("The key t.servers[1].port is missing: it is added with its default value 0x50."s,
+            document.Messages[2].Text, "and of a field added");
+        CheckEquals("The key t.added is missing: it is added with its default value 0x10."s, document.Messages[3].Text,
+            "and of a key added");
+    }
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsLoad, Load_MissingFileGetsEverySetting)

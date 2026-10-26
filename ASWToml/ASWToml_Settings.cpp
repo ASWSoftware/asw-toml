@@ -32,22 +32,23 @@ namespace ASWToml
 namespace
 {
 
-TASWTomlMessage KeyAddedMessage(std::string path, TASWTomlValue const& value);
+TASWTomlMessage KeyAddedMessage(std::string path, TASWTomlValue const& value, TASWTomlValueOptions const& options);
 TASWTomlMessage ResultMessage(ESeverity severity, TASWTomlResult const& result);
 
 //---------------------------------------------------------------------------
 /*
     KeyAddedMessage
 
-    The Info that the key at 'path' (its text) is missing and is added with its default value 'value' (KeyAdded)
+    The Info that the key at 'path' (its text) is missing and is added with its default value 'value' (KeyAdded),
+    written as it is written with 'options'
 */
-TASWTomlMessage KeyAddedMessage(std::string path, TASWTomlValue const& value)
+TASWTomlMessage KeyAddedMessage(std::string path, TASWTomlValue const& value, TASWTomlValueOptions const& options)
 {
     TASWTomlMessage message;
     message.Severity = ESeverity::Info;
     message.Code = ETomlCode::KeyAdded;
     message.Text = "The key " + path + " is missing: it is added with its default value " +
-        Detail::ValueText(value) + ".";
+        Detail::ValueText(value, options) + ".";
     message.Path = std::move(path);
 
     return message;
@@ -114,29 +115,30 @@ void KeyRepairs(TPartRepairVector& repairs, std::size_t first, std::string_view 
         repairs[i].Problem = KeyFailure(std::move(repairs[i].Problem), key);
 }
 //---------------------------------------------------------------------------
-TASWTomlResult OutOfSettingRange(TASWTomlValue const& value, TASWTomlValue const* min, TASWTomlValue const* max)
+TASWTomlResult OutOfSettingRange(TASWTomlValue const& value, TASWTomlValue const* min, TASWTomlValue const* max,
+    TASWTomlValueOptions const& options)
 {
     std::string problem = "is out of the setting's range";
     if (min != nullptr && max != nullptr)
-        problem += ": it must be from " + ValueText(*min) + " to " + ValueText(*max);
+        problem += ": it must be from " + ValueText(*min, options) + " to " + ValueText(*max, options);
     else if (min != nullptr)
-        problem += ": it must be at least " + ValueText(*min);
+        problem += ": it must be at least " + ValueText(*min, options);
     else if (max != nullptr)
-        problem += ": it must be at most " + ValueText(*max);
+        problem += ": it must be at most " + ValueText(*max, options);
 
     problem += ".";
 
-    return ValueFailure(ETomlCode::ValueOutOfRange, value, problem);
+    return ValueFailure(ETomlCode::ValueOutOfRange, value, problem, options);
 }
 //---------------------------------------------------------------------------
-TASWTomlResult RefusedValue(TASWTomlValue const& value, std::string_view problem)
+TASWTomlResult RefusedValue(TASWTomlValue const& value, std::string_view problem, TASWTomlValueOptions const& options)
 {
     std::string sentence = "isn't valid: ";
     sentence += problem;
     if (sentence.back() != '.')
         sentence += ".";
 
-    return ValueFailure(ETomlCode::InvalidValue, value, sentence);
+    return ValueFailure(ETomlCode::InvalidValue, value, sentence, options);
 }
 //---------------------------------------------------------------------------
 void ReplacePart(TASWTomlValue& value, TASWTomlResult problem, TASWTomlValue written, TPartRepairVector& repairs)
@@ -349,11 +351,13 @@ void TSettingBase::ApplyComment(TSettingsApply& apply) const
 void TSettingBase::ApplyDefault(TSettingsApply& apply, TASWTomlValue const& defaultValue,
     TASWTomlValueOptions const* values, TASWTomlResult const* problem) const
 {
+    // The messages show the default value as it is written: with the setting's own value options, or the document's
+    TASWTomlValueOptions const& options = values != nullptr ? *values : apply.GetDocument().GetOptions().Values;
     TASWTomlMessage added;
     if (problem != nullptr)
-        apply.AddMessage(DefaultUsedMessage(*problem, &defaultValue));
+        apply.AddMessage(DefaultUsedMessage(*problem, &defaultValue, options));
     else
-        added = KeyAddedMessage(m_Path.ToString(), defaultValue);
+        added = KeyAddedMessage(m_Path.ToString(), defaultValue, options);
 
     apply.AddValue(m_TablePath, m_Path, m_Key, defaultValue, values, problem == nullptr ? &added : nullptr);
     ApplyComment(apply);
@@ -394,12 +398,14 @@ bool TSettingBase::ApplyOldKeys(TSettingsApply& apply, TStringVector const& oldK
 void TSettingBase::ApplyRepairs(TSettingsApply& apply, TASWTomlValue const& repaired,
     TASWTomlValueOptions const* values, TPartRepairVector const& repairs) const
 {
+    // The messages show the defaults as they are written: with the setting's own value options, or the document's
+    TASWTomlValueOptions const& options = values != nullptr ? *values : apply.GetDocument().GetOptions().Values;
     for (TPartRepair const& repair : repairs)
     {
         if (repair.Added)
-            apply.AddMessage(KeyAddedMessage(PathFailure(repair.Problem, m_Path).Path, repair.Default));
+            apply.AddMessage(KeyAddedMessage(PathFailure(repair.Problem, m_Path).Path, repair.Default, options));
         else
-            apply.AddMessage(DefaultUsedMessage(repair.Problem, &repair.Default));
+            apply.AddMessage(DefaultUsedMessage(repair.Problem, &repair.Default, options));
     }
 
     apply.AddValue(m_TablePath, m_Path, m_Key, repaired, values, nullptr);
@@ -411,11 +417,12 @@ TASWTomlResult TSettingBase::CaughtSetFailure() const noexcept
     return TASWBaseToml::CaughtException(m_Path);
 }
 //---------------------------------------------------------------------------
-TASWTomlMessage TSettingBase::DefaultUsedMessage(TASWTomlResult const& result, TASWTomlValue const* defaultValue) const
+TASWTomlMessage TSettingBase::DefaultUsedMessage(TASWTomlResult const& result, TASWTomlValue const* defaultValue,
+    TASWTomlValueOptions const& options) const
 {
     TASWTomlMessage message = ResultMessage(ESeverity::Warning, PathFailure(result, m_Path));
     if (defaultValue != nullptr)
-        message.Text += " The default value " + ValueText(*defaultValue) + " is used.";
+        message.Text += " The default value " + ValueText(*defaultValue, options) + " is used.";
     else
         message.Text += " The default value is used.";
 
@@ -477,11 +484,12 @@ void TSettingBase::Register() const
     m_Owner->Register(*this);
 }
 //---------------------------------------------------------------------------
-void TSettingBase::ReportDefaultUsed(TASWTomlResult const& result, TASWTomlValue const* defaultValue) const noexcept
+void TSettingBase::ReportDefaultUsed(TASWTomlResult const& result, TASWTomlValue const* defaultValue,
+    TASWTomlValueOptions const& options) const noexcept
 {
     try
     {
-        m_Owner->Report(DefaultUsedMessage(result, defaultValue));
+        m_Owner->Report(DefaultUsedMessage(result, defaultValue, options));
     }
     catch (...)
     {
@@ -494,12 +502,12 @@ void TSettingBase::ReportFailure(TASWTomlResult const& result) const noexcept
     m_Owner->ReportFailure(result);
 }
 //---------------------------------------------------------------------------
-void TSettingBase::ReportRepairs(TPartRepairVector const& repairs) const noexcept
+void TSettingBase::ReportRepairs(TPartRepairVector const& repairs, TASWTomlValueOptions const& options) const noexcept
 {
     for (TPartRepair const& repair : repairs)
     {
         if (!repair.Added)
-            ReportDefaultUsed(repair.Problem, &repair.Default);
+            ReportDefaultUsed(repair.Problem, &repair.Default, options);
     }
 }
 //---------------------------------------------------------------------------
