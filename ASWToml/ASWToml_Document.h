@@ -350,7 +350,8 @@ public:
     // The value at 'path': a table, an array, an element of an array (of an array of tables, e.g. products[1], or of
     // an array value, e.g. ports[0]) or the value of a key; the root table for the root path. nullptr when there is no
     // such value or the path isn't valid. An index needs an array: products.name is nullptr when products is an array
-    // of tables. The pointer is valid until the document is parsed again, changed or destroyed.
+    // of tables. The pointer is valid until the document is parsed again, changed or destroyed. Found through the
+    // document's index, in O(log n) per key part, however large the tables are.
     TASWTomlValue const* Find(TASWTomlPath const& path) const noexcept;
 
     // The comment of the key, table or array of tables at 'path': the comment lines directly above the line that

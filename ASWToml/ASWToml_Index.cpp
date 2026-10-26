@@ -37,6 +37,9 @@ namespace Detail
 namespace
 {
 
+// FindValue(): a table of at most this many keys is searched key by key, which is faster than its map of keys
+constexpr std::size_t LinearSearchMax = 16;
+
 // The offsets in a text of the parts of a key
 using TOffsetVector = std::vector<std::size_t>;
 
@@ -120,8 +123,10 @@ public:
     TASWTomlResult Read(TDocModel const& model, TDocIndex& index, TASWTomlValue& root);
 };
 
+//---------------------------------------------------------------------------
 
 bool IsNamedTable(ENodeKind kind) noexcept;
+std::size_t NodeOfParts(TDocIndex const& index, TASWTomlPath::TPartVector const& parts, std::size_t count) noexcept;
 
 //---------------------------------------------------------------------------
 /*
@@ -133,6 +138,24 @@ bool IsNamedTable(ENodeKind kind) noexcept;
 bool IsNamedTable(ENodeKind kind) noexcept
 {
     return kind == ENodeKind::ImplicitTable || kind == ENodeKind::HeaderTable || kind == ENodeKind::DottedTable;
+}
+//---------------------------------------------------------------------------
+/*
+    NodeOfParts
+
+    The node of 'index' that the first 'count' of 'parts' name, which FindValue() has found a value for, so each is
+    there: each key part through its table's map of keys, each index through its array's elements
+*/
+std::size_t NodeOfParts(TDocIndex const& index, TASWTomlPath::TPartVector const& parts, std::size_t count) noexcept
+{
+    std::size_t node = 0;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        TIndexNode const& holder = index.Nodes[node];
+        node = parts[i].IsKey() ? holder.Keys.find(parts[i].GetKey())->second : holder.Children[parts[i].GetIndex()];
+    }
+
+    return node;
 }
 //---------------------------------------------------------------------------
 
@@ -189,6 +212,7 @@ std::size_t TTableReader::AddNode(std::size_t parent, ENodeKind kind, std::strin
     if (holder.Kind != ENodeKind::Array && holder.Kind != ENodeKind::ArrayOfTables)
         holder.Keys.emplace(key, index);
 
+    m_Index.Nodes[index].Position = holder.Children.size();
     holder.Children.push_back(index);
 
     return index;
@@ -594,6 +618,48 @@ std::size_t FindNode(TDocIndex const& index, TASWTomlPath const& path) noexcept
     }
 
     return node;
+}
+//---------------------------------------------------------------------------
+TASWTomlValue const* FindValue(TDocIndex const& index, TASWTomlValue const& root, TASWTomlPath const& path) noexcept
+{
+    if (!path.IsValid())
+        return nullptr;
+
+    // The values are walked as TASWTomlValue::Find() would; only a large table's key is found through the index, in
+    // the map of keys of the table's node, and a node's Position is its place in its parent's value (ToValue() builds
+    // the values in the order of Children)
+    TASWTomlPath::TPartVector const& parts = path.GetParts();
+    TASWTomlValue const* value = &root;
+    for (std::size_t i = 0; i < parts.size(); ++i)
+    {
+        if (parts[i].IsKey())
+        {
+            TASWTomlValue::TKeyValueVector const* const table = value->AsTable();
+            if (table == nullptr || table->size() <= LinearSearchMax)
+            {
+                value = value->Find(parts[i].GetKey());
+            }
+            else
+            {
+                TNodeIndexMap const& keys = index.Nodes[NodeOfParts(index, parts, i)].Keys;
+                TNodeIndexMap::const_iterator const found = keys.find(parts[i].GetKey());
+                value = found != keys.end() ? &(*table)[index.Nodes[found->second].Position].Value : nullptr;
+            }
+
+            if (value == nullptr)
+                return nullptr;
+        }
+        else
+        {
+            TASWTomlValue::TValueVector const* const array = value->AsArray();
+            if (array == nullptr || parts[i].GetIndex() >= array->size())
+                return nullptr;
+
+            value = &(*array)[parts[i].GetIndex()];
+        }
+    }
+
+    return value;
 }
 //---------------------------------------------------------------------------
 

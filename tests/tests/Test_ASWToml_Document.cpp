@@ -3638,6 +3638,49 @@ ASW_TEST(TTest_ASWToml_DocumentLookups, Default_RootIsAnEmptyTable)
     CheckNotFound(document, "a", "a key");
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, Find_AfterEditsCopiesAndMoves)
+{
+    // Arrange
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(LookupText).IsOk(), "the text should parse");
+
+    // Act & Assert
+    // Each edit moves the values after the one it changes in their tables and arrays; Find() follows them
+    CheckTrue(document.Remove("ports[0]"), "the first element of ports should be removed");
+    CheckEquals(""s, FindFailure(document, document.GetRoot(), ASWToml::TASWTomlPath()),
+        "Find() should give every value after an element is removed");
+    TASWTomlValue const* const port = document.Find("ports[0]");
+    CheckTrue(port != nullptr && *port == TASWTomlValue(443), "ports[0] should be the element that followed");
+
+    CheckTrue(document.Remove("a"), "the table a should be removed");
+    CheckEquals(""s, FindFailure(document, document.GetRoot(), ASWToml::TASWTomlPath()),
+        "Find() should give every value after a key of the root is removed");
+
+    CheckTrue(document.Rename("server.host", "name").IsOk(), "server.host should be renamed");
+    CheckTrue(document.SetValue("server.extra", TASWTomlValue(1)).IsOk(), "server.extra should be added");
+    CheckTrue(document.Append("products", TTable{ { "name", "p2" } }).IsOk(), "a product should be appended");
+    CheckTrue(document.SetValue("m", TArray{ TASWTomlValue(TArray{ 3 }) }).IsOk(), "m should be merged");
+    CheckEquals(""s, FindFailure(document, document.GetRoot(), ASWToml::TASWTomlPath()),
+        "Find() should give every value after a rename, a new key, an appended element and a merge");
+    TASWTomlValue const* const name = document.Find("server.name");
+    CheckTrue(name != nullptr && *name == TASWTomlValue("h"), "server.name should be the renamed key's value");
+
+    TASWTomlDocument const copied(document);
+    CheckEquals(""s, FindFailure(copied, copied.GetRoot(), ASWToml::TASWTomlPath()),
+        "a copy's Find() should give the copy's own values");
+    CheckTrue(copied.Find("server.name") != document.Find("server.name"), "not the original's");
+
+    TASWTomlDocument assigned;
+    assigned = document;
+    TASWTomlDocument const moved(std::move(assigned));
+    CheckEquals(""s, FindFailure(moved, moved.GetRoot(), ASWToml::TASWTomlPath()),
+        "a copy assigned and moved should give its own values too");
+
+    CheckTrue(document.Reset(ASWToml::TASWTomlOptions()).IsOk(), "the document should be emptied");
+    CheckTrue(document.Find("") == &document.GetRoot(), "the root path should find the empty document's root");
+    CheckTrue(document.Find("server") == nullptr, "and nothing else");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentLookups, Find_ArrayElementsByIndex)
 {
     // Arrange
@@ -3716,6 +3759,59 @@ ASW_TEST(TTest_ASWToml_DocumentLookups, Find_KeysAndTables)
     // Act & Assert
     CheckTrue(document.Find("") == &document.GetRoot(), "the root path finds the root");
     CheckTrue(document.Find(ASWToml::TASWTomlPath()) == &document.GetRoot(), "so does a default path");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentLookups, Find_LargeTables)
+{
+    // Arrange
+    // A root of 2,000 keys, a table of 2,000 quoted keys, an array of tables of 500 elements, and an array of tables
+    // whose elements have 20 keys and an inline table of 20 keys each (large tables under an index and inline)
+    std::string text;
+    for (int i = 0; i < 2000; ++i)
+        text += "k" + std::to_string(i) + " = " + std::to_string(i) + "\n";
+
+    text += "[big]\n";
+    for (int i = 0; i < 2000; ++i)
+        text += "\"key " + std::to_string(i) + "\" = " + std::to_string(i) + "\n";
+
+    for (int i = 0; i < 500; ++i)
+        text += "[[list]]\nn = " + std::to_string(i) + "\n";
+
+    // Each element's keys have names of their own, so a key found in another element's map of keys isn't found
+    for (int element = 0; element < 2; ++element)
+    {
+        std::string const prefix = std::to_string(element) + "_";
+        text += "[[groups]]\n";
+        for (int i = 0; i < 20; ++i)
+            text += "g" + prefix + std::to_string(i) + " = " + std::to_string(element * 100 + i) + "\n";
+
+        text += "inline = {";
+        for (int i = 0; i < 20; ++i)
+            text += (i == 0 ? " i" : ", i") + prefix + std::to_string(i) + " = " + std::to_string(i);
+
+        text += " }\n";
+    }
+
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), "the text should parse");
+
+    // Act & Assert
+    CheckEquals(""s, FindFailure(document, document.GetRoot(), ASWToml::TASWTomlPath()),
+        "Find() should give every value");
+    TASWTomlValue const* const first = document.Find("k0");
+    TASWTomlValue const* const last = document.Find({ "big", "key 1999" });
+    TASWTomlValue const* const element = document.Find("list[499].n");
+    CheckTrue(first != nullptr && *first == TASWTomlValue(0), "the first key of the root");
+    CheckTrue(last != nullptr && *last == TASWTomlValue(1999), "the last key of the large table");
+    CheckTrue(element != nullptr && *element == TASWTomlValue(499), "a key of the last element");
+    TASWTomlValue const* const group = document.Find("groups[1].g1_19");
+    TASWTomlValue const* const inner = document.Find("groups[1].inline.i1_19");
+    CheckTrue(group != nullptr && *group == TASWTomlValue(119), "the last key of a large element");
+    CheckTrue(inner != nullptr && *inner == TASWTomlValue(19), "the last key of a large inline table in it");
+    CheckTrue(document.Find("k2000") == nullptr && document.Find({ "big", "key 2000" }) == nullptr &&
+        document.Find("list[500]") == nullptr && document.Find("groups[1].g0_19") == nullptr &&
+        document.Find("groups[1].inline.i0_19") == nullptr && document.Find("missing.k0") == nullptr &&
+        document.Find("big.missing.x") == nullptr, "keys and elements that aren't there");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentLookups, Find_NullWhenThereIsNoSuchValue)
@@ -6172,6 +6268,7 @@ void TTest_ASWToml_DocumentEditFuzz::CheckRandomEdits(std::string const& text, T
         TASWTomlDocument reread;
         bool const readsBack = reread.Parse(afterText, options).IsOk() &&
             ASWToml::Detail::IdenticalValues(reread.GetRoot(), document.GetRoot());
+        std::string const notFound = FindFailure(document, document.GetRoot(), ASWToml::TASWTomlPath());
         std::string problem;
         if (!result.IsOk() && (changed || document.IsModified()))
             problem = "it failed, but changed the text or the modified flag";
@@ -6179,6 +6276,8 @@ void TTest_ASWToml_DocumentEditFuzz::CheckRandomEdits(std::string const& text, T
             problem = "the modified flag should say whether the text changed";
         else if (!readsBack)
             problem = "the text should read as the document's values";
+        else if (!notFound.empty())
+            problem = "Find() should give every value through the edited document's index, but not " + notFound;
         else if (!comment && sameValues && changed)
             problem = "the values stay as they were, so the text should too";
         else

@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `TASWTomlDocument::Find()`, and so every lookup through a TOML object (`GetValue()`,
+  `TryGetValue()`, `Contains()`) and a setting's `Get()`, finds a key of a large table (more than 16
+  keys) through the document's index, in O(log n) instead of comparing the table's keys one by one,
+  so lookups in large tables are much faster; in a small table they are as fast as before. What a
+  lookup finds is unchanged. `TASWTomlValue::Find()`, on a value of its own, still compares the keys
+  one by one.
+
 ## [1.0.0] - 2026-10-26
 
 The first release.

@@ -1745,7 +1745,7 @@ TASWTomlResult TEditor::Locate(TASWTomlPath const& path, std::size_t& node, std:
 
         if (holder.Kind == ENodeKind::Scalar)
         {
-            TASWTomlValue const* const scalar = FindValue(m_Root, walked);
+            TASWTomlValue const* const scalar = Detail::FindValue(m_Index, m_Root, walked);
             return PathFailure(ETomlCode::InvalidArgument, path, MessagePath(walked) + " is a value of type " +
                 std::string(ToString(scalar->GetType())) + ", not a table.");
         }
@@ -2617,7 +2617,7 @@ TASWTomlResult TEditor::SetComment(TASWTomlPath const& path, std::string_view te
 //---------------------------------------------------------------------------
 TASWTomlResult TEditor::SetExisting(std::size_t node, TASWTomlPath const& path, TASWTomlValue const& value)
 {
-    TASWTomlValue const& old = *FindValue(m_Root, path);
+    TASWTomlValue const& old = *Detail::FindValue(m_Index, m_Root, path);
     Detail::TIndexNode const& existing = m_Index.Nodes[node];
     if (existing.Kind != ENodeKind::ElementTable || value.IsTable())
         return MergeValue(node, old, value);
@@ -2625,7 +2625,7 @@ TASWTomlResult TEditor::SetExisting(std::size_t node, TASWTomlPath const& path, 
     // An array of tables holds only tables: the array is set to the one with the new element instead, which is
     // written as an array value
     TASWTomlPath const arrayPath = Prefix(path, path.GetParts().size() - 1);
-    TASWTomlValue const& oldArray = *FindValue(m_Root, arrayPath);
+    TASWTomlValue const& oldArray = *Detail::FindValue(m_Index, m_Root, arrayPath);
     TASWTomlValue array = oldArray;
     (*array.AsArray())[path.GetParts().back().GetIndex()] = value;
 
@@ -2926,7 +2926,7 @@ TASWTomlResult TASWTomlDocument::Append(TASWTomlPath const& path, TASWTomlValue 
     if (!result.IsOk())
         return WithPath(result, path);
 
-    TASWTomlValue const* const old = FindValue(m_Root, path);
+    TASWTomlValue const* const old = Detail::FindValue(m_Index, m_Root, path);
     std::size_t const oldSize = old != nullptr && old->IsArray() ? old->AsArray()->size() : 0;
 
     std::string const body = BodyText();
@@ -3002,7 +3002,7 @@ void TASWTomlDocument::Commit(Detail::TDocModel& model, Detail::TDocIndex& index
 //---------------------------------------------------------------------------
 TASWTomlValue const* TASWTomlDocument::Find(TASWTomlPath const& path) const noexcept
 {
-    return FindValue(m_Root, path);
+    return Detail::FindValue(m_Index, m_Root, path);
 }
 //---------------------------------------------------------------------------
 std::string TASWTomlDocument::GetComment(TASWTomlPath const& path) const

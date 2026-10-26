@@ -249,8 +249,10 @@ private:
 public: // Test methods, each defined with ASW_TEST
     void Test_Copies_HaveTheirOwnValues();
     void Test_Default_RootIsAnEmptyTable();
+    void Test_Find_AfterEditsCopiesAndMoves();
     void Test_Find_ArrayElementsByIndex();
     void Test_Find_KeysAndTables();
+    void Test_Find_LargeTables();
     void Test_Find_NullWhenThereIsNoSuchValue();
     void Test_GetRoot_HoldsEveryKindOfValue();
     void Test_GetRoot_KeysInTheOrderFirstDefined();
