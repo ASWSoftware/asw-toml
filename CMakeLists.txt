@@ -25,6 +25,7 @@ else()
     set(ASWTOML_IS_TOP_LEVEL OFF)
 endif()
 
+option(ASWTOML_BUILD_EXAMPLE "Build the ASWToml example (example/cmake)" OFF)
 option(ASWTOML_BUILD_TESTS "Build the ASWToml unit tests (tests/cmake; needs the asw-unit-tests submodule)" OFF)
 option(ASWTOML_INSTALL "Generate the install rules for the ASWToml library, headers, and CMake package files"
     ${ASWTOML_IS_TOP_LEVEL})
@@ -160,4 +161,8 @@ endif()
 
 if(ASWTOML_BUILD_TESTS)
     add_subdirectory(tests/cmake tests)
+endif()
+
+if(ASWTOML_BUILD_EXAMPLE)
+    add_subdirectory(example/cmake example)
 endif()

@@ -170,6 +170,35 @@ jobs:
           path: junit-results.xml
           if-no-files-found: error
 
+      - name: Build and run the example
+        # Builds example/cmake (with the library from the source tree) with the job's sanitizer, and runs it: it
+        # returns 0 only when every step did what it shows, and a sanitizer report fails it too. Its output (the
+        # messages and the TOML file of each step) is in this step's log.
+        shell: bash
+        env:
+          TSAN_OPTIONS: second_deadlock_stack=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: |
+          if [ -n "${{ matrix.cc }}" ]; then
+            export CC="${{ matrix.cc }}"
+            export CXX="${{ matrix.cxx }}"
+          fi
+          if [ -n "${{ matrix.cxxflags }}" ]; then
+            export CXXFLAGS="${{ matrix.cxxflags }}"
+          fi
+          generatorArgs=()
+          if [ -n "${{ matrix.generator }}" ]; then
+            generatorArgs=(-G "${{ matrix.generator }}")
+          fi
+          cmake -S example/cmake -B build-example "${generatorArgs[@]}" -DCMAKE_BUILD_TYPE=Release \
+            -DASWTOML_SANITIZE="${{ matrix.sanitize }}"
+          cmake --build build-example ${{ matrix.build_args }}
+          # The tests' path with the example's folder and name, e.g. build-example/bin/Release/ASWTomlExample.exe
+          exe="${{ matrix.exe_path }}"
+          exe="${exe/#build\//build-example/}"
+          exe="${exe/ASWTomlTests/ASWTomlExample}"
+          "./$exe"
+
       - name: Check the installed CMake package
         # Builds and installs the library (the root project) to a temporary prefix, then builds tests/package against
         # it with find_package() and runs it, which checks the install rules and the package files. Not in the

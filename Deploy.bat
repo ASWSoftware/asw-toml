@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions
 
-REM Copies the ASWToml library sources, build files and docs to a folder, e.g. for a release package or to drop
-REM into another project. Usage: Deploy.bat "C:\path\to\staging"
+REM Copies the ASWToml library sources, build files, docs and example to a folder, e.g. for a release package or to
+REM drop into another project. Usage: Deploy.bat "C:\path\to\staging"
 
 set "SCRIPT_DIR=%~dp0"
 set "TARGET_DIR=%~1"
@@ -109,6 +109,13 @@ if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Writer.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Writer.cpp"
 if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Writer.h" "%TARGET_DIR%\ASWToml\ASWToml_Writer.h"
+if errorlevel 1 exit /b 1
+
+call :CopyFile "example\cmake\CMakeLists.txt" "%TARGET_DIR%\example\cmake\CMakeLists.txt"
+if errorlevel 1 exit /b 1
+call :CopyFile "example\cmake\README.md" "%TARGET_DIR%\example\cmake\README.md"
+if errorlevel 1 exit /b 1
+call :CopyFile "example\src\main.cpp" "%TARGET_DIR%\example\src\main.cpp"
 if errorlevel 1 exit /b 1
 
 echo Deployment completed successfully.

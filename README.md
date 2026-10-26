@@ -138,8 +138,9 @@ target_link_libraries(MyApp PRIVATE ASWToml::ASWToml)
 ```
 
 Either way, only the library is built. When ASWToml is the top-level project,
-`-DASWTOML_BUILD_TESTS=ON` also builds the unit tests, and `ASWTOML_WARNINGS` (on by default only
-there) compiles the library with extra warnings.
+`-DASWTOML_BUILD_TESTS=ON` also builds the unit tests, `-DASWTOML_BUILD_EXAMPLE=ON` the example
+program (`example/cmake`), and `ASWTOML_WARNINGS` (on by default only there) compiles the library
+with extra warnings.
 
 To use a prebuilt copy instead, build and install the library from the repository root (a Debug
 build is named `ASWTomld`, so Debug and Release can share one install prefix):
