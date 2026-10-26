@@ -621,8 +621,8 @@ public:
 /////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_DocumentComments
 //
-// TASWTomlDocument::GetComment(), SetComment(), GetTrailingComment() and SetTrailingComment(): the comment lines above
-// a key or header (the file comment for the root) and the comment at the end of its line
+// TASWTomlDocument::GetComment(), SetComment(), SetComments(), GetTrailingComment() and SetTrailingComment(): the
+// comment lines above a key or header (the file comment for the root) and the comment at the end of its line
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_DocumentComments : public TAutoTestGroup<TTest_ASWToml_DocumentComments>
 {
@@ -644,6 +644,10 @@ private:
         ASWToml::TASWTomlOptions const& options = ASWToml::TASWTomlOptions(),
         std::source_location loc = std::source_location::current());
 
+    // Checks as CheckSets() does, for SetComments() of 'comments', each one's GetComment() its text
+    void CheckSetsAll(std::string const& text, ASWToml::TASWTomlDocument::TPathCommentVector const& comments,
+        std::string const& expected, std::string const& msg, std::source_location loc = std::source_location::current());
+
     // Checks as CheckSets() does, for SetTrailingComment() and GetTrailingComment()
     void CheckSetsTrailing(std::string const& text, ASWToml::TASWTomlPath const& path, std::string const& comment,
         std::string const& expected, std::string const& expectedComment, std::string const& msg,
@@ -656,6 +660,8 @@ public: // Test methods, each defined with ASW_TEST
     void Test_RejectsWhatCantBeCommented();
     void Test_SameText_ChangesNothing();
     void Test_SetComment_ReplacesTheLinesAbove();
+    void Test_SetComments_FailuresChangeNothing();
+    void Test_SetComments_SetsEachInOneEdit();
     void Test_TrailingComment_GetAndSet();
 
 public:

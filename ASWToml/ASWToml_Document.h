@@ -236,6 +236,18 @@ struct TDocModel
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TASWTomlPathComment
+//
+// A comment and the path of the key, table or array of tables it is set at (see TASWTomlDocument::SetComments())
+/////////////////////////////////////////////////////////////////////////////
+struct TASWTomlPathComment
+{
+    TASWTomlPath Path;
+    std::string Text;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TASWTomlDocument
 //
 // A TOML text, parsed into a model that keeps every byte of it: the tables in file order, each with its comments,
@@ -247,6 +259,10 @@ struct TDocModel
 /////////////////////////////////////////////////////////////////////////////
 class TASWTomlDocument
 {
+public:
+    // Comments and their paths, in order (see SetComments())
+    using TPathCommentVector = std::vector<TASWTomlPathComment>;
+
 private:
     Detail::TDocModel m_Model;
     Detail::TDocIndex m_Index; // The index of m_Model
@@ -401,6 +417,15 @@ public:
     // line break, which TOML doesn't allow in a comment. On failure nothing changes. Throws only std::bad_alloc, and
     // then nothing changes either.
     TASWTomlResult SetComment(TASWTomlPath const& path, std::string_view text);
+
+    // Sets the comment of each of 'comments' at its Path to its Text, as SetComment() sets one, in one edit: the text
+    // is written and read again once, however many comments there are (the file comment, at the root path, before
+    // the others, wherever it is in 'comments'). Comments that are there already change nothing; when none changes,
+    // the modified flag stays as it was. Fails as SetComment() does for the first of 'comments' that fails, with its
+    // path in the result's Path, or with InvalidArgument when two of them are of the same comment (a path given twice,
+    // or an array of tables and its first element, servers and servers[0]); on failure nothing changes. Throws only
+    // std::bad_alloc, and then nothing changes either.
+    TASWTomlResult SetComments(TPathCommentVector const& comments);
 
     // Gives the document 'options', which may be its own, and reads its text again with them, as Parse() does, so the
     // reading options apply to it. The text doesn't change, nor do the byte order mark (HasBom()) or the modified

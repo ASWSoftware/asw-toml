@@ -404,6 +404,8 @@ public:
 void AppendKey(Detail::TDocKey const& key, std::string& text);
 void AppendKeyValue(Detail::TDocKeyValue const& keyValue, std::string& text);
 void AppendValue(Detail::TDocValue const& value, std::string& text);
+bool CommentIsThere(Detail::TDocModel const& model, Detail::TDocIndex const& index, TASWTomlPath const& path,
+    std::string_view text);
 TStringVector CommentLines(std::string_view text);
 std::string CommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& index, TASWTomlPath const& path);
 std::size_t CommentStart(Detail::TDocIndex const& index, std::size_t line) noexcept;
@@ -425,6 +427,7 @@ std::string_view ModelText(Detail::TDocModel const& model, Detail::TIndexLine co
 TIndexVector Partners(TASWTomlValue::TValueVector const& old, TASWTomlValue::TValueVector const& values);
 TASWTomlPath Prefix(TASWTomlPath const& path, std::size_t count);
 void RemoveValue(TASWTomlValue& root, Detail::TDocIndex const& index, TASWTomlPath const& path);
+TASWTomlResult RepeatedComment(Detail::TDocIndex const& index, TASWTomlDocument::TPathCommentVector const& comments);
 bool SpliceBefore(TSplice const& left, TSplice const& right) noexcept;
 std::string TrailingCommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& index,
     TASWTomlPath const& path);
@@ -509,6 +512,21 @@ void AppendValue(Detail::TDocValue const& value, std::string& text)
             text += '}';
             break;
     }
+}
+//---------------------------------------------------------------------------
+/*
+    CommentIsThere
+
+    Whether 'text' (not empty once split and trimmed, see CommentLines()) is already the comment of 'path' in the
+    text whose model is 'model' and index 'index', as GetComment() gives it, so TASWTomlDocument::SetComment() of it
+    changes nothing; found without the text
+*/
+bool CommentIsThere(Detail::TDocModel const& model, Detail::TDocIndex const& index, TASWTomlPath const& path,
+    std::string_view text)
+{
+    std::string const comment = Joined(CommentLines(text));
+
+    return !comment.empty() && comment == CommentOf(model, index, path);
 }
 //---------------------------------------------------------------------------
 /*
@@ -1004,6 +1022,43 @@ void RemoveValue(TASWTomlValue& root, Detail::TDocIndex const& index, TASWTomlPa
             break;
         }
     }
+}
+//---------------------------------------------------------------------------
+/*
+    RepeatedComment
+
+    Checks that no two of 'comments' are of the same comment in the text whose index is 'index': Ok, or
+    InvalidArgument, with its path, for the first one whose comment one before it is of too (the same path, or an
+    array of tables and its first element). One whose path names nothing with a comment of its own is left to
+    SetComment() to refuse.
+*/
+TASWTomlResult RepeatedComment(Detail::TDocIndex const& index, TASWTomlDocument::TPathCommentVector const& comments)
+{
+    // The comment each line has, by the line that defines it (the file comment's after the last one), is that of the
+    // first of 'comments' that names it
+    std::size_t const fileComment = index.Lines.size();
+    TIndexVector first(fileComment + 1, NoIndex);
+    for (std::size_t i = 0; i < comments.size(); ++i)
+    {
+        TASWTomlPath const& path = comments[i].Path;
+        std::size_t const node = Detail::FindNode(index, path);
+        if (node == NoIndex)
+            continue;
+
+        std::size_t const line = node == 0 ? fileComment : DefiningLine(index, node);
+        if (line == NoIndex)
+            continue;
+
+        if (first[line] != NoIndex)
+        {
+            return WithPath(Failure(ETomlCode::InvalidArgument, "Can't set the comment of " + MessagePath(path) +
+                ": it is the comment of " + MessagePath(comments[first[line]].Path) + ", which is set too."), path);
+        }
+
+        first[line] = i;
+    }
+
+    return TASWTomlResult();
 }
 //---------------------------------------------------------------------------
 /*
@@ -3079,6 +3134,10 @@ TASWTomlResult TASWTomlDocument::Reset(TASWTomlOptions const& options)
 //---------------------------------------------------------------------------
 TASWTomlResult TASWTomlDocument::SetComment(TASWTomlPath const& path, std::string_view text)
 {
+    // Found without writing the text, so a comment that is there already costs nothing
+    if (CommentIsThere(m_Model, m_Index, path, text))
+        return TASWTomlResult();
+
     std::string const body = BodyText();
     TEditor editor(body, m_Index, m_Root, m_Options, m_Options.Values, GetLineBreak());
     TASWTomlResult result = editor.SetComment(path, text);
@@ -3100,6 +3159,68 @@ TASWTomlResult TASWTomlDocument::SetComment(TASWTomlPath const& path, std::strin
     {
         return WithPath(Failure(ETomlCode::InvalidValue, "Can't set the comment of " + MessagePath(path) +
             ": the text written for it doesn't read back as it."), path);
+    }
+
+    Commit(model, index, root);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::SetComments(TPathCommentVector const& comments)
+{
+    TASWTomlResult result = RepeatedComment(m_Index, comments);
+    if (!result.IsOk())
+        return result;
+
+    // The comments to change, the file comment first, so a new one goes above a new comment of the first key or table
+    TIndexVector changed;
+    for (std::size_t i = 0; i < comments.size(); ++i)
+    {
+        if (CommentIsThere(m_Model, m_Index, comments[i].Path, comments[i].Text))
+            continue;
+
+        if (comments[i].Path.IsRoot())
+            changed.insert(changed.begin(), i);
+        else
+            changed.push_back(i);
+    }
+
+    if (changed.empty())
+        return result;
+
+    std::string const body = BodyText();
+    TEditor editor(body, m_Index, m_Root, m_Options, m_Options.Values, GetLineBreak());
+    for (std::size_t const i : changed)
+    {
+        result = editor.SetComment(comments[i].Path, comments[i].Text);
+        if (!result.IsOk())
+            return WithPath(result, comments[i].Path);
+    }
+
+    editor.Finish();
+    if (editor.IsEmpty())
+        return result;
+
+    Detail::TDocModel model;
+    Detail::TDocIndex index;
+    TASWTomlValue root;
+    TASWTomlPath const& firstPath = comments[changed.front()].Path;
+    result = ReadEdited(editor.EditedText(), model, index, root);
+    if (!result.IsOk())
+        return WithPath(result, firstPath);
+
+    // The text must read as the same values, with each comment at its path
+    TASWTomlPath const* unread = Detail::IdenticalValues(root, m_Root) ? nullptr : &firstPath;
+    for (std::size_t i = 0; unread == nullptr && i < comments.size(); ++i)
+    {
+        if (CommentOf(model, index, comments[i].Path) != Joined(CommentLines(comments[i].Text)))
+            unread = &comments[i].Path;
+    }
+
+    if (unread != nullptr)
+    {
+        return WithPath(Failure(ETomlCode::InvalidValue, "Can't set the comment of " + MessagePath(*unread) +
+            ": the text written for it doesn't read back as it."), *unread);
     }
 
     Commit(model, index, root);

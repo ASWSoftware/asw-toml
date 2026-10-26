@@ -5786,6 +5786,34 @@ void TTest_ASWToml_DocumentComments::CheckSets(std::string const& text, ASWToml:
         reread.GetComment(path) == expectedComment, msg + ": the text should read back with the comment", loc);
 }
 //---------------------------------------------------------------------------
+void TTest_ASWToml_DocumentComments::CheckSetsAll(std::string const& text,
+    TASWTomlDocument::TPathCommentVector const& comments, std::string const& expected, std::string const& msg,
+    std::source_location loc)
+{
+    TASWTomlDocument document;
+    ASWToml::TASWTomlResult const parsed = document.Parse(text);
+    CheckTrue(parsed.IsOk(), msg + ": the text should parse: " + parsed.Message, loc);
+    TASWTomlValue const old = document.GetRoot();
+
+    ASWToml::TASWTomlResult const result = document.SetComments(comments);
+
+    CheckTrue(result.IsOk(), msg + ": the comments should be set: " + result.Message, loc);
+    CheckEmpty(result.Path, msg + ": no path on success", loc);
+    CheckEquals(Escaped(expected), Escaped(document.ToText()), msg + ": the text", loc);
+    CheckTrue(ASWToml::Detail::IdenticalValues(document.GetRoot(), old), msg + ": the values stay", loc);
+    CheckEquals(expected != text, document.IsModified(), msg + ": the document is modified if the text changed",
+        loc);
+
+    TASWTomlDocument reread;
+    CheckTrue(reread.Parse(document.ToText()).IsOk(), msg + ": the text should read back", loc);
+    for (ASWToml::TASWTomlPathComment const& comment : comments)
+    {
+        std::string const where = msg + ": the comment of " + comment.Path.ToString();
+        CheckEquals(Escaped(comment.Text), Escaped(document.GetComment(comment.Path)), where, loc);
+        CheckEquals(Escaped(comment.Text), Escaped(reread.GetComment(comment.Path)), where + ", read back", loc);
+    }
+}
+//---------------------------------------------------------------------------
 void TTest_ASWToml_DocumentComments::CheckSetsTrailing(std::string const& text, ASWToml::TASWTomlPath const& path,
     std::string const& comment, std::string const& expected, std::string const& expectedComment,
     std::string const& msg, TASWTomlOptions const& options, std::source_location loc)
@@ -5969,6 +5997,74 @@ ASW_TEST(TTest_ASWToml_DocumentComments, SetComment_ReplacesTheLinesAbove)
     CheckSets("x = 1\r\ny = 2\r\n", "y", "a\nb", "x = 1\r\n# a\r\n# b\r\ny = 2\r\n", "a\nb",
         "new lines get the text's line break");
     CheckSets("x = 1\n", "x", "c\n\nd", "#c\n#\n#d\nx = 1\n", "c\n\nd", "the comment prefix of the options", hash);
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentComments, SetComments_FailuresChangeNothing)
+{
+    // Arrange
+    std::string const text = "# c\na = 1\n[[s]]\n";
+    TASWTomlDocument::TPathCommentVector const missing = { { "a", "x" }, { "b", "y" } };
+    TASWTomlDocument::TPathCommentVector const invalid = { { "s", "x" }, { "a", "\xFF" } };
+    TASWTomlDocument::TPathCommentVector const twice = { { "b", "w" }, { "a", "x" }, { "s", "y" }, { "a", "z" } };
+    TASWTomlDocument::TPathCommentVector const thereTwice = { { "a", "c" }, { "a", "c" } };
+    TASWTomlDocument::TPathCommentVector const element = { { "s", "x" }, { "s[0]", "y" } };
+    TASWTomlDocument::TPathCommentVector const root = { { "", "x" }, { "", "y" } };
+    TASWTomlDocument document;
+    CheckTrue(document.Parse(text).IsOk(), "the text should parse");
+
+    // Act
+    ASWToml::TASWTomlResult const missingResult = document.SetComments(missing);
+    ASWToml::TASWTomlResult const invalidResult = document.SetComments(invalid);
+    ASWToml::TASWTomlResult const twiceResult = document.SetComments(twice);
+    ASWToml::TASWTomlResult const thereTwiceResult = document.SetComments(thereTwice);
+    ASWToml::TASWTomlResult const elementResult = document.SetComments(element);
+    ASWToml::TASWTomlResult const rootResult = document.SetComments(root);
+
+    // Assert
+    CheckEquals(ETomlCode::NotFound, missingResult.Code, "a missing key fails as SetComment() fails");
+    CheckEquals("Can't set the comment of b: b doesn't exist."s, missingResult.Message, "its message");
+    CheckEquals("b"s, missingResult.Path, "with the path that failed");
+    CheckEquals(ETomlCode::InvalidValue, invalidResult.Code, "a comment that isn't valid UTF-8 fails");
+    CheckEquals("a"s, invalidResult.Path, "with its path, after one that would be set");
+    CheckEquals(ETomlCode::InvalidArgument, twiceResult.Code, "a path given twice is refused, before a missing key");
+    CheckEquals("Can't set the comment of a: it is the comment of a, which is set too."s, twiceResult.Message,
+        "its message");
+    CheckEquals("a"s, twiceResult.Path, "with the path of the second");
+    CheckEquals(ETomlCode::InvalidArgument, thereTwiceResult.Code, "also when the comment is there already");
+    CheckEquals(ETomlCode::InvalidArgument, elementResult.Code, "an array of tables and its first element share one");
+    CheckEquals("Can't set the comment of s[0]: it is the comment of s, which is set too."s, elementResult.Message,
+        "its message");
+    CheckEquals("s[0]"s, elementResult.Path, "with the element's path");
+    CheckEquals(ETomlCode::InvalidArgument, rootResult.Code, "the root path twice is refused");
+    CheckEquals("Can't set the comment of the root table: it is the comment of the root table, which is set too."s,
+        rootResult.Message, "its message");
+    CheckEquals(Escaped(text), Escaped(document.ToText()), "the text should be kept");
+    CheckFalse(document.IsModified(), "the document isn't modified");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_DocumentComments, SetComments_SetsEachInOneEdit)
+{
+    // Arrange
+    TASWTomlDocument::TPathCommentVector const comments = { { "t.y", "b" }, { "x", "a" }, { "", "f" },
+        { "s[1]", "two" }, { "t", "table" } };
+    TASWTomlDocument::TPathCommentVector const some = { { "x", "a" }, { "y", "new" } };
+    TASWTomlDocument::TPathCommentVector const removed = { { "x", "" }, { "y", "" } };
+    TASWTomlDocument::TPathCommentVector const fileRemoved = { { "x", "b" }, { "", "" } };
+    TASWTomlDocument::TPathCommentVector const there = { { "x", "a" }, { "", "f" } };
+    TASWTomlDocument::TPathCommentVector const emptyThere = { { "x", "" }, { "", "" } };
+    TASWTomlDocument::TPathCommentVector const none;
+
+    // Act & Assert
+    CheckSetsAll("x = 1\n[t]\ny = 2\n[[s]]\n[[s]]\n", comments,
+        "# f\n\n# a\nx = 1\n# table\n[t]\n# b\ny = 2\n[[s]]\n# two\n[[s]]\n",
+        "keys, tables, an element and the file comment, the file comment above the first key's");
+    CheckSetsAll("# a\nx = 1\n# old\ny = 2\n", some, "# a\nx = 1\n# new\ny = 2\n", "one there already, one replaced");
+    CheckSetsAll("# a\nx = 1\n# b\ny = 2\n", removed, "x = 1\ny = 2\n", "comments removed");
+    CheckSetsAll("# f\n\n# a\nx = 1\n", fileRemoved, "# b\nx = 1\n",
+        "the file comment removed with its blank line, and the first key's replaced");
+    CheckSetsAll("# f\n\n# a\nx = 1\n", there, "# f\n\n# a\nx = 1\n", "all there already: nothing changes");
+    CheckSetsAll("x = 1\n", emptyThere, "x = 1\n", "no comments, none set: nothing changes");
+    CheckSetsAll("x = 1\n", none, "x = 1\n", "none");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_DocumentComments, TrailingComment_GetAndSet)

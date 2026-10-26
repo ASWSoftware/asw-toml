@@ -184,10 +184,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with `\n`. `GetTrailingComment(path)` gives the comment at the end of that line.
   `SetComment(path, text)` replaces the comment lines with one line per line of the text, written
   as `Writing.CommentPrefix` and the line with the indentation of the line below them (a new file
-  comment gets a blank line under it), and an empty text removes them.
-  `SetTrailingComment(path, text)` replaces the comment at the end of the line, or adds `  # text`
-  there, and an empty text removes it. A text that reads the same as the comment there changes
-  nothing. A table that only dotted keys or longer headers made and a value inside an array or
+  comment gets a blank line under it), and an empty text removes them. `SetComments(comments)`
+  sets several (a `TPathCommentVector` of `TASWTomlPathComment`, each a path and a text) in one
+  edit, so the text is written and read again once however many there are; it refuses two of the
+  same comment (`servers` and `servers[0]`) with `InvalidArgument`, and on any failure changes
+  nothing. `SetTrailingComment(path, text)` replaces the comment at the end of the line, or adds
+  `  # text` there, and an empty text removes it. A text that reads the same as the comment there
+  changes nothing (and, for `SetComment()` and `SetComments()`, is found without writing the
+  text). A table that only dotted keys or longer headers made and a value inside an array or
   inline table have no line of their own, so their comments can't be set (`InvalidArgument`); a
   comment that isn't valid UTF-8 or holds a control character other than a tab fails with
   `InvalidValue`.
