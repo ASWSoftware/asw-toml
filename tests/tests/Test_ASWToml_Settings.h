@@ -73,6 +73,7 @@ private:
     typedef TAutoTestGroup<TTest_ASWToml_SettingsLoad> inherited;
 
 public: // Test methods, each defined with ASW_TEST
+    void Test_AppSettings_OldFileIsBroughtUpToDate();
     void Test_Bindings_FollowTheirLifetimes();
     void Test_Comments_CodeWinsReplacesTheFilesComments();
     void Test_Comments_EmptyCodeCommentKeepsTheFiles();
@@ -96,6 +97,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Load_TablesWithoutSettingsGetTheirComments();
     void Test_Load_WriteFailuresAreErrors();
     void Test_LoadText_AppliesTheSettings();
+    void Test_OutOfMemory_LoadAppliesAllOrNothing();
     void Test_SetOptions_DoesntApplyTheSettings();
 
 public:
@@ -127,6 +129,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Load_ReplacesOnlyThePartsThatArentValid();
     void Test_Load_ValueOfAnotherTypeIsReplacedWhole();
     void Test_Load_WholeValueRefusedUsesTheDefault();
+    void Test_OutOfMemory_SetOverlayChangesNothing();
     void Test_Set_KeepsTheKeysTheStructDoesntKnow();
     void Test_Set_MapOverlaysByKey();
     void Test_Set_PairsElementsByWhatTheStructKnows();
@@ -135,6 +138,32 @@ public: // Test methods, each defined with ASW_TEST
 public:
     TTest_ASWToml_SettingsStructs();
     ~TTest_ASWToml_SettingsStructs() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_SettingsThreads
+//
+// Settings used from several threads: bindings that come and go while the object loads, and Get() and Set() (of an
+// array of tables too) while other threads load and save, each seeing whole settings
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_SettingsThreads : public TAutoTestGroup<TTest_ASWToml_SettingsThreads>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_SettingsThreads> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Bindings_ComeAndGoWhileLoading();
+    void Test_GetAndSet_SeeWholeSettingsWhileLoading();
+
+public:
+    TTest_ASWToml_SettingsThreads();
+    ~TTest_ASWToml_SettingsThreads() override;
 
     void SetUp_Group() override;
     void SetUp_Test(ITestCase& testCase) override;

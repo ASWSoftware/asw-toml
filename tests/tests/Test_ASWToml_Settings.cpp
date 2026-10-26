@@ -15,11 +15,15 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "Test_ASWToml_Settings.h"
 //---------------------------------------------------------------------------
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
+#include <memory>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -33,6 +37,7 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
+#include "ASWToml_Document.h"
 #include "ASWToml_File.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
@@ -43,6 +48,7 @@ SPDX-License-Identifier: MIT
 #include "UT_Helper_Converters.h"
 #include "UT_Helper_FailingAlloc.h"
 #include "UT_Helper_TempDir.h"
+#include "UT_Helper_Threads.h"
 //---------------------------------------------------------------------------
 
 // Neither copyable nor movable
@@ -74,6 +80,7 @@ using ASWToml::EIntegerBase;
 using ASWToml::ESeverity;
 using ASWToml::ETomlCode;
 using ASWToml::TASWBaseToml;
+using ASWToml::TASWTomlDocument;
 using ASWToml::TASWTomlMessage;
 using ASWToml::TASWTomlOptions;
 using ASWToml::TASWTomlPath;
@@ -86,9 +93,11 @@ using ASWToml::TMessageVector;
 using ASWToml::TStringVector;
 
 using TClusterVector = std::vector<TTestCluster>;
+using TCodeVector = std::vector<ETomlCode>;
 using TColorMap = std::map<EColor, int>;
 using TCountMap = std::unordered_map<std::string, int>;
 using THostMap = std::map<std::string, TTestServer>;
+using TIntSettingVector = std::vector<std::unique_ptr<TASWTomlSetting<int> > >;
 using TLimitMap = std::map<std::string, int>;
 using TNameMap = std::map<int, std::string>;
 using TNestedVector = std::vector<std::vector<int> >;
@@ -150,6 +159,45 @@ auto ASWTomlFields(TTestPalette const&)
     return std::tuple{ ASWToml::Field("paints", &TTestPalette::Paints) };
 }
 
+// The themes of TAppSettings, written by name
+enum class ETheme
+{
+    Light,
+    Dark,
+    System,
+};
+
+auto const& ASWTomlEnumNames(ETheme)
+{
+    static constexpr ASWToml::TASWTomlEnumName<ETheme> names[] = {
+        { ETheme::Light, "Light" }, { ETheme::Dark, "Dark" }, { ETheme::System, "System" },
+    };
+
+    return names;
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TAppServer
+//
+// A server of TAppSettings, whose field secure the application's earlier version didn't have
+/////////////////////////////////////////////////////////////////////////////
+struct TAppServer
+{
+    std::string Host;
+    std::uint16_t Port = 80;
+    bool Secure = false;
+};
+
+// The servers of TAppSettings
+using TAppServerVector = std::vector<TAppServer>;
+
+auto ASWTomlFields(TAppServer const&)
+{
+    return std::tuple{ ASWToml::Field("host", &TAppServer::Host), ASWToml::Field("port", &TAppServer::Port),
+        ASWToml::Field("secure", &TAppServer::Secure) };
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // TRecorder
@@ -163,6 +211,42 @@ private:
 
 public:
     explicit TRecorder(TMessageVector& messages);
+
+    void operator()(TASWTomlMessage const& message) const;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TCodeRecorder
+//
+// A log callback that adds the code of each message to a vector, in room made before, so it allocates nothing itself
+// (for the out-of-memory tests)
+/////////////////////////////////////////////////////////////////////////////
+class TCodeRecorder
+{
+private:
+    TCodeVector* m_Codes;
+
+public:
+    explicit TCodeRecorder(TCodeVector& codes);
+
+    void operator()(TASWTomlMessage const& message) const;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TReportCounter
+//
+// A log callback that adds 1 to a count for each message, from any thread, at once (unlike TCountingCallback, which
+// gives up its time slice first, so a load that reports a hundred messages while many threads run would take seconds)
+/////////////////////////////////////////////////////////////////////////////
+class TReportCounter
+{
+private:
+    std::atomic<int>* m_Count;
+
+public:
+    explicit TReportCounter(std::atomic<int>& count);
 
     void operator()(TASWTomlMessage const& message) const;
 };
@@ -305,13 +389,232 @@ public:
     std::string operator()(int const& value) const;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TAppSettings
+//
+// The settings of an application, declared as the example's settings class declares them: a file comment, a
+// validator, an enum by name, an optional setting, a range, a key the application's earlier version called log_days,
+// a path, a vector of strings, and servers in an array of tables (see TAppServer)
+/////////////////////////////////////////////////////////////////////////////
+class TAppSettings : public TASWBaseToml
+{
+private:
+    // The validator of a text that can't be empty
+    static std::string NotEmpty(std::string const& value);
+
+public:
+    // The root table holds the keys before the first header; its comment is the file comment
+    TASWTomlTable FileTop{ *this, "", "Settings of the ASWToml example." };
+
+    TASWTomlTable General{ *this, "general", "What the application looks like." };
+    TASWTomlSetting<std::string> UserName{ General, "user_name", "Guest", "The name in the title bar.",
+        { .Validator = NotEmpty } };
+    TASWTomlSetting<ETheme> Theme{ General, "theme", ETheme::System, "Light, Dark or System." };
+    TASWTomlSetting<bool> EnableCheats{ General, "enable_cheats", false, "", { .Optional = true } };
+
+    TASWTomlTable Logging{ *this, "logging" };
+    TASWTomlSetting<unsigned> Level{ Logging, "level", 2, "From 0 (errors only) to 4 (everything).",
+        { .Min = 0, .Max = 4 } };
+    TASWTomlSetting<unsigned> DaysKept{ Logging, "days_kept", 30,
+        "How many days the logs are kept; 0 keeps them forever.", { .OldKeys = { "log_days" } } };
+    TASWTomlSetting<std::filesystem::path> Folder{ Logging, "folder", std::filesystem::path("logs"),
+        "Relative to the folder of this file." };
+
+    TASWTomlTable View{ *this, "view" };
+    TASWTomlSetting<double> Zoom{ View, "zoom", 1.0, "From 0.25 to 4.", { .Min = 0.25, .Max = 4.0 } };
+    TASWTomlSetting<TStringVector> Columns{ View, "columns", TStringVector{ "name", "size", "date" },
+        "The columns shown, in order." };
+
+    TASWTomlTable Network{ *this, "network", "Where the application connects." };
+    TASWTomlSetting<int> Timeout{ Network, "timeout", 30, "In seconds.", { .Min = 1 } };
+    TASWTomlSetting<TAppServerVector> Servers{ Network, "servers",
+        TAppServerVector{ TAppServer{ "localhost", 8080, false } }, "The servers, tried in order." };
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TBindingsTest
+//
+// What the threads of Bindings_ComeAndGoWhileLoading share: the object with a table of settings that stay (key0 = 0,
+// key1 = 1, ..., each with a comment), the problems the threads find, and how much work each does. Binder threads
+// bind settings of their own at least Iterations times, and on until Loading is false, at most Largest times; the
+// loader loads Loads times.
+/////////////////////////////////////////////////////////////////////////////
+struct TBindingsTest
+{
+    TASWBaseToml Toml;
+    TASWTomlTable Stays{ Toml, "stays", "Settings that stay." };
+    TIntSettingVector Stayers;
+    TThreadFailures Failures;
+    std::size_t Binders = 0;
+    int Iterations = 0;
+    int Largest = 0;
+    int Loads = 0;
+    std::atomic<bool> Loading{ true };
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TWholeSettingsTest
+//
+// What the threads of GetAndSet_SeeWholeSettingsWhileLoading share: the object with its tables and settings, the
+// problems the threads find, and how much work each does. Writer threads count their settings up from 1, to at least
+// Iterations, and threads that go on until the file threads are done wait for Left to reach 0, at most Largest times.
+/////////////////////////////////////////////////////////////////////////////
+struct TWholeSettingsTest
+{
+    TASWBaseToml Toml;
+    TASWTomlTable Values{ Toml, "values", "The counts." };
+    TIntSettingVector Counts; // values.count0, values.count1, ...: from 0 to Largest, each with a comment
+    std::unique_ptr<TASWTomlSetting<int> > Scratch; // values.scratch, optional
+    std::unique_ptr<TASWTomlSetting<TServerVector> > Servers; // values.servers, an array of tables
+    TASWTomlTable Others{ Toml, "others", "Other settings." };
+    TIntSettingVector Fillers; // others.key0, others.key1, ...: each with a comment
+    TThreadFailures Failures;
+    int Iterations = 0;
+    int Largest = 0;
+    int FileOperations = 0; // The loads or saves of each file thread
+    std::atomic<int> Left{ 0 }; // The file threads still running
+    std::string FilePath; // The file the loads and saves use
+    std::string InvalidText; // A text whose values aren't valid and that lacks most keys, which a load repairs
+    std::string InvalidPath; // A file the loader writes InvalidText to, then loads
+};
+
 //---------------------------------------------------------------------------
 
+void BindAndUnbind(TBindingsTest& test, std::size_t index);
+TServerVector BinderServers(std::size_t index);
+std::string BindingsProblem(TASWTomlDocument const& document, std::size_t stayers, std::size_t binders);
+void CountSettingUp(TWholeSettingsTest& test, std::size_t index);
 TTestCluster DefaultCluster();
 TASWTomlOptions LfOptions();
+void LoadAndCheckBindings(TBindingsTest& test, std::size_t index);
+void LoadSettingsRepeatedly(TWholeSettingsTest& test, std::size_t index);
+std::string MessageKinds(TMessageVector const& messages);
 std::string MessagesText(TMessageVector const& messages);
 std::string OneServer(TServerVector const& value);
+void ReadWholeSettings(TWholeSettingsTest& test, std::size_t index);
 std::string RemovedFirstCluster(std::string const& first, std::string const& second);
+void SaveSettingsRepeatedly(TWholeSettingsTest& test, std::size_t index);
+void SetServerPorts(TWholeSettingsTest& test, std::size_t index);
+void UseScratchSetting(TWholeSettingsTest& test, std::size_t index);
+std::string WholeSettingsProblem(TASWTomlDocument const& document, std::size_t writers, std::size_t others);
+
+//---------------------------------------------------------------------------
+/*
+    BindAndUnbind
+
+    A binder thread of Bindings_ComeAndGoWhileLoading: binds the table binder<index> with a comment, and in it the
+    setting key (the index) and the array of tables servers (BinderServers()), each with a comment, checks that they
+    read their default values, and destroys them again; at least test.Iterations times, and on until test.Loading is
+    false, at most test.Largest times.
+*/
+void BindAndUnbind(TBindingsTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    std::string const name = "binder" + std::to_string(index);
+    TServerVector const defaultServers = BinderServers(index);
+    for (int i = 0; i < test.Largest; ++i)
+    {
+        {
+            TASWTomlTable const table{ test.Toml, name, "A binder's table." };
+            TASWTomlSetting<int> const key{ table, "key", static_cast<int>(index), "A binder's key." };
+            TASWTomlSetting<TServerVector> const servers{ table, "servers", defaultServers, "A binder's servers." };
+            MaybeYield(generator);
+            if (key.Get() != static_cast<int>(index) || servers.Get() != defaultServers)
+                test.Failures.Add(name + "'s settings should read their default values");
+        }
+
+        if (i >= test.Iterations && !test.Loading)
+            break;
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    BinderServers
+
+    The default value of the servers of the binder thread number 'index': one server, b<index>:<index + 1>.
+*/
+TServerVector BinderServers(std::size_t index)
+{
+    TTestServer const server{ "b" + std::to_string(index), static_cast<std::uint16_t>(index + 1), true, std::nullopt };
+
+    return TServerVector{ server };
+}
+//---------------------------------------------------------------------------
+/*
+    BindingsProblem
+
+    What is wrong with 'document', which a load of Bindings_ComeAndGoWhileLoading gave: "" when the table stays has its
+    comment and its keys key0 to key<stayers - 1>, each with its value (its number) and its comment, and when the
+    table of each binder (binder0 to binder<binders - 1>) that is there has its comment and its key with its comment,
+    and its servers, when they are there, their element and their comment. A binder binds its table, key and servers
+    in that order and unbinds them in the other, so a load may apply its key without its servers, but its table is
+    there only with its key.
+*/
+std::string BindingsProblem(TASWTomlDocument const& document, std::size_t stayers, std::size_t binders)
+{
+    if (document.GetComment("stays") != "Settings that stay.")
+        return "the table that stays should have its comment";
+
+    for (std::size_t i = 0; i < stayers; ++i)
+    {
+        std::string const path = "stays.key" + std::to_string(i);
+        TASWTomlValue const* const value = document.Find(path);
+        bool const whole = value != nullptr && value->AsInteger() != nullptr &&
+            *value->AsInteger() == static_cast<std::int64_t>(i) && document.GetComment(path) == "A comment.";
+        if (!whole)
+            return path + " should be there with its value and its comment";
+    }
+
+    for (std::size_t i = 0; i < binders; ++i)
+    {
+        std::string const table = "binder" + std::to_string(i);
+        if (document.Find(table) == nullptr)
+            continue;
+
+        bool const tableWhole = document.GetComment(table) == "A binder's table." &&
+            document.Find(table + ".key") != nullptr && document.GetComment(table + ".key") == "A binder's key.";
+        if (!tableWhole)
+            return "the table " + table + " should have its comment, and its key with its comment";
+
+        TASWTomlValue const* const servers = document.Find(table + ".servers");
+        if (servers == nullptr)
+            continue;
+
+        bool const serversWhole = servers->AsArray() != nullptr && servers->AsArray()->size() == 1 &&
+            document.GetComment(table + ".servers") == "A binder's servers.";
+        if (!serversWhole)
+            return "the servers of " + table + " should have their element and their comment";
+    }
+
+    return std::string();
+}
+//---------------------------------------------------------------------------
+/*
+    CountSettingUp
+
+    A writer thread of GetAndSet_SeeWholeSettingsWhileLoading: sets its count, test.Counts[index], to 1, 2 and so on,
+    to at least test.Iterations, and on until test.Left is 0, at most to test.Largest.
+*/
+void CountSettingUp(TWholeSettingsTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int value = 1; value <= test.Largest; ++value)
+    {
+        TASWTomlResult const result = test.Counts[index]->Set(value);
+        if (!result.IsOk())
+            test.Failures.Add("Set() should succeed: " + result.Message);
+
+        if (value >= test.Iterations && test.Left == 0)
+            break;
+
+        MaybeYield(generator);
+    }
+}
 
 //---------------------------------------------------------------------------
 /*
@@ -344,6 +647,92 @@ TASWTomlOptions LfOptions()
 }
 //---------------------------------------------------------------------------
 /*
+    LoadAndCheckBindings
+
+    The loader thread of Bindings_ComeAndGoWhileLoading: test.Loads times, loads an empty text and checks the document
+    that gives (see BindingsProblem()), then sets test.Loading to false.
+*/
+void LoadAndCheckBindings(TBindingsTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Loads; ++i)
+    {
+        TASWTomlResult const result = test.Toml.LoadText("");
+        if (!result.IsOk())
+            test.Failures.Add("LoadText() should succeed: " + result.Message);
+
+        std::string const problem = BindingsProblem(test.Toml.GetDocument(), test.Stayers.size(), test.Binders);
+        if (!problem.empty())
+            test.Failures.Add("in a loaded document, " + problem);
+
+        MaybeYield(generator);
+    }
+
+    test.Loading = false;
+}
+//---------------------------------------------------------------------------
+/*
+    LoadSettingsRepeatedly
+
+    A file thread of GetAndSet_SeeWholeSettingsWhileLoading: test.FileOperations times, loads in turn test.InvalidText,
+    the file test.FilePath (which the saves write), and the file test.InvalidPath, first written with test.InvalidText,
+    after which it saves the object as test.FilePath, so the saves go on writing that; then counts itself out of
+    test.Left.
+*/
+void LoadSettingsRepeatedly(TWholeSettingsTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.FileOperations; ++i)
+    {
+        TASWTomlResult result;
+        switch (i % 3)
+        {
+            case 0:
+                result = test.Toml.LoadText(test.InvalidText);
+                break;
+
+            case 1:
+                result = test.Toml.Load(test.FilePath);
+                break;
+
+            default:
+                if (!WriteTestFile(ASWToml::Utf8ToPath(test.InvalidPath), test.InvalidText))
+                    test.Failures.Add("the file that isn't valid should be written");
+
+                result = test.Toml.Load(test.InvalidPath);
+                if (result.IsOk())
+                    result = test.Toml.SaveAs(test.FilePath);
+
+                break;
+        }
+
+        if (!result.IsOk())
+            test.Failures.Add("a load, and the save after it, should succeed: " + result.Message);
+
+        MaybeYield(generator);
+    }
+
+    --test.Left;
+}
+//---------------------------------------------------------------------------
+/*
+    MessageKinds
+
+    The severity, code and path of each of 'messages', one per line (e.g. "Warning ValueOutOfRange logging.level")
+*/
+std::string MessageKinds(TMessageVector const& messages)
+{
+    std::string text;
+    for (TASWTomlMessage const& message : messages)
+    {
+        text += ASWToml::ToString(message.Severity) + " "s + ASWToml::ToString(message.Code) + " " + message.Path +
+            "\n";
+    }
+
+    return text;
+}
+//---------------------------------------------------------------------------
+/*
     MessagesText
 
     'messages' as text, one per line (ToString()), for the messages of failed checks
@@ -368,6 +757,43 @@ std::string OneServer(TServerVector const& value)
 }
 //---------------------------------------------------------------------------
 /*
+    ReadWholeSettings
+
+    A reader thread of GetAndSet_SeeWholeSettingsWhileLoading: checks that a writer's count is there and Get() gives a
+    number in range, that Get() gives two servers, and that a copy of the document holds whole settings (see
+    WholeSettingsProblem()); at least test.Iterations times, and on until test.Left is 0, at most test.Largest times.
+*/
+void ReadWholeSettings(TWholeSettingsTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Largest; ++i)
+    {
+        std::size_t const key = generator() % test.Counts.size();
+        if (!test.Counts[key]->IsPresent())
+            test.Failures.Add(test.Counts[key]->GetPath().ToString() + " should always be there");
+
+        int const value = test.Counts[key]->Get();
+        if (value < 0 || value > test.Largest)
+            test.Failures.Add(test.Counts[key]->GetPath().ToString() + " should be a number in range: " +
+                std::to_string(value));
+
+        std::size_t const servers = test.Servers->Get().size();
+        if (servers != 2)
+            test.Failures.Add("there should be two servers, not " + std::to_string(servers));
+
+        std::string const problem = WholeSettingsProblem(test.Toml.GetDocument(), test.Counts.size(),
+            test.Fillers.size());
+        if (!problem.empty())
+            test.Failures.Add("in a copy of the document, " + problem);
+
+        if (i >= test.Iterations && test.Left == 0)
+            break;
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
     RemovedFirstCluster
 
     The text a setting of clusters writes when the first of two clusters is removed: two clusters that are the same
@@ -386,6 +812,137 @@ std::string RemovedFirstCluster(std::string const& first, std::string const& sec
     static_cast<void>(clusters.Set(value));
 
     return toml.ToText();
+}
+//---------------------------------------------------------------------------
+/*
+    SaveSettingsRepeatedly
+
+    A file thread of GetAndSet_SeeWholeSettingsWhileLoading: saves the object test.FileOperations times, then counts
+    itself out of test.Left.
+*/
+void SaveSettingsRepeatedly(TWholeSettingsTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.FileOperations; ++i)
+    {
+        TASWTomlResult const result = test.Toml.Save();
+        if (!result.IsOk())
+            test.Failures.Add("Save() should succeed: " + result.Message);
+
+        MaybeYield(generator);
+    }
+
+    --test.Left;
+}
+//---------------------------------------------------------------------------
+/*
+    SetServerPorts
+
+    The servers' writer of GetAndSet_SeeWholeSettingsWhileLoading: reads the servers with Get(), sets each one's port to
+    the next number (1 to 1000 and round again) and writes them with Set(), whose overlay keeps the key note that their
+    struct doesn't know; at least test.Iterations times, and on until test.Left is 0, at most test.Largest times.
+*/
+void SetServerPorts(TWholeSettingsTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Largest; ++i)
+    {
+        TServerVector servers = test.Servers->Get();
+        for (TTestServer& server : servers)
+            server.Port = static_cast<std::uint16_t>(i % 1000 + 1);
+
+        TASWTomlResult const result = test.Servers->Set(servers);
+        if (!result.IsOk())
+            test.Failures.Add("Set() of the servers should succeed: " + result.Message);
+
+        if (i >= test.Iterations && test.Left == 0)
+            break;
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    UseScratchSetting
+
+    The scratch thread of GetAndSet_SeeWholeSettingsWhileLoading: removes the key of the optional setting scratch and
+    sets it again (so Set() adds it with its comment); at least test.Iterations times, and on until test.Left is 0, at
+    most test.Largest times.
+*/
+void UseScratchSetting(TWholeSettingsTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int i = 0; i < test.Largest; ++i)
+    {
+        static_cast<void>(test.Toml.Remove(test.Scratch->GetPath()));
+        TASWTomlResult const result = test.Scratch->Set(i % 100);
+        if (!result.IsOk())
+            test.Failures.Add("Set() of the scratch key should succeed: " + result.Message);
+
+        if (i >= test.Iterations && test.Left == 0)
+            break;
+
+        MaybeYield(generator);
+    }
+}
+//---------------------------------------------------------------------------
+/*
+    WholeSettingsProblem
+
+    What is wrong with 'document', a copy of the object of GetAndSet_SeeWholeSettingsWhileLoading: "" when the tables
+    values and others have their comments, the keys count0 to count<writers - 1> of values and key0 to
+    key<others - 1> of others are there with their comments, the key scratch, when it is there, has its comment, and
+    the array of tables servers has its comment and two elements, each a table with the key note, "kept" (which no
+    field of their struct names).
+*/
+std::string WholeSettingsProblem(TASWTomlDocument const& document, std::size_t writers, std::size_t others)
+{
+    if (document.GetComment("values") != "The counts." || document.GetComment("others") != "Other settings.")
+        return "each table should have its comment";
+
+    for (std::size_t i = 0; i < writers; ++i)
+    {
+        std::string const path = "values.count" + std::to_string(i);
+        if (document.Find(path) == nullptr || document.GetComment(path) != "A count.")
+            return path + " should be there with its comment";
+    }
+
+    for (std::size_t i = 0; i < others; ++i)
+    {
+        std::string const path = "others.key" + std::to_string(i);
+        if (document.Find(path) == nullptr || document.GetComment(path) != "A comment.")
+            return path + " should be there with its comment";
+    }
+
+    if (document.Find("values.scratch") != nullptr && document.GetComment("values.scratch") != "The scratch key.")
+        return "the scratch key should have its comment";
+
+    TASWTomlValue const* const servers = document.Find("values.servers");
+    bool const twoServers = servers != nullptr && servers->AsArray() != nullptr && servers->AsArray()->size() == 2 &&
+        document.GetComment("values.servers") == "The servers.";
+    if (!twoServers)
+        return "the servers should be there, two of them, with their comment";
+
+    for (TASWTomlValue const& server : *servers->AsArray())
+    {
+        TASWTomlValue const* const note = server.Find("note");
+        if (note == nullptr || note->AsString() == nullptr || *note->AsString() != "kept")
+            return "each server should keep its note";
+    }
+
+    return std::string();
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TAppSettings
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+std::string TAppSettings::NotEmpty(std::string const& value)
+{
+    return value.empty() ? "it can't be empty" : "";
 }
 //---------------------------------------------------------------------------
 
@@ -437,6 +994,40 @@ TRecorder::TRecorder(TMessageVector& messages)
 void TRecorder::operator()(TASWTomlMessage const& message) const
 {
     m_Messages->push_back(message);
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TReportCounter
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TReportCounter::TReportCounter(std::atomic<int>& count)
+    : m_Count(&count)
+{
+}
+//---------------------------------------------------------------------------
+void TReportCounter::operator()(TASWTomlMessage const& /*message*/) const
+{
+    ++*m_Count;
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TCodeRecorder
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TCodeRecorder::TCodeRecorder(TCodeVector& codes)
+    : m_Codes(&codes)
+{
+}
+//---------------------------------------------------------------------------
+void TCodeRecorder::operator()(TASWTomlMessage const& message) const
+{
+    m_Codes->push_back(message.Code);
 }
 //---------------------------------------------------------------------------
 
@@ -1045,6 +1636,95 @@ void TTest_ASWToml_SettingsLoad::TearDown_Test(ITestCase& /*testCase*/)
 // /////// Begin tests after this line ///////////////////////
 
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, AppSettings_OldFileIsBroughtUpToDate)
+{
+    // Arrange
+    // A file as the application's earlier version wrote it (CRLF), which a user then edited: an empty user name, a
+    // level out of range, a note at the end of a line, a key of their own in a server and a port out of range. The
+    // days the logs are kept have their earlier name, the servers have no field secure yet, the table view is missing,
+    // and the table general, the key theme and the table network have no comments.
+    std::string const oldText = "# Settings of the ASWToml example.\r\n\r\n[general]\r\n"
+        "# The name in the title bar.\r\nuser_name = \"\"\r\ntheme = \"dark\"\r\n\r\n[logging]\r\n"
+        "# From 0 (errors only) to 4 (everything).\r\n"
+        "level = 9\r\nlog_days = 14  # Two weeks\r\n\r\n[network]\r\ntimeout = 30\r\n\r\n"
+        "# The servers, tried in order.\r\n[[network.servers]]\r\nhost = \"main.example.com\"\r\nport = 443\r\n"
+        "weight = 2  # Mine\r\n\r\n[[network.servers]]\r\nhost = \"backup.example.com\"\r\nport = 99999\r\n";
+    std::string const expected = "# Settings of the ASWToml example.\r\n\r\n# What the application looks like.\r\n"
+        "[general]\r\n# The name in the title bar.\r\nuser_name = \"Guest\"\r\n# Light, Dark or System.\r\n"
+        "theme = \"dark\"\r\n\r\n[logging]\r\n# From 0 (errors only) to 4 (everything).\r\nlevel = 2\r\n"
+        "# How many days the logs are kept; 0 keeps them forever.\r\ndays_kept = 14  # Two weeks\r\n"
+        "# Relative to the folder of this file.\r\nfolder = \"logs\"\r\n\r\n# Where the application connects.\r\n"
+        "[network]\r\n# In seconds.\r\ntimeout = 30\r\n\r\n# The servers, tried in order.\r\n[[network.servers]]\r\n"
+        "host = \"main.example.com\"\r\nport = 443\r\nweight = 2  # Mine\r\nsecure = false\r\n\r\n"
+        "[[network.servers]]\r\nhost = \"backup.example.com\"\r\nport = 80\r\nsecure = false\r\n\r\n[view]\r\n"
+        "# From 0.25 to 4.\r\nzoom = 1.0\r\n# The columns shown, in order.\r\n"
+        "columns = [\"name\", \"size\", \"date\"]\r\n";
+    TTempDir const folder;
+    AssertFalse(folder.Path().empty(), "the test folder should be created");
+    std::filesystem::path const file = folder.Path() / "app.toml";
+    AssertTrue(WriteTestFile(file, oldText), "the old file should be written");
+    std::string const path = ASWToml::PathToUtf8(file);
+    TAppSettings settings;
+    TMessageVector messages;
+    settings.SetLogCallback(TRecorder(messages));
+    TAppSettings again;
+    TMessageVector againMessages;
+    again.SetLogCallback(TRecorder(againMessages));
+    TAppServerVector const changedServers{ TAppServer{ "main.example.com", 8443, false },
+        TAppServer{ "backup.example.com", 80, false } };
+
+    // Act
+    // As the application would: load, save when needed and read the settings; then load the file saved, change the
+    // port of a server and save again
+    TASWTomlResult const loaded = settings.Load(path);
+    bool const modified = settings.IsModified();
+    TASWTomlResult const saved = modified ? settings.Save() : TASWTomlResult();
+    std::string written;
+    bool const read = ReadTestFile(file, written);
+    TASWTomlResult const loadedAgain = again.Load(path);
+    bool const modifiedAgain = again.IsModified();
+    TASWTomlResult const set = again.Servers.Set(changedServers);
+    TASWTomlResult const savedAgain = again.Save();
+    std::string writtenAgain;
+    bool const readAgain = ReadTestFile(file, writtenAgain);
+
+    // Assert
+    CheckTrue(loaded.IsOk() && modified, "the old file should load, and need saving");
+    CheckTrue(saved.IsOk() && read, "the file should be saved");
+    CheckEquals(Escaped(expected), Escaped(written), "only what needs it should change: values that aren't valid "
+        "replaced, the key renamed in place, missing keys, fields and the table added in the file's line ending, the "
+        "code's comments set, and the user's key and notes kept");
+    CheckEquals("Warning InvalidValue general.user_name\nWarning ValueOutOfRange logging.level\n"
+        "Info KeyRenamed logging.days_kept\nInfo KeyAdded logging.folder\nInfo KeyAdded view.zoom\n"
+        "Info KeyAdded view.columns\nInfo KeyAdded network.servers[0].secure\n"
+        "Warning ValueOutOfRange network.servers[1].port\nInfo KeyAdded network.servers[1].secure\n"s,
+        MessageKinds(messages), "each change should be reported, in the order the settings are declared");
+    CheckEquals("Guest"s, settings.UserName.Get(), "the user name should be its default");
+    CheckTrue(settings.Theme.Get() == ETheme::Dark, "the theme should be the file's");
+    CheckFalse(settings.EnableCheats.Get() || settings.EnableCheats.IsPresent(),
+        "the optional setting should be its default, and not be added");
+    CheckEquals(2u, settings.Level.Get(), "the level should be its default");
+    CheckEquals(14u, settings.DaysKept.Get(), "the days kept should keep the old key's value");
+    CheckTrue(settings.Folder.Get() == std::filesystem::path("logs") && settings.Zoom.Get() == 1.0 &&
+        settings.Columns.Get() == settings.Columns.GetDefault(), "the keys added should be their defaults");
+    TAppServerVector const servers = settings.Servers.Get();
+    CheckEquals(std::size_t(2), servers.size(), "the user's servers should be kept");
+    if (servers.size() == 2)
+    {
+        CheckTrue(servers[0].Host == "main.example.com" && servers[0].Port == 443 && !servers[0].Secure,
+            "the first as the user wrote it, with the new field's default");
+        CheckTrue(servers[1].Host == "backup.example.com" && servers[1].Port == 80,
+            "the second with its port repaired");
+    }
+
+    CheckTrue(loadedAgain.IsOk() && !modifiedAgain, "the saved file should load without a change");
+    CheckTrue(againMessages.empty(), "or a message: " + MessagesText(againMessages));
+    CheckTrue(set.IsOk() && savedAgain.IsOk() && readAgain, "a server should be changed and saved");
+    std::string changed = expected;
+    changed.replace(changed.find("port = 443"), 10, "port = 8443");
+    CheckEquals(Escaped(changed), Escaped(writtenAgain), "only its port should change, and the user's key stay");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsLoad, Bindings_FollowTheirLifetimes)
 {
     // Arrange
@@ -1652,6 +2332,74 @@ ASW_TEST(TTest_ASWToml_SettingsLoad, LoadText_AppliesTheSettings)
     }
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, OutOfMemory_LoadAppliesAllOrNothing)
+{
+    // Arrange
+    if (!CanFailAllocations())
+        Skip("allocations can't be made to fail in this build (see CanFailAllocations())");
+
+    // An old key renamed, an array of tables brought up to date by parts (a field that isn't valid, a missing field),
+    // a key added, and the comments of the keys, the table and the file
+    std::string const text = "[general]\nold = 3\n\n[[general.servers]]\nhost = \"a\"\nport = \"x\"\n\n"
+        "[[general.servers]]\nhost = \"b\"\n";
+    std::string const loadedText = "# The file.\n\n# General's comment.\n[general]\n# A's comment.\na = 3\n"
+        "# C's comment.\nc = 5\n\n# The servers.\n[[general.servers]]\nhost = \"a\"\nport = 80\n\n"
+        "[[general.servers]]\nhost = \"b\"\nport = 80\n";
+    TCodeVector const loadedCodes{ ETomlCode::KeyRenamed, ETomlCode::TypeMismatch, ETomlCode::KeyAdded,
+        ETomlCode::KeyAdded };
+    std::size_t failures = 0;
+
+    // Act & Assert
+    // Each allocation of the load fails in turn, on a new object, until the load makes no more. A failed allocation
+    // fails the load, which then changes nothing and reports only its failure (not what applying the settings did
+    // before it failed), or, when the standard library copes with it, doesn't.
+    for (std::size_t number = 1; number < 100000; ++number)
+    {
+        TASWBaseToml toml;
+        static_cast<void>(toml.SetOptions(LfOptions()));
+        static_cast<void>(toml.SetValue("before", "value"));
+        std::string const before = toml.ToText();
+        TASWTomlTable const root{ toml, "", "The file." };
+        TASWTomlTable const general{ toml, "general", "General's comment." };
+        TASWTomlSetting<int> const first{ general, "a", 1, "A's comment.", { .OldKeys = { "old" } } };
+        TASWTomlSetting<TServerVector> const servers{ general, "servers", TServerVector(), "The servers." };
+        TASWTomlSetting<int> const third{ general, "c", 5, "C's comment." };
+        TCodeVector codes;
+        codes.reserve(10);
+        toml.SetLogCallback(TCodeRecorder(codes));
+        std::string const which = " (allocation " + std::to_string(number) + ")";
+        TASWTomlResult result;
+        bool failed = false;
+        {
+            TFailingAlloc failingAlloc(number);
+            result = toml.LoadText(text);
+            failed = failingAlloc.HasFailed();
+        }
+
+        if (result.IsOk())
+        {
+            CheckEquals(Escaped(loadedText), Escaped(toml.ToText()),
+                "a load that succeeded should have applied every setting" + which);
+            CheckTrue(codes == loadedCodes, "a load that succeeded should report each change" + which);
+        }
+        else
+        {
+            ++failures;
+            CheckTrue(failed, "the load should only fail when an allocation fails" + which);
+            CheckEquals(ETomlCode::UnexpectedException, result.Code, "a failed allocation is UnexpectedException" + which);
+            CheckEquals(Escaped(before), Escaped(toml.ToText()), "a failed load should change nothing" + which);
+            CheckTrue(toml.IsModified(), "a failed load should keep the modified flag" + which);
+            CheckTrue(codes.size() == 1 && codes[0] == ETomlCode::UnexpectedException,
+                "a failed load should report only its failure" + which);
+        }
+
+        if (!failed)
+            break;
+    }
+
+    CheckGreaterThan(failures, std::size_t(0), "at least one allocation should have failed");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsLoad, SetOptions_DoesntApplyTheSettings)
 {
     // Arrange
@@ -1902,6 +2650,60 @@ ASW_TEST(TTest_ASWToml_SettingsStructs, Load_WholeValueRefusedUsesTheDefault)
     }
 }
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, OutOfMemory_SetOverlayChangesNothing)
+{
+    // Arrange
+    if (!CanFailAllocations())
+        Skip("allocations can't be made to fail in this build (see CanFailAllocations())");
+
+    // Servers with a key their struct doesn't know: Set() removes the first, changes the port of the last and adds
+    // one, so the overlay, under the lock, pairs the elements and keeps the notes of the others
+    std::string const text = "[[servers]]\nhost = \"a\"\nport = 1\nenabled = true\nnote = \"A\"\n\n[[servers]]\n"
+        "host = \"b\"\nport = 2\nenabled = true\nnote = \"B\"\n\n[[servers]]\nhost = \"c\"\nport = 3\nenabled = true\n"
+        "note = \"C\"\n";
+    std::string const setText = "[[servers]]\nhost = \"b\"\nport = 2\nenabled = true\nnote = \"B\"\n\n[[servers]]\n"
+        "host = \"c\"\nport = 30\nenabled = true\nnote = \"C\"\n\n[[servers]]\nhost = \"d\"\nport = 4\n"
+        "enabled = true\n";
+    TServerVector const value{ TTestServer{ "b", 2, true, std::nullopt }, TTestServer{ "c", 30, true, std::nullopt },
+        TTestServer{ "d", 4, true, std::nullopt } };
+    std::size_t failures = 0;
+
+    // Act & Assert
+    // Each allocation of the Set() fails in turn, on a new object, until it makes no more
+    for (std::size_t number = 1; number < 100000; ++number)
+    {
+        TPreloaded toml(text);
+        TASWTomlTable const root{ toml, "" };
+        TASWTomlSetting<TServerVector> servers{ root, "servers", TServerVector() };
+        std::string const which = " (allocation " + std::to_string(number) + ")";
+        TASWTomlResult result;
+        bool failed = false;
+        {
+            TFailingAlloc failingAlloc(number);
+            result = servers.Set(value);
+            failed = failingAlloc.HasFailed();
+        }
+
+        if (result.IsOk())
+        {
+            CheckEquals(Escaped(setText), Escaped(toml.ToText()), "a Set() that succeeded should be complete" + which);
+        }
+        else
+        {
+            ++failures;
+            CheckTrue(failed, "Set() should only fail when an allocation fails" + which);
+            CheckEquals(ETomlCode::UnexpectedException, result.Code, "a failed allocation is UnexpectedException" + which);
+            CheckEquals(Escaped(text), Escaped(toml.ToText()), "a failed Set() should change nothing" + which);
+            CheckFalse(toml.IsModified(), "a failed Set() shouldn't set the modified flag" + which);
+        }
+
+        if (!failed)
+            break;
+    }
+
+    CheckGreaterThan(failures, std::size_t(0), "at least one allocation should have failed");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsStructs, Set_KeepsTheKeysTheStructDoesntKnow)
 {
     // Arrange
@@ -2032,9 +2834,169 @@ ASW_TEST(TTest_ASWToml_SettingsStructs, Set_PairsNestedElementsByWhatTheyKnow)
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_SettingsThreads
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_SettingsThreads::TTest_ASWToml_SettingsThreads()
+    : inherited("ASWToml_SettingsThreads_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_SettingsThreads::~TTest_ASWToml_SettingsThreads()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsThreads::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsThreads::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsThreads::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsThreads::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsThreads, Bindings_ComeAndGoWhileLoading)
+{
+    // Arrange
+    // Binder threads bind a table and settings of their own (an array of tables among them) and destroy them again,
+    // over and over, while a loader loads a text that has none of the keys and checks each document it gives (see
+    // BindingsProblem()). Each load applies the settings that stay, and a binder's table and settings whole or not at
+    // all: when its table is in the document, so are its keys, each with its comment. Many settings that stay make
+    // applying take long enough for bindings to come and go while it runs. The binders go on until the loader is done.
+    TBindingsTest test;
+    test.Binders = 2;
+    test.Iterations = 300;
+    test.Largest = 1000000;
+    test.Loads = 200;
+    static_cast<void>(test.Toml.SetOptions(LfOptions()));
+    std::string expected = "# Settings that stay.\n[stays]\n";
+    for (std::size_t i = 0; i < 100; ++i)
+    {
+        std::string const key = "key" + std::to_string(i);
+        test.Stayers.push_back(std::make_unique<TASWTomlSetting<int> >(test.Stays, key, static_cast<int>(i),
+            "A comment."));
+        expected += "# A comment.\n" + key + " = " + std::to_string(i) + "\n";
+    }
+
+    TWorkVector work;
+    for (std::size_t i = 0; i < test.Binders; ++i)
+        work.push_back(std::bind(BindAndUnbind, std::ref(test), i));
+
+    work.push_back(std::bind(LoadAndCheckBindings, std::ref(test), test.Binders));
+
+    // Act
+    // Then, with the binders' bindings gone, the object is loaded again
+    RunTogether(work, test.Failures);
+    TASWTomlResult const result = test.Toml.LoadText("");
+
+    // Assert
+    CheckEquals(std::string(), test.Failures.Summary(), "no thread should find a problem");
+    CheckTrue(result.IsOk(), "the last load should succeed");
+    CheckEquals(Escaped(expected), Escaped(test.Toml.ToText()),
+        "the last load should apply only the settings that stay");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsThreads, GetAndSet_SeeWholeSettingsWhileLoading)
+{
+    // Arrange
+    // Writers count their own settings up with Set(), a scratch thread removes the key of an optional setting and sets
+    // it again, and the servers' writer sets the ports of the servers (an array of tables whose elements have a key
+    // their struct doesn't know) with Set(), while a loader loads the saved file, or a text or a file whose values
+    // aren't valid and that lacks most keys, a saver saves the file, and readers check what they see: each count's key
+    // is there and Get() gives a number in range, Get() gives two servers, and a copy of the document holds whole
+    // settings (see WholeSettingsProblem()), since a load applies the settings before anyone sees the document, Set()
+    // adds a key with its comment in one edit, and the overlay of the servers is made under the same lock as their
+    // edit. Many other settings make applying take long enough for a reader to see a document that isn't whole. The
+    // writers, the scratch thread, the servers' writer and the readers go on until the file threads are done.
+    TWholeSettingsTest test;
+    std::size_t const writers = 3;
+    std::size_t const readers = 2;
+    test.Iterations = 300;
+    test.Largest = 1000000;
+    test.FileOperations = 9;
+    test.Left = 2;
+    TTempDir const folder;
+    AssertFalse(folder.Path().empty(), "the test folder should be created");
+    test.FilePath = ASWToml::PathToUtf8(folder.Path() / "app.toml");
+    test.InvalidPath = ASWToml::PathToUtf8(folder.Path() / "invalid.toml");
+    static_cast<void>(test.Toml.SetOptions(LfOptions()));
+    test.InvalidText = "[values]\nscratch = -1\n";
+    for (std::size_t i = 0; i < writers; ++i)
+    {
+        std::string const key = "count" + std::to_string(i);
+        test.Counts.push_back(std::make_unique<TASWTomlSetting<int> >(test.Values, key, 0, "A count.",
+            ASWToml::TASWTomlSettingOptions<int>{ .Min = 0, .Max = test.Largest }));
+        test.InvalidText += key + " = \"many\"\n";
+    }
+
+    test.Scratch = std::make_unique<TASWTomlSetting<int> >(test.Values, "scratch", 0, "The scratch key.",
+        ASWToml::TASWTomlSettingOptions<int>{ .Min = 0, .Max = test.Largest, .Optional = true });
+    test.Servers = std::make_unique<TASWTomlSetting<TServerVector> >(test.Values, "servers", TServerVector(),
+        "The servers.");
+    for (std::size_t i = 0; i < 100; ++i)
+    {
+        test.Fillers.push_back(std::make_unique<TASWTomlSetting<int> >(test.Others, "key" + std::to_string(i),
+            static_cast<int>(i), "A comment."));
+    }
+
+    // Two servers whose ports aren't valid, each with a key their struct doesn't know
+    test.InvalidText += "\n[[values.servers]]\nhost = \"h0\"\nport = \"x\"\nnote = \"kept\"\n\n[[values.servers]]\n"
+        "host = \"h1\"\nport = 99999\nnote = \"kept\"\n";
+
+    // Each load of the invalid text (two loads in three) reports a Warning for each count, the scratch key and each
+    // server's port, and an Info for each other key
+    int const reportsPerInvalidLoad = static_cast<int>(writers + 1 + 2 + test.Fillers.size());
+    int const invalidLoads = test.FileOperations / 3 * 2;
+    TASWTomlResult const loaded = test.Toml.LoadText(test.InvalidText);
+    TASWTomlResult const saved = test.Toml.SaveAs(test.FilePath);
+    AssertTrue(loaded.IsOk() && saved.IsOk(), "the settings should be saved");
+    std::atomic<int> reports{ 0 };
+    test.Toml.SetLogCallback(TReportCounter(reports));
+    TWorkVector work;
+    for (std::size_t i = 0; i < writers; ++i)
+        work.push_back(std::bind(CountSettingUp, std::ref(test), i));
+
+    work.push_back(std::bind(UseScratchSetting, std::ref(test), writers));
+    work.push_back(std::bind(SetServerPorts, std::ref(test), writers + 1));
+    work.push_back(std::bind(LoadSettingsRepeatedly, std::ref(test), writers + 2));
+    work.push_back(std::bind(SaveSettingsRepeatedly, std::ref(test), writers + 3));
+    for (std::size_t i = 0; i < readers; ++i)
+        work.push_back(std::bind(ReadWholeSettings, std::ref(test), writers + 4 + i));
+
+    // Act
+    // Then the object's text is loaded again, which needs nothing
+    RunTogether(work, test.Failures);
+    TASWTomlResult const reloaded = test.Toml.LoadText(test.Toml.ToText());
+
+    // Assert
+    CheckEquals(std::string(), test.Failures.Summary(), "no thread should find a problem");
+    CheckEquals(invalidLoads * reportsPerInvalidLoad, reports.load(),
+        "only the loads of the text and the file that aren't valid should report, each what it changed");
+    CheckTrue(reloaded.IsOk(), "the last load should succeed");
+    CheckFalse(test.Toml.IsModified(), "the object's text should hold every setting");
+    CheckEquals(std::string(), WholeSettingsProblem(test.Toml.GetDocument(), writers, test.Fillers.size()),
+        "the document should hold every setting with its comment");
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsAccess, "Settings")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsLoad, "Settings")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsStructs, "Settings")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsThreads, "Settings")

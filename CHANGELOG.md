@@ -294,8 +294,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with its key, its type (any type `TASWTomlConverter` converts, a struct or a `std::vector` of one
   included), its default value, a comment and `TASWTomlSettingOptions<T>`, given with designated
   initializers: a range (`{ .Min = 0, .Max = 4 }`, only for a type that `operator<` compares), a
-  validator that says what is wrong with a value, and value options of its own, whether it is
-  optional, and earlier names of its key. A setting holds no value: `Get()` reads the owner's
+  validator that says what is wrong with a value, whether the setting is optional, earlier names of
+  its key, and value options of its own. A setting holds no value: `Get()` reads the owner's
   document, giving the default for a missing key and, with a Warning, for a value that doesn't
   convert, is out of range or that the validator refuses; `Set()` writes it, adding a missing key
   with the setting's comment above it in the same edit, and fails (an Error, nothing changed) for a
@@ -317,7 +317,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   removes its block and the others keep their keys and comments (`IASWToml::SetValue()` sets a value
   as it is). A file that needs nothing stays byte for byte, and a first run (a missing file) gets
   everything. The values are written with one edit per table and the comments with one more, so
-  applying 200 settings to an empty file takes a few milliseconds. A load that fails changes nothing
-  and reports none of it.
+  applying 200 settings to an empty file takes a few milliseconds. Any thread may call `Get()` and
+  `Set()`, as the object's other operations: a load applies the settings before another thread sees
+  the document, and `Set()` adds a key with its comment in one edit, so no thread sees a setting
+  half applied. A table or setting is bound to its object from its constructor to its destructor (a
+  destructor waits for a load that is applying it) and must not outlive it; converters and
+  validators run with the object's file lock held while a load applies them, so they must not call
+  its `Load()`, `LoadText()`, `Save()`, `SaveAs()` or `SetOptions()`. A load that fails, even for
+  lack of memory, changes nothing and reports none of what applying the settings did.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

@@ -26,9 +26,15 @@ array of tables. `TASWBaseToml` (`ASWToml_Base.h`) is the TOML object an applica
 number of threads: it loads a file and saves it back (atomically, with an optional backup), reads
 and writes typed values by path (`GetValue()`, `TryGetValue()`, `SetValue()` and `Append()`), and
 reports warnings and errors to a log callback. Code that only reads and writes values can take its
-interface, `IASWToml` (`ASWToml_Interface.h`). The settings binding, which declares an application's
-settings in one place, comes next. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The
-interface may change in any way until 1.0.0.
+interface, `IASWToml` (`ASWToml_Interface.h`). An application's settings class derives from
+`TASWBaseToml` and declares each setting once (`TASWTomlTable` and `TASWTomlSetting<T>`,
+`ASWToml_Settings.h`), with its table, key, type, default value, comment and options. Loading brings
+the file up to date: missing keys are added with their comments, keys renamed from their earlier
+names, values that aren't valid replaced by their defaults, and structs and arrays of tables brought
+up to date field by field, keeping the keys the application doesn't know. Each setting reads and
+writes its value in the document, from any thread. An example program and the rest of the
+documentation come next. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The interface
+may change in any way until 1.0.0.
 
 ## Design
 
@@ -41,8 +47,11 @@ whose design it follows. Its goals:
   byte for byte: comments, blank lines, spacing, the order of tables and keys, how each key is
   quoted and how each string and number is written. Changing a value rewrites only that value.
 - **Settings in one place.** An application declares each setting once, with its table, key, type,
-  default value, comment and valid range; loading fills it in (or uses the default and says why)
-  and saving writes it back, with its comment.
+  default value, comment and valid range. Loading brings the file up to date (it adds missing keys
+  with their comments, renames keys from their earlier names, and replaces values that aren't valid
+  with the defaults, saying why; a struct or a list of them, such as the servers of an array of
+  tables, field by field, keeping what the application doesn't know), and each setting reads and
+  writes its value in the file's document, from any thread.
 - **Same file on every system.** Files are read and written in binary mode, so the line ending
   (LF or CRLF) is chosen by the library, not by the operating system.
 - **Safe to use from several threads**, and saving replaces the file atomically, so a crash while
