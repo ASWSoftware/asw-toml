@@ -7,12 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-26
+
+The first release.
+
 ### Added
 
 - The ASWToml version in `ASWToml_Version.h`, as macros (`ASWTOML_VERSION_MAJOR`, `_MINOR`,
   `_PATCH`, `_PRERELEASE` and `_STRING`) and as constants in the `ASWToml` namespace
-  (`VersionMajor`, `VersionMinor`, `VersionPatch`, `VersionPreRelease` and `Version`), starting at
-  `1.0.0-dev.1`.
+  (`VersionMajor`, `VersionMinor`, `VersionPatch`, `VersionPreRelease` and `Version`).
 - The `ASWToml::ASWToml` CMake target (a static library that needs C++20 and links to
   `Threads::Threads`), with install rules and a CMake package, so `find_package(ASWToml CONFIG)`
   finds an installed copy (and the threads library).
@@ -49,7 +52,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   only by spaces and tabs, so a comment reads back as the text written after it), and
   `TASWTomlOptions::Validate()` checks the four; a problem is `ETomlCode::InvalidOptions` with a
   message naming the setting.
-- The file layer that loading and saving will use (`ASWToml_File.cpp`, internal): whole files read
+- The file layer that loading and saving use (`ASWToml_File.cpp`, internal): whole files read
   and written in binary mode with the operating system's own file APIs, a size limit on reads, and
   saves that replace the file atomically (keeping its attributes on Windows, and its permissions and
   symbolic link elsewhere; a save that fails, even for lack of memory, leaves the file as it was and
@@ -81,7 +84,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   date and time TOML writes (use `std::chrono::sys_seconds` for a date such as 9999-12-31).
   `FromDuration()`, `FromLocalTime()` and `FromSysTime()` convert back from any of them;
   `FromLocalTime()` and `FromSysTime()` give `std::nullopt` outside the years 0 to 9999.
-- The reading and writing of TOML's scalar values that the parser and the edits will use
+- The reading and writing of TOML's scalar values that the parser and the edits use
   (`ASWToml_Scalars.cpp`, internal), as TOML 1.1.0 defines them. An error gives the line and column
   of the character at fault.
   - Strings in all four forms, with every escape (1.1's `\xHH` and `\e` included); a line break in
@@ -106,7 +109,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     as it needs), and `Z` for offset 0, e.g. `1979-05-27T00:32:00.5-07:00`; a value that isn't
     valid isn't written (`InvalidValue`).
 - `TASWTomlPath` (`ASWToml_Path.h`), the place of a table, a key or an element of an array in a
-  document, from the root table, for the lookups and edits to come. It is made implicitly from a
+  document, from the root table, which the lookups and edits take. It is made implicitly from a
   string in TOML's dotted-key syntax, with `[n]` for an element of an array
   (`server."host name".port`, `products[0].name`; the empty string is the root table), or from a
   list of parts, each a key or an index of any integer type (`{ "products", 0, "name" }`). A braced
@@ -197,11 +200,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   comment that isn't valid UTF-8 or holds a control character other than a tab fails with
   `InvalidValue`.
 - `TASWTomlConverter<T>` (`ASWToml_Converters.h`), which converts a value of an application's type
-  to and from a `TASWTomlValue`: `FromValue(value, out, options)` and `ToValue(in, value,
-  options)`, each returning a `TASWTomlResult` and leaving `out` or `value` as it was on failure. A
-  value of a TOML type the C++ type doesn't read fails with `TypeMismatch`, a number outside the
-  type's range with `ValueOutOfRange`, one it doesn't accept (or that TOML can't hold) with
-  `InvalidValue`, each with a message that shows the value as TOML text, e.g.
+  to and from a `TASWTomlValue`: `FromValue(value, out, options)` and `ToValue(in, value, options)`,
+  each returning a `TASWTomlResult` and leaving `out` or `value` as it was on failure. A value of a
+  TOML type the C++ type doesn't read fails with `TypeMismatch`, a number outside the type's range
+  with `ValueOutOfRange`, one it doesn't accept (or that TOML can't hold) with `InvalidValue`, each
+  with a message that shows the value as TOML text, e.g.
   `The value 80 is an integer, not a string.`; a failure inside a value gives its place in `Path`.
   The concept `TomlConvertible<T>` says whether a type has a converter. Converters come for
   `TASWTomlValue` (as it is), `bool` (booleans only), every integer type but `bool` and the
@@ -344,4 +347,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Guarantees.md` (errors, threads, callbacks, lifetimes, nesting and stack, saving and crashes,
   and every `ETomlCode`). The README has a quick start, an API overview and links to them.
 
-[Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop
+[Unreleased]: https://github.com/ASWSoftware/asw-toml/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/ASWSoftware/asw-toml/releases/tag/v1.0.0

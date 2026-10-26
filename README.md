@@ -4,12 +4,6 @@ ASWToml is a thread-safe, dependency-free C++20 library for reading and writing 
 Windows and Linux, which keeps the file's comments and layout, and lets an application declare its
 settings in one place.
 
-## Status
-
-ASWToml is in development toward 1.0.0: the `develop` branch carries `1.0.0-dev.N` versions, and
-the interface may change in any way until 1.0.0. [CHANGELOG.md](CHANGELOG.md) lists what each
-change adds.
-
 ## Design
 
 ASWToml is a folder of standard C++20 sources, or one CMake target, with no third-party code. It
@@ -235,7 +229,7 @@ or let CMake download it with `FetchContent`:
 include(FetchContent)
 FetchContent_Declare(ASWToml
     GIT_REPOSITORY https://github.com/ASWSoftware/asw-toml.git
-    GIT_TAG develop     # A release tag once there is one, e.g. v1.0.0
+    GIT_TAG v1.0.0      # A release tag
     GIT_SUBMODULES ""   # Skip the unit-test framework submodule
 )
 FetchContent_MakeAvailable(ASWToml)
@@ -333,7 +327,7 @@ class and operation.
 
 ASWToml follows [Semantic Versioning](https://semver.org). Releases are tagged on `main` (e.g.
 `v1.0.0`). Between releases, the `develop` branch carries the next planned version with a
-pre-release, e.g. `1.0.0-dev.1`, which comes before `1.0.0`. `ASWToml/ASWToml_Version.h` has the
+pre-release, e.g. `1.1.0-dev.1`, which comes before `1.1.0`. `ASWToml/ASWToml_Version.h` has the
 version as macros, for code that supports several ASWToml versions, and as constants in the
 `ASWToml` namespace:
 
