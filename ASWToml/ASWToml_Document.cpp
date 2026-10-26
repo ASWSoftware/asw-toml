@@ -113,6 +113,26 @@ using TContainerPlanMap = std::map<std::size_t, TContainerPlan>;
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TIdenticalElements
+//
+// The elements of two arrays that are the same for a merge (see Detail::Partners()): identical values (see
+// Detail::IdenticalValues())
+/////////////////////////////////////////////////////////////////////////////
+class TIdenticalElements : public Detail::TElementMatch
+{
+private:
+    TASWTomlValue::TValueVector const& m_Old;
+    TASWTomlValue::TValueVector const& m_Values;
+
+public:
+    // The elements of 'old' and 'values', which must outlive it
+    TIdenticalElements(TASWTomlValue::TValueVector const& old, TASWTomlValue::TValueVector const& values) noexcept;
+
+    bool IsSame(std::size_t oldIndex, std::size_t index) const override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TEditor
 //
 // Works out how an edit changes a document's text, from its index: what text goes, where new text goes and what it
@@ -135,6 +155,7 @@ private:
     TSpliceVector m_Splices;
     TFlagVector m_RemovedLines; // The lines of m_Index the edit removes
     TContainerPlanMap m_Containers; // What the edit does to arrays and inline tables
+    Detail::TPartnersMap const* m_Partners = nullptr; // How a merge pairs elements of arrays (see SetPartners())
 
     // Adds element 'j' of 'elements', the new elements of the array 'array' (see MergeArray()), which no old element
     // becomes ('partners'), before the next element that stays, or at the end
@@ -187,6 +208,10 @@ private:
     // The elements of the array 'container', or the entries of the inline table 'container' (the values of its keys,
     // through dotted keys), in the order they are in the text
     TIndexVector ContainerItems(std::size_t container) const;
+
+    // For each element of the array 'value', the element of the array 'old' (one of m_Root's values) that becomes it
+    // in a merge: as m_Partners says when it has 'old', else Detail::Partners() of identical values
+    TIndexVector ElementPartners(TASWTomlValue const& old, TASWTomlValue const& value) const;
 
     // Adds a change of the text: the bytes [begin, end) removed
     void Erase(std::size_t begin, std::size_t end);
@@ -393,6 +418,10 @@ public:
     // The changes of TASWTomlDocument::SetComment()
     TASWTomlResult SetComment(TASWTomlPath const& path, std::string_view text);
 
+    // Makes merges pair the elements of the arrays of m_Root that 'partners' has (by their addresses) as it says; it
+    // must outlive the editor
+    void SetPartners(Detail::TPartnersMap const& partners) noexcept;
+
     // The changes of TASWTomlDocument::SetTrailingComment()
     TASWTomlResult SetTrailingComment(TASWTomlPath const& path, std::string_view text);
 
@@ -424,7 +453,6 @@ std::size_t KeyStart(std::string_view text, std::size_t offset) noexcept;
 std::string Layout(std::string_view before);
 std::string MessagePath(TASWTomlPath const& path);
 std::string_view ModelText(Detail::TDocModel const& model, Detail::TIndexLine const& line) noexcept;
-TIndexVector Partners(TASWTomlValue::TValueVector const& old, TASWTomlValue::TValueVector const& values);
 TASWTomlPath Prefix(TASWTomlPath const& path, std::size_t count);
 void RemoveValue(TASWTomlValue& root, Detail::TDocIndex const& index, TASWTomlPath const& path);
 TASWTomlResult RepeatedComment(Detail::TDocIndex const& index, TASWTomlDocument::TPathCommentVector const& comments);
@@ -877,102 +905,6 @@ std::string_view ModelText(Detail::TDocModel const& model, Detail::TIndexLine co
 }
 //---------------------------------------------------------------------------
 /*
-    Partners
-
-    For each element of 'values', the element of 'old' that becomes it (NoIndex for a new one), so that a merge of
-    'old' into 'values' changes the least: first the elements that are identical to new ones, as the longest common
-    subsequence (the ones that are the same at the start and the end, then the longest common subsequence of the rest
-    when it has at most MaxAlignCells cells, else none of the rest), then between two of those, the others paired in
-    order. The elements of 'old' that no element of 'values' has are removed.
-*/
-TIndexVector Partners(TASWTomlValue::TValueVector const& old, TASWTomlValue::TValueVector const& values)
-{
-    std::size_t const oldSize = old.size();
-    std::size_t const size = values.size();
-    TIndexVector partners(size, NoIndex);
-
-    // The same ones at the start and the end
-    std::size_t head = 0;
-    while (head < oldSize && head < size && Detail::IdenticalValues(old[head], values[head]))
-    {
-        partners[head] = head;
-        ++head;
-    }
-
-    std::size_t tail = 0;
-    while (tail < oldSize - head && tail < size - head)
-    {
-        if (!Detail::IdenticalValues(old[oldSize - 1 - tail], values[size - 1 - tail]))
-            break;
-
-        partners[size - 1 - tail] = oldSize - 1 - tail;
-        ++tail;
-    }
-
-    // The longest common subsequence of the rest: lengths[i * columns + j] is the length of the one of the old ones
-    // from i and the new ones from j
-    std::size_t const rows = oldSize - head - tail + 1;
-    std::size_t const columns = size - head - tail + 1;
-    if (rows > 1 && columns > 1 && rows * columns <= MaxAlignCells)
-    {
-        TIndexVector lengths(rows * columns, 0);
-        for (std::size_t i = rows - 1; i-- > 0;)
-        {
-            for (std::size_t j = columns - 1; j-- > 0;)
-            {
-                if (Detail::IdenticalValues(old[head + i], values[head + j]))
-                    lengths[i * columns + j] = lengths[(i + 1) * columns + j + 1] + 1;
-                else
-                    lengths[i * columns + j] = std::max(lengths[(i + 1) * columns + j], lengths[i * columns + j + 1]);
-            }
-        }
-
-        std::size_t i = 0;
-        std::size_t j = 0;
-        while (i + 1 < rows && j + 1 < columns)
-        {
-            if (Detail::IdenticalValues(old[head + i], values[head + j]) &&
-                lengths[i * columns + j] == lengths[(i + 1) * columns + j + 1] + 1)
-            {
-                partners[head + j] = head + i;
-                ++i;
-                ++j;
-            }
-            else if (lengths[(i + 1) * columns + j] >= lengths[i * columns + j + 1])
-            {
-                ++i;
-            }
-            else
-            {
-                ++j;
-            }
-        }
-    }
-
-    // Between two that are the same, the others in order
-    std::size_t oldNext = 0;
-    std::size_t next = 0;
-    while (next < size)
-    {
-        std::size_t same = next;
-        while (same < size && partners[same] == NoIndex)
-            ++same;
-
-        std::size_t const oldSame = same < size ? partners[same] : oldSize;
-        for (std::size_t k = 0; next + k < same && oldNext + k < oldSame; ++k)
-            partners[next + k] = oldNext + k;
-
-        if (same == size)
-            break;
-
-        oldNext = oldSame + 1;
-        next = same + 1;
-    }
-
-    return partners;
-}
-//---------------------------------------------------------------------------
-/*
     Prefix
 
     The path of the first 'count' parts of 'path' (valid), e.g. a.b for a.b[2].c and 2
@@ -1145,6 +1077,25 @@ TASWTomlValue Wrapped(TASWTomlPath::TPartVector const& parts, std::size_t first,
     }
 
     return wrapped;
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TIdenticalElements
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TIdenticalElements::TIdenticalElements(TASWTomlValue::TValueVector const& old,
+    TASWTomlValue::TValueVector const& values) noexcept
+    : m_Old(old),
+      m_Values(values)
+{
+}
+//---------------------------------------------------------------------------
+bool TIdenticalElements::IsSame(std::size_t oldIndex, std::size_t index) const
+{
+    return Detail::IdenticalValues(m_Old[oldIndex], m_Values[index]);
 }
 //---------------------------------------------------------------------------
 
@@ -1469,6 +1420,20 @@ TIndexVector TEditor::ContainerItems(std::size_t container) const
     }
 
     return items;
+}
+//---------------------------------------------------------------------------
+TIndexVector TEditor::ElementPartners(TASWTomlValue const& old, TASWTomlValue const& value) const
+{
+    TASWTomlValue::TValueVector const& oldElements = *old.AsArray();
+    TASWTomlValue::TValueVector const& elements = *value.AsArray();
+    if (m_Partners != nullptr)
+    {
+        auto const found = m_Partners->find(&old);
+        if (found != m_Partners->end() && found->second.size() == elements.size())
+            return found->second;
+    }
+
+    return Detail::Partners(oldElements.size(), elements.size(), TIdenticalElements(oldElements, elements));
 }
 //---------------------------------------------------------------------------
 std::string TEditor::EditedText() const
@@ -1871,7 +1836,7 @@ TASWTomlResult TEditor::MergeArray(std::size_t array, TASWTomlValue const& old, 
 {
     TASWTomlValue::TValueVector const& oldElements = *old.AsArray();
     TASWTomlValue::TValueVector const& elements = *value.AsArray();
-    TIndexVector const partners = Partners(oldElements, elements);
+    TIndexVector const partners = ElementPartners(old, value);
     TIndexVector const& nodes = m_Index.Nodes[array].Children;
 
     // The old ones that no new one becomes go, the others become the new ones, and a new one without an old one goes
@@ -1900,7 +1865,7 @@ TASWTomlResult TEditor::MergeElements(std::size_t array, TASWTomlValue const& ol
 {
     TASWTomlValue::TValueVector const& oldElements = *old.AsArray();
     TASWTomlValue::TValueVector const& elements = *value.AsArray();
-    TIndexVector const partners = Partners(oldElements, elements);
+    TIndexVector const partners = ElementPartners(old, value);
     TIndexVector const& nodes = m_Index.Nodes[array].Children;
 
     // The old ones that no new one becomes go, then the others become the new ones, so the places of new blocks are
@@ -2667,6 +2632,11 @@ TASWTomlResult TEditor::SetExisting(std::size_t node, TASWTomlPath const& path, 
     return MergeValue(existing.Parent, oldArray, array);
 }
 //---------------------------------------------------------------------------
+void TEditor::SetPartners(Detail::TPartnersMap const& partners) noexcept
+{
+    m_Partners = &partners;
+}
+//---------------------------------------------------------------------------
 TASWTomlResult TEditor::SetTrailingComment(TASWTomlPath const& path, std::string_view text)
 {
     m_Verb = "set the trailing comment of";
@@ -2845,6 +2815,93 @@ TASWTomlResult TEditor::WriteKeyLines(std::string_view indent, TASWTomlValue con
 //---------------------------------------------------------------------------
 
 } // namespace
+
+//---------------------------------------------------------------------------
+TIndexVector Detail::Partners(std::size_t oldSize, std::size_t size, Detail::TElementMatch const& match)
+{
+    TIndexVector partners(size, NoIndex);
+
+    // The same ones at the start and the end
+    std::size_t head = 0;
+    while (head < oldSize && head < size && match.IsSame(head, head))
+    {
+        partners[head] = head;
+        ++head;
+    }
+
+    std::size_t tail = 0;
+    while (tail < oldSize - head && tail < size - head)
+    {
+        if (!match.IsSame(oldSize - 1 - tail, size - 1 - tail))
+            break;
+
+        partners[size - 1 - tail] = oldSize - 1 - tail;
+        ++tail;
+    }
+
+    // The longest common subsequence of the rest: lengths[i * columns + j] is the length of the one of the old ones
+    // from i and the new ones from j
+    std::size_t const rows = oldSize - head - tail + 1;
+    std::size_t const columns = size - head - tail + 1;
+    if (rows > 1 && columns > 1 && rows * columns <= MaxAlignCells)
+    {
+        TIndexVector lengths(rows * columns, 0);
+        for (std::size_t i = rows - 1; i-- > 0;)
+        {
+            for (std::size_t j = columns - 1; j-- > 0;)
+            {
+                if (match.IsSame(head + i, head + j))
+                    lengths[i * columns + j] = lengths[(i + 1) * columns + j + 1] + 1;
+                else
+                    lengths[i * columns + j] = std::max(lengths[(i + 1) * columns + j], lengths[i * columns + j + 1]);
+            }
+        }
+
+        std::size_t i = 0;
+        std::size_t j = 0;
+        while (i + 1 < rows && j + 1 < columns)
+        {
+            if (match.IsSame(head + i, head + j) &&
+                lengths[i * columns + j] == lengths[(i + 1) * columns + j + 1] + 1)
+            {
+                partners[head + j] = head + i;
+                ++i;
+                ++j;
+            }
+            else if (lengths[(i + 1) * columns + j] >= lengths[i * columns + j + 1])
+            {
+                ++i;
+            }
+            else
+            {
+                ++j;
+            }
+        }
+    }
+
+    // Between two that are the same, the others in order
+    std::size_t oldNext = 0;
+    std::size_t next = 0;
+    while (next < size)
+    {
+        std::size_t same = next;
+        while (same < size && partners[same] == NoIndex)
+            ++same;
+
+        std::size_t const oldSame = same < size ? partners[same] : oldSize;
+        for (std::size_t k = 0; next + k < same && oldNext + k < oldSame; ++k)
+            partners[next + k] = oldNext + k;
+
+        if (same == size)
+            break;
+
+        oldNext = oldSame + 1;
+        next = same + 1;
+    }
+
+    return partners;
+}
+//---------------------------------------------------------------------------
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -3292,12 +3349,27 @@ TASWTomlResult TASWTomlDocument::SetValue(TASWTomlPath const& path, TASWTomlValu
 TASWTomlResult TASWTomlDocument::SetValue(TASWTomlPath const& path, TASWTomlValue const& value,
     TASWTomlValueOptions const& values)
 {
+    return SetValueWith(path, value, values, nullptr);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::SetValue(TASWTomlPath const& path, TASWTomlValue const& value,
+    TASWTomlValueOptions const& values, Detail::TPartnersMap const& partners)
+{
+    return SetValueWith(path, value, values, &partners);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::SetValueWith(TASWTomlPath const& path, TASWTomlValue const& value,
+    TASWTomlValueOptions const& values, Detail::TPartnersMap const* partners)
+{
     TASWTomlResult result = values.Validate();
     if (!result.IsOk())
         return WithPath(result, path);
 
     std::string const body = BodyText();
     TEditor editor(body, m_Index, m_Root, m_Options, values, GetLineBreak());
+    if (partners != nullptr)
+        editor.SetPartners(*partners);
+
     result = editor.SetValue(path, value);
     if (result.IsOk())
         editor.Finish();

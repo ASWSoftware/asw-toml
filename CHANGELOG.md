@@ -309,9 +309,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is replaced by the default (a Warning), a valid one left as written; a table of settings the file
   holds as another kind of value is replaced by a table of them (a Warning); the comments of the
   settings, of the tables and the file comment (the root table's) are set as `Writing.CommentPolicy`
-  says, where they have a line of their own. A file that needs nothing stays byte for byte, and a
-  first run (a missing file) gets everything. The values are written with one edit per table and the
-  comments with one more, so applying 200 settings to an empty file takes a few milliseconds. A load
-  that fails changes nothing and reports none of it.
+  says, where they have a line of their own. A struct, a `std::vector` or a map is taken by parts:
+  `Load()` and `Get()` replace only the parts that aren't valid by their defaults (a Warning each,
+  with the part's path, e.g. `servers[1].port`), `Load()` adds the missing fields that aren't
+  optional (an Info each), and the keys the struct doesn't know stay; `Set()` keeps them too,
+  pairing a vector's elements with the file's by what the struct knows of them, so removing a server
+  removes its block and the others keep their keys and comments (`IASWToml::SetValue()` sets a value
+  as it is). A file that needs nothing stays byte for byte, and a first run (a missing file) gets
+  everything. The values are written with one edit per table and the comments with one more, so
+  applying 200 settings to an empty file takes a few milliseconds. A load that fails changes nothing
+  and reports none of it.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

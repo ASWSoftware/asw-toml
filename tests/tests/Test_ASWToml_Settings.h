@@ -108,6 +108,40 @@ public:
     void TearDown_Test(ITestCase& testCase) override;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_SettingsStructs
+//
+// Settings of structs, vectors and maps, brought up to date by parts: Load() and Get() replace only the parts that
+// aren't valid and add the missing fields, and Set() keeps what the document has that the type doesn't know
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_SettingsStructs : public TAutoTestGroup<TTest_ASWToml_SettingsStructs>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_SettingsStructs> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Get_RepairsWithoutChangingTheDocument();
+    void Test_Load_AddsMissingFields();
+    void Test_Load_DefaultThatCantBeWrittenUsesTheSettings();
+    void Test_Load_ReplacesOnlyThePartsThatArentValid();
+    void Test_Load_ValueOfAnotherTypeIsReplacedWhole();
+    void Test_Load_WholeValueRefusedUsesTheDefault();
+    void Test_Set_KeepsTheKeysTheStructDoesntKnow();
+    void Test_Set_MapOverlaysByKey();
+    void Test_Set_PairsElementsByWhatTheStructKnows();
+    void Test_Set_PairsNestedElementsByWhatTheyKnow();
+
+public:
+    TTest_ASWToml_SettingsStructs();
+    ~TTest_ASWToml_SettingsStructs() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------

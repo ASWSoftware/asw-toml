@@ -223,6 +223,21 @@ struct TIsFieldTuple<T, std::tuple<TASWTomlField<TStruct, TMember>...> >
 {
 };
 
+// The kinds of value a setting is brought up to date by parts in (see TASWTomlSetting): the converters of structs with
+// fields, of std::vector and of the maps name theirs as their TByParts type. A type whose converter has none (a
+// scalar, or a type with a converter of the application's) is one part.
+struct TArrayParts
+{
+};
+
+struct TStructParts
+{
+};
+
+struct TTableParts
+{
+};
+
 // Whether T is a std::optional (value), and the type it holds (TItem)
 template <typename T>
 struct TIsOptional : std::false_type
@@ -1332,6 +1347,8 @@ template <Detail::ConvertibleKey K, TomlConvertible T, typename TCompare, typena
 requires std::default_initializable<T>
 struct TASWTomlConverter<std::map<K, T, TCompare, TAllocator> >
 {
+    using TByParts = Detail::TTableParts;
+
     static TASWTomlResult FromValue(TASWTomlValue const& value, std::map<K, T, TCompare, TAllocator>& out,
         TASWTomlValueOptions const& options)
     {
@@ -1448,6 +1465,8 @@ template <Detail::ConvertibleKey K, TomlConvertible T, typename THash, typename 
 requires std::default_initializable<T>
 struct TASWTomlConverter<std::unordered_map<K, T, THash, TEqual, TAllocator> >
 {
+    using TByParts = Detail::TTableParts;
+
     static TASWTomlResult FromValue(TASWTomlValue const& value, std::unordered_map<K, T, THash, TEqual, TAllocator>& out,
         TASWTomlValueOptions const& options)
     {
@@ -1530,6 +1549,8 @@ template <TomlConvertible T, typename TAllocator>
 requires std::default_initializable<T>
 struct TASWTomlConverter<std::vector<T, TAllocator> >
 {
+    using TByParts = Detail::TArrayParts;
+
     static TASWTomlResult FromValue(TASWTomlValue const& value, std::vector<T, TAllocator>& out,
         TASWTomlValueOptions const& options)
     {
@@ -1637,6 +1658,8 @@ private:
     }
 
 public:
+    using TByParts = Detail::TStructParts;
+
     static TASWTomlResult FromValue(TASWTomlValue const& value, T& out, TASWTomlValueOptions const& options)
     {
         if (!value.IsTable())

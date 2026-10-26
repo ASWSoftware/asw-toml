@@ -50,6 +50,7 @@ namespace Detail
 {
 
 class TSettingBase;
+class TValueOverlay;
 
 /////////////////////////////////////////////////////////////////////////////
 // TMutex
@@ -181,11 +182,12 @@ private:
     // and failure reported
     TASWTomlResult SaveTo(std::string_view const* filePath);
 
-    // DocumentSetValue() for a setting (see TASWTomlSetting::Set()): when it adds the key and 'comment' isn't empty,
-    // also sets the key's comment to 'comment' in the same edit, so a failure of either changes nothing; a key that
-    // has no line of its own for a comment (in an inline table) is added without it
+    // DocumentSetValue() for a setting (see TASWTomlSetting::Set()): with 'overlay' (nullptr for none), a value that is
+    // there is set to the overlay of it and 'value' instead, worked out under the same lock; when it adds the key and
+    // 'comment' isn't empty, also sets the key's comment to 'comment' in the same edit, so a failure of either changes
+    // nothing; a key that has no line of its own for a comment (in an inline table) is added without it
     TASWTomlResult SetSettingValue(TASWTomlPath const& path, TASWTomlValue const& value,
-        TASWTomlValueOptions const& values, std::string_view comment);
+        TASWTomlValueOptions const& values, std::string_view comment, Detail::TValueOverlay const* overlay);
 
     // Removes 'setting' or 'table' from the ones bound to the object, under the file lock (so after a Load() that is
     // applying it): a setting's or a table's destructor calls it

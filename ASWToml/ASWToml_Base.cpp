@@ -661,14 +661,22 @@ TASWTomlResult TASWBaseToml::SetOptions(TASWTomlOptions const& options)
 }
 //---------------------------------------------------------------------------
 TASWTomlResult TASWBaseToml::SetSettingValue(TASWTomlPath const& path, TASWTomlValue const& value,
-    TASWTomlValueOptions const& values, std::string_view comment)
+    TASWTomlValueOptions const& values, std::string_view comment, Detail::TValueOverlay const* overlay)
 {
     TASWTomlResult result;
 
     try
     {
         std::lock_guard<Detail::TSharedMutex> lock(m_Mutex);
-        if (comment.empty() || m_Document.Find(path) != nullptr)
+        TASWTomlValue const* const old = m_Document.Find(path);
+        if (old != nullptr && overlay != nullptr)
+        {
+            // The document's merge pairs the elements of arrays as the overlay did
+            Detail::TPartnersMap partners;
+            TASWTomlValue const overlaid = overlay->Overlay(*old, value, partners);
+            result = m_Document.SetValue(path, overlaid, values, partners);
+        }
+        else if (comment.empty() || old != nullptr)
         {
             result = m_Document.SetValue(path, value, values);
         }

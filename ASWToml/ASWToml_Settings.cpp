@@ -32,8 +32,26 @@ namespace ASWToml
 namespace
 {
 
+TASWTomlMessage KeyAddedMessage(std::string path, TASWTomlValue const& value);
 TASWTomlMessage ResultMessage(ESeverity severity, TASWTomlResult const& result);
 
+//---------------------------------------------------------------------------
+/*
+    KeyAddedMessage
+
+    The Info that the key at 'path' (its text) is missing and is added with its default value 'value' (KeyAdded)
+*/
+TASWTomlMessage KeyAddedMessage(std::string path, TASWTomlValue const& value)
+{
+    TASWTomlMessage message;
+    message.Severity = ESeverity::Info;
+    message.Code = ETomlCode::KeyAdded;
+    message.Text = "The key " + path + " is missing: it is added with its default value " +
+        Detail::ValueText(value) + ".";
+    message.Path = std::move(path);
+
+    return message;
+}
 //---------------------------------------------------------------------------
 /*
     ResultMessage
@@ -60,6 +78,22 @@ namespace Detail
 {
 
 //---------------------------------------------------------------------------
+void AddPartKey(TASWTomlValue& table, std::string_view key, TASWTomlValue written, TPartRepairVector& repairs)
+{
+    TPartRepair repair;
+    repair.Problem = KeyFailure(TASWTomlResult(), key);
+    repair.Default = written;
+    repair.Added = true;
+    repairs.push_back(std::move(repair));
+    static_cast<void>(table.Set(std::string(key), std::move(written)));
+}
+//---------------------------------------------------------------------------
+void ElementRepairs(TPartRepairVector& repairs, std::size_t first, std::size_t index)
+{
+    for (std::size_t i = first; i < repairs.size(); ++i)
+        repairs[i].Problem = ElementFailure(std::move(repairs[i].Problem), index);
+}
+//---------------------------------------------------------------------------
 bool IsSettingsTablePath(TASWTomlPath const& path) noexcept
 {
     if (!path.IsValid())
@@ -72,6 +106,12 @@ bool IsSettingsTablePath(TASWTomlPath const& path) noexcept
     }
 
     return true;
+}
+//---------------------------------------------------------------------------
+void KeyRepairs(TPartRepairVector& repairs, std::size_t first, std::string_view key)
+{
+    for (std::size_t i = first; i < repairs.size(); ++i)
+        repairs[i].Problem = KeyFailure(std::move(repairs[i].Problem), key);
 }
 //---------------------------------------------------------------------------
 TASWTomlResult OutOfSettingRange(TASWTomlValue const& value, TASWTomlValue const* min, TASWTomlValue const* max)
@@ -97,6 +137,15 @@ TASWTomlResult RefusedValue(TASWTomlValue const& value, std::string_view problem
         sentence += ".";
 
     return ValueFailure(ETomlCode::InvalidValue, value, sentence);
+}
+//---------------------------------------------------------------------------
+void ReplacePart(TASWTomlValue& value, TASWTomlResult problem, TASWTomlValue written, TPartRepairVector& repairs)
+{
+    TPartRepair repair;
+    repair.Problem = std::move(problem);
+    repair.Default = written;
+    repairs.push_back(std::move(repair));
+    value = std::move(written);
 }
 //---------------------------------------------------------------------------
 
@@ -302,17 +351,9 @@ void TSettingBase::ApplyDefault(TSettingsApply& apply, TASWTomlValue const& defa
 {
     TASWTomlMessage added;
     if (problem != nullptr)
-    {
         apply.AddMessage(DefaultUsedMessage(*problem, &defaultValue));
-    }
     else
-    {
-        added.Severity = ESeverity::Info;
-        added.Code = ETomlCode::KeyAdded;
-        added.Path = m_Path.ToString();
-        added.Text = "The key " + added.Path + " is missing: it is added with its default value " +
-            ValueText(defaultValue) + ".";
-    }
+        added = KeyAddedMessage(m_Path.ToString(), defaultValue);
 
     apply.AddValue(m_TablePath, m_Path, m_Key, defaultValue, values, problem == nullptr ? &added : nullptr);
     ApplyComment(apply);
@@ -348,6 +389,21 @@ bool TSettingBase::ApplyOldKeys(TSettingsApply& apply, TStringVector const& oldK
     }
 
     return true;
+}
+//---------------------------------------------------------------------------
+void TSettingBase::ApplyRepairs(TSettingsApply& apply, TASWTomlValue const& repaired,
+    TASWTomlValueOptions const* values, TPartRepairVector const& repairs) const
+{
+    for (TPartRepair const& repair : repairs)
+    {
+        if (repair.Added)
+            apply.AddMessage(KeyAddedMessage(PathFailure(repair.Problem, m_Path).Path, repair.Default));
+        else
+            apply.AddMessage(DefaultUsedMessage(repair.Problem, &repair.Default));
+    }
+
+    apply.AddValue(m_TablePath, m_Path, m_Key, repaired, values, nullptr);
+    ApplyComment(apply);
 }
 //---------------------------------------------------------------------------
 TASWTomlResult TSettingBase::CaughtSetFailure() const noexcept
@@ -438,6 +494,15 @@ void TSettingBase::ReportFailure(TASWTomlResult const& result) const noexcept
     m_Owner->ReportFailure(result);
 }
 //---------------------------------------------------------------------------
+void TSettingBase::ReportRepairs(TPartRepairVector const& repairs) const noexcept
+{
+    for (TPartRepair const& repair : repairs)
+    {
+        if (!repair.Added)
+            ReportDefaultUsed(repair.Problem, &repair.Default);
+    }
+}
+//---------------------------------------------------------------------------
 TASWTomlResult TSettingBase::SetFailure(TASWTomlResult result) const
 {
     return PathFailure(std::move(result), m_Path);
@@ -448,9 +513,10 @@ void TSettingBase::Unregister() const
     m_Owner->Unregister(*this);
 }
 //---------------------------------------------------------------------------
-TASWTomlResult TSettingBase::WriteValue(TASWTomlValue const& value, TASWTomlValueOptions const& values)
+TASWTomlResult TSettingBase::WriteValue(TASWTomlValue const& value, TASWTomlValueOptions const& values,
+    TValueOverlay const* overlay)
 {
-    return m_Owner->SetSettingValue(m_Path, value, values, m_Comment);
+    return m_Owner->SetSettingValue(m_Path, value, values, m_Comment, overlay);
 }
 //---------------------------------------------------------------------------
 

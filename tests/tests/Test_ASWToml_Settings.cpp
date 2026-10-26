@@ -23,7 +23,9 @@ SPDX-License-Identifier: MIT
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 //---------------------------------------------------------------------------
@@ -83,7 +85,12 @@ using ASWToml::TASWTomlValueOptions;
 using ASWToml::TMessageVector;
 using ASWToml::TStringVector;
 
+using TClusterVector = std::vector<TTestCluster>;
+using TColorMap = std::map<EColor, int>;
+using TCountMap = std::unordered_map<std::string, int>;
+using THostMap = std::map<std::string, TTestServer>;
 using TLimitMap = std::map<std::string, int>;
+using TNameMap = std::map<int, std::string>;
 using TNestedVector = std::vector<std::vector<int> >;
 using TServerVector = std::vector<TTestServer>;
 
@@ -103,6 +110,45 @@ constexpr char const* FirstRunText =
     "# Days kept.\n"
     "days = 30\n"
     "mask = 0xFF\n";
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTestPaint
+//
+// A struct whose value-initialized Color has no name, so a new element's default value can't be written
+/////////////////////////////////////////////////////////////////////////////
+struct TTestPaint
+{
+    std::string Name;
+    EColor Color{};
+};
+
+// The paints of a setting
+using TPaintVector = std::vector<TTestPaint>;
+
+auto ASWTomlFields(TTestPaint const&)
+{
+    return std::tuple{ ASWToml::Field("name", &TTestPaint::Name), ASWToml::Field("color", &TTestPaint::Color) };
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTestPalette
+//
+// A struct with a field of paints, whose new elements' default values can't be written (see TTestPaint)
+/////////////////////////////////////////////////////////////////////////////
+struct TTestPalette
+{
+    std::vector<TTestPaint> Paints;
+};
+
+// The palettes of a setting
+using TPaletteVector = std::vector<TTestPalette>;
+
+auto ASWTomlFields(TTestPalette const&)
+{
+    return std::tuple{ ASWToml::Field("paints", &TTestPalette::Paints) };
+}
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -261,9 +307,28 @@ public:
 
 //---------------------------------------------------------------------------
 
+TTestCluster DefaultCluster();
 TASWTomlOptions LfOptions();
 std::string MessagesText(TMessageVector const& messages);
+std::string OneServer(TServerVector const& value);
+std::string RemovedFirstCluster(std::string const& first, std::string const& second);
 
+//---------------------------------------------------------------------------
+/*
+    DefaultCluster
+
+    The default value of a cluster setting: a screen of 800 by 600, a spare one of 1 by 1, and one server, x:9
+*/
+TTestCluster DefaultCluster()
+{
+    TTestCluster cluster;
+    cluster.Name = "main";
+    cluster.Screen = TTestScreen(800, 600);
+    cluster.Spare = TTestScreen(1, 1);
+    cluster.Servers.push_back(TTestServer{ "x", 9, true, std::nullopt });
+
+    return cluster;
+}
 //---------------------------------------------------------------------------
 /*
     LfOptions
@@ -290,6 +355,37 @@ std::string MessagesText(TMessageVector const& messages)
         text += ASWToml::ToString(message) + "\n";
 
     return text;
+}
+//---------------------------------------------------------------------------
+/*
+    OneServer
+
+    The validator of a list of at most one server
+*/
+std::string OneServer(TServerVector const& value)
+{
+    return value.size() > 1 ? "it can have at most one server" : "";
+}
+//---------------------------------------------------------------------------
+/*
+    RemovedFirstCluster
+
+    The text a setting of clusters writes when the first of two clusters is removed: two clusters that are the same
+    but for their note, which no field names, and the keys 'first' and 'second' (each a line, or more), with the first
+    removed by Set()
+*/
+std::string RemovedFirstCluster(std::string const& first, std::string const& second)
+{
+    std::string const same = "name = \"c\"\nscreen = { width = 1, height = 1 }\n";
+    TPreloaded toml("[[clusters]]\n" + same + "note = \"first\"\n" + first + "\n[[clusters]]\n" + same +
+        "note = \"second\"\n" + second);
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<TClusterVector> clusters{ root, "clusters", TClusterVector() };
+    TClusterVector value = clusters.Get();
+    value.erase(value.begin());
+    static_cast<void>(clusters.Set(value));
+
+    return toml.ToText();
 }
 //---------------------------------------------------------------------------
 
@@ -469,7 +565,8 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Get_InvalidValueGivesTheDefault)
 
     // Assert
     CheckEquals(2u, level, "a value that doesn't convert gives the default");
-    CheckTrue(servers.empty(), "so does a part of one");
+    CheckTrue(servers.size() == 2 && servers[0].Port == 1 && servers[1].Host == "b" && servers[1].Port == 80,
+        "and a part of one, its own default");
     CheckTrue(unnamed == EColor::Unlisted, "and a value whose default can't be written");
     CheckEquals(std::size_t(3), settings.Messages.size(), "each is reported once: " + MessagesText(settings.Messages));
     if (settings.Messages.size() != 3)
@@ -481,8 +578,8 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Get_InvalidValueGivesTheDefault)
     CheckEquals("The value \"x\" is a string, not an integer. The default value 2 is used."s, first.Text,
         "the converter's text and the default value");
     CheckEquals("general.level"s, first.Path, "the setting's path");
-    CheckEquals("The value \"x\" is a string, not an integer. The default value [] is used."s,
-        settings.Messages[1].Text, "a part of a value");
+    CheckEquals("The value \"x\" is a string, not an integer. The default value 80 is used."s,
+        settings.Messages[1].Text, "a part of a value, with the part's default");
     CheckEquals("net.servers[1].port"s, settings.Messages[1].Path, "with the path of the part");
     CheckEquals(ETomlCode::InvalidValue, settings.Messages[2].Code, "a name the enum lacks");
     CheckContains(settings.Messages[2].Text, " The default value is used.", "a default that can't be written");
@@ -1573,8 +1670,371 @@ ASW_TEST(TTest_ASWToml_SettingsLoad, SetOptions_DoesntApplyTheSettings)
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_SettingsStructs
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_SettingsStructs::TTest_ASWToml_SettingsStructs()
+    : inherited("ASWToml_SettingsStructs_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_SettingsStructs::~TTest_ASWToml_SettingsStructs()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsStructs::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsStructs::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsStructs::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsStructs::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Get_RepairsWithoutChangingTheDocument)
+{
+    // Arrange
+    // The text is loaded before the setting is bound, so it isn't applied to it
+    std::string const text = "[[servers]]\nhost = \"a\"\n\n[[servers]]\nhost = \"b\"\nport = 99999\n";
+    TPreloaded toml(text);
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<TServerVector> servers{ root, "servers", TServerVector() };
+
+    // Act
+    TServerVector const read = servers.Get();
+
+    // Assert
+    CheckEquals(std::size_t(2), read.size(), "both elements are read");
+    if (read.size() == 2)
+    {
+        CheckTrue(read[0].Host == "a" && read[0].Port == 80, "a missing field gets the element's default");
+        CheckTrue(read[1].Host == "b" && read[1].Port == 80, "and so does one that isn't valid");
+    }
+
+    CheckEquals(Escaped(text), Escaped(toml.ToText()), "the document doesn't change");
+    CheckEquals(std::size_t(1), toml.Messages.size(), "only the part that isn't valid is reported: " +
+        MessagesText(toml.Messages));
+    if (toml.Messages.size() == 1)
+    {
+        TASWTomlMessage const& replaced = toml.Messages[0];
+        CheckTrue(replaced.Severity == ESeverity::Warning && replaced.Code == ETomlCode::ValueOutOfRange,
+            "as a Warning with the converter's code");
+        CheckEquals("servers[1].port"s, replaced.Path, "the part's path");
+        CheckEndsWith(replaced.Text, " The default value 80 is used.", "the part's default value");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Load_AddsMissingFields)
+{
+    // Arrange
+    TPreloaded toml("");
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<TTestCluster> cluster{ root, "cluster", DefaultCluster() };
+    std::string const text = "# The cluster.\n[cluster]\nname = \"web\"  # Mine\nextra = true\n\n[cluster.screen]\n"
+        "height = 700\n\n[[cluster.servers]]\nhost = \"a\"\nport = 1\nnote = \"first\"\n\n[[cluster.servers]]\n"
+        "# The second.\nhost = \"b\"\n";
+
+    // Act
+    TASWTomlResult const loaded = toml.LoadText(text);
+    std::string const applied = toml.ToText();
+    TTestCluster const read = cluster.Get();
+    TMessageVector const messages = toml.Messages;
+    TASWTomlResult const reloaded = toml.LoadText(applied);
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("# The cluster.\n[cluster]\nname = \"web\"  # Mine\nextra = true\n\n[cluster.screen]\n"
+        "height = 700\nwidth = 800\n\n[[cluster.servers]]\nhost = \"a\"\nport = 1\nnote = \"first\"\n\n"
+        "[[cluster.servers]]\n# The second.\nhost = \"b\"\nport = 80\n"), Escaped(applied), "only the missing fields "
+        "that aren't optional are added; the other keys, comments and layout stay");
+    CheckEquals(std::size_t(2), messages.size(), "each key added: " + MessagesText(messages));
+    if (messages.size() == 2)
+    {
+        TASWTomlMessage const& added = messages[0];
+        CheckTrue(added.Severity == ESeverity::Info && added.Code == ETomlCode::KeyAdded, "an Info, KeyAdded");
+        CheckEquals("The key cluster.screen.width is missing: it is added with its default value 800."s, added.Text,
+            "the default of the setting's own struct is the setting's default's member");
+        CheckEquals("cluster.screen.width"s, added.Path, "its path");
+        CheckEquals("The key cluster.servers[1].port is missing: it is added with its default value 80."s,
+            messages[1].Text, "an element's is a new element's");
+    }
+
+    CheckTrue(read.Name == "web" && read.Screen == TTestScreen(800, 700) && !read.Spare.has_value(),
+        "the struct reads the file's values");
+    CheckTrue(read.Servers.size() == 2 && read.Servers[1].Port == 80, "and the elements'");
+    CheckTrue(reloaded.IsOk() && !toml.IsModified() && toml.Messages.size() == messages.size(),
+        "the text applied needs nothing more");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Load_DefaultThatCantBeWrittenUsesTheSettings)
+{
+    // Arrange
+    // A new paint's color has no name, so a paint without one can't get it
+    TPreloaded toml("");
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<TPaintVector> paints{ root, "paints", TPaintVector{ TTestPaint{ "wall", EColor::Red } } };
+    TASWTomlSetting<TPaletteVector> palettes{ root, "palettes", TPaletteVector() };
+
+    // Act
+    TASWTomlResult const loaded = toml.LoadText("[[paints]]\nname = \"door\"\n\n[[palettes]]\n\n"
+        "[[palettes.paints]]\nname = \"door\"\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("palettes = []\n\n[[paints]]\nname = \"wall\"\ncolor = \"Red\"\n"), Escaped(toml.ToText()),
+        "the setting's default value replaces the whole value (an empty array is a key of the root)");
+    CheckEquals(std::size_t(2), toml.Messages.size(), "each is reported once: " + MessagesText(toml.Messages));
+    if (toml.Messages.size() == 2)
+    {
+        TASWTomlMessage const& replaced = toml.Messages[0];
+        CheckTrue(replaced.Severity == ESeverity::Warning && replaced.Code == ETomlCode::NotFound,
+            "a Warning about the part that couldn't be repaired");
+        CheckEquals("paints[0].color"s, replaced.Path, "its path");
+        CheckStartsWith(replaced.Text, "The table has no key color. The default value ", "the problem and the default");
+        CheckEquals("palettes[0].paints[0].color"s, toml.Messages[1].Path, "through a field too");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Load_ReplacesOnlyThePartsThatArentValid)
+{
+    // Arrange
+    TPreloaded toml("");
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<TLimitMap> limits{ root, "limits", TLimitMap{ { "a", 1 } } };
+    TASWTomlSetting<TNameMap> names{ root, "names", TNameMap{ { 1, "one" } } };
+    TASWTomlSetting<TColorMap> colors{ root, "colors", TColorMap{ { EColor::Blue, 3 } } };
+    TASWTomlSetting<TCountMap> counts{ root, "counts", TCountMap() };
+    TASWTomlSetting<TServerVector> backups{ root, "backups", TServerVector() };
+    TASWTomlSetting<std::vector<int> > ports{ root, "ports", std::vector<int>{ 1 } };
+    TASWTomlSetting<TServerVector> servers{ root, "servers", TServerVector() };
+
+    // Act
+    // A map's value; a map's key that doesn't read, after a value that doesn't; a key that reads as one before it; an
+    // unordered map's value; an inline element that isn't a table; an element of numbers; a field of an element
+    TASWTomlResult const loaded = toml.LoadText("limits = { a = 5, b = \"x\", c = 7 }\n"
+        "names = { 1 = \"one\", 2 = 5, x = \"two\" }\ncolors = { Red = 1, red = 2 }\ncounts = { a = \"x\" }\n"
+        "backups = [{ host = \"c\", port = 3 }, 5]\nports = [80, \"x\"]\n\n"
+        "[[servers]]\nhost = \"a\"\nport = 99999  # Too big\n\n[[servers]]\nhost = \"b\"\nport = 2\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("limits = { a = 5, b = 0, c = 7 }\nnames = { 1 = \"one\" }\ncolors = { Blue = 3 }\n"
+        "counts = { a = 0 }\nbackups = [{ host = \"c\", port = 3 }, { host = \"\", port = 80, enabled = true }]\n"
+        "ports = [80, 0]\n\n[[servers]]\nhost = \"a\"\nport = 80  # Too big\n\n[[servers]]\nhost = \"b\"\nport = 2\n"),
+        Escaped(toml.ToText()), "each part that isn't valid is replaced by its default, the rest stays");
+    CheckEquals(std::size_t(7), toml.Messages.size(), "each part is reported: " + MessagesText(toml.Messages));
+    if (toml.Messages.size() == 7)
+    {
+        CheckEquals("limits.b"s, toml.Messages[0].Path, "a map's value, with the map's default for a value");
+        CheckEndsWith(toml.Messages[0].Text, " The default value 0 is used.", "a new value's default");
+        CheckEquals("names.x"s, toml.Messages[1].Path, "a key that doesn't read, without the value before it");
+        CheckEndsWith(toml.Messages[1].Text, " The default value { 1 = \"one\" } is used.",
+            "makes the whole map one part");
+        CheckEquals("colors.red"s, toml.Messages[2].Path, "a key that reads as one before it");
+        CheckEquals("counts.a"s, toml.Messages[3].Path, "an unordered map's value");
+        CheckEquals("backups[1]"s, toml.Messages[4].Path, "an element that isn't a table");
+        CheckEquals(ETomlCode::TypeMismatch, toml.Messages[4].Code, "is the wrong type");
+        CheckEquals("ports[1]"s, toml.Messages[5].Path, "an element of numbers, with a new element's default");
+        CheckEquals("servers[0].port"s, toml.Messages[6].Path, "a field of an element");
+    }
+
+    TLimitMap const repaired{ { "a", 5 }, { "b", 0 }, { "c", 7 } };
+    CheckTrue(limits.Get() == repaired, "the map reads as repaired");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Load_ValueOfAnotherTypeIsReplacedWhole)
+{
+    // Arrange
+    TPreloaded toml("");
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<std::vector<int> > ports{ root, "ports", std::vector<int>{ 1 } };
+    TASWTomlSetting<TLimitMap> limits{ root, "limits", TLimitMap{ { "a", 1 } } };
+
+    // Act
+    TASWTomlResult const loaded = toml.LoadText("ports = 5\nlimits = 6\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("ports = [1]\nlimits = { a = 1 }\n"), Escaped(toml.ToText()),
+        "a vector or a map of another type is replaced by its default");
+    CheckEquals(std::size_t(2), toml.Messages.size(), "each is reported: " + MessagesText(toml.Messages));
+    for (TASWTomlMessage const& message : toml.Messages)
+        CheckEquals(ETomlCode::TypeMismatch, message.Code, "as the wrong type: " + ASWToml::ToString(message));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Load_WholeValueRefusedUsesTheDefault)
+{
+    // Arrange
+    // At most one server, after the repairs
+    TPreloaded toml("");
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<TServerVector> servers{ root, "servers", TServerVector{ TTestServer{ "x", 9, true, std::nullopt } },
+        "", { .Validator = OneServer } };
+
+    // Act
+    TASWTomlResult const loaded = toml.LoadText("[[servers]]\nhost = \"a\"\nport = \"x\"\n\n[[servers]]\n"
+        "host = \"b\"\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("[[servers]]\nhost = \"x\"\nport = 9\nenabled = true\n"), Escaped(toml.ToText()),
+        "the setting's default replaces the whole value");
+    CheckEquals(std::size_t(1), toml.Messages.size(), "only the refusal is reported, not the parts: " +
+        MessagesText(toml.Messages));
+    if (toml.Messages.size() == 1)
+    {
+        CheckEquals(ETomlCode::InvalidValue, toml.Messages[0].Code, "the validator's refusal");
+        CheckEquals("servers"s, toml.Messages[0].Path, "the setting's path");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Set_KeepsTheKeysTheStructDoesntKnow)
+{
+    // Arrange
+    // The texts are loaded before the setting is bound, so it isn't applied to them
+    std::string const text = "[cluster]\nname = \"web\"\nextra = true  # Mine\n\n[cluster.screen]\nwidth = 800\n"
+        "depth = 24\n\n[cluster.spare]\nwidth = 1\nheight = 2\n";
+    TPreloaded toml(text);
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<TTestCluster> cluster{ root, "cluster", TTestCluster() };
+    TPreloaded raw(text);
+    TTestCluster value = cluster.Get();
+    value.Name = "api";
+    value.Screen = TTestScreen(1024, 768);
+    value.Spare = std::nullopt;
+
+    // Act
+    TASWTomlResult const set = cluster.Set(value);
+    TASWTomlResult const rawSet = raw.SetValue("cluster", value);
+
+    // Assert
+    CheckTrue(set.IsOk() && rawSet.IsOk(), "both should set the value");
+    // The optional fields that the file lacked are written (the empty map as a table of its own)
+    CheckEquals(Escaped("[cluster]\nname = \"api\"\nextra = true  # Mine\nservers = []\n\n[cluster.screen]\n"
+        "width = 1024\ndepth = 24\nheight = 768\n\n[cluster.limits]\n"), Escaped(toml.ToText()),
+        "the keys the struct and its nested struct don't know stay, and a std::nullopt member's key goes");
+    CheckTrue(cluster.Get() == value, "the value reads back");
+    CheckFalse(raw.ToText().find("extra") != std::string::npos || raw.ToText().find("depth") != std::string::npos,
+        "IASWToml::SetValue() sets the value as it is");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Set_MapOverlaysByKey)
+{
+    // Arrange
+    std::string const text = "[hosts.a]\nhost = \"a\"\nport = 1\nnote = \"A\"\n\n[hosts.b]\nhost = \"b\"\nport = 2\n";
+    TPreloaded toml(text);
+    TASWTomlTable root{ toml, "" };
+    TASWTomlSetting<THostMap> hosts{ root, "hosts", THostMap() };
+    THostMap value = hosts.Get();
+    value.erase("b");
+    value["a"].Port = 10;
+    value["c"] = TTestServer{ "c", 3, true, std::nullopt };
+
+    // Act
+    TASWTomlResult const set = hosts.Set(value);
+
+    // Assert
+    CheckTrue(set.IsOk(), "the value should be set");
+    CheckEquals(Escaped("[hosts.a]\nhost = \"a\"\nport = 10\nnote = \"A\"\nenabled = true\n\n[hosts.c]\nhost = \"c\"\n"
+        "port = 3\nenabled = true\n"), Escaped(toml.ToText()),
+        "a key that stays keeps what its value's type doesn't know, and a key removed goes");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Set_PairsElementsByWhatTheStructKnows)
+{
+    // Arrange
+    std::string const text = "[[servers]]\nhost = \"a\"\nport = 1\nnote = \"A\"\n\n[[servers]]\n# B's comment.\n"
+        "host = \"b\"\nport = 2\nnote = \"B\"\n\n[[servers]]\nhost = \"c\"\nport = 3\nnote = \"C\"\n";
+    TPreloaded removed(text);
+    TASWTomlTable removedRoot{ removed, "" };
+    TASWTomlSetting<TServerVector> removedServers{ removedRoot, "servers", TServerVector() };
+    TPreloaded changed(text);
+    TASWTomlTable changedRoot{ changed, "" };
+    TASWTomlSetting<TServerVector> changedServers{ changedRoot, "servers", TServerVector() };
+    TPreloaded nested("[cluster]\nname = \"web\"\n\n[cluster.screen]\nwidth = 1\nheight = 2\n\n[cluster.limits]\n\n"
+        "[[cluster.servers]]\nhost = \"a\"\nport = 1\nnote = \"A\"\n\n[[cluster.servers]]\nhost = \"b\"\nport = 2\n"
+        "note = \"B\"\n");
+    TASWTomlTable nestedRoot{ nested, "" };
+    TASWTomlSetting<TTestCluster> cluster{ nestedRoot, "cluster", TTestCluster() };
+    TServerVector withoutFirst = removedServers.Get();
+    withoutFirst.erase(withoutFirst.begin());
+    TServerVector other = changedServers.Get();
+    other[1].Port = 20;
+    other.push_back(TTestServer{ "d", 4, true, std::nullopt });
+    TTestCluster clusterValue = cluster.Get();
+    clusterValue.Servers.erase(clusterValue.Servers.begin());
+
+    // Act
+    TASWTomlResult const setRemoved = removedServers.Set(withoutFirst);
+    TASWTomlResult const setChanged = changedServers.Set(other);
+    TASWTomlResult const setNested = cluster.Set(clusterValue);
+
+    // Assert
+    CheckTrue(setRemoved.IsOk() && setChanged.IsOk() && setNested.IsOk(), "each should set the value");
+    // The struct writes its optional field enabled, which the elements lacked; that doesn't change which element is
+    // which
+    CheckEquals(Escaped("[[servers]]\n# B's comment.\nhost = \"b\"\nport = 2\nnote = \"B\"\nenabled = true\n\n"
+        "[[servers]]\nhost = \"c\"\nport = 3\nnote = \"C\"\nenabled = true\n"), Escaped(removed.ToText()),
+        "removing the first element removes its block, and the others keep theirs");
+    CheckEquals(Escaped("[[servers]]\nhost = \"a\"\nport = 1\nnote = \"A\"\nenabled = true\n\n[[servers]]\n"
+        "# B's comment.\nhost = \"b\"\nport = 20\nnote = \"B\"\nenabled = true\n\n[[servers]]\nhost = \"c\"\nport = 3\n"
+        "note = \"C\"\nenabled = true\n\n[[servers]]\nhost = \"d\"\nport = 4\nenabled = true\n"),
+        Escaped(changed.ToText()), "a changed element keeps what the struct doesn't know, and a new one is added");
+    CheckEquals(Escaped("[cluster]\nname = \"web\"\n\n[cluster.screen]\nwidth = 1\nheight = 2\n\n[cluster.limits]\n\n"
+        "[[cluster.servers]]\nhost = \"b\"\nport = 2\nnote = \"B\"\nenabled = true\n"), Escaped(nested.ToText()),
+        "and so are the elements of a vector in a struct");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsStructs, Set_PairsNestedElementsByWhatTheyKnow)
+{
+    // Arrange
+    // Two clusters that differ in a vector, a map or an optional member: with the first removed, the second keeps its
+    // block (its note), so it is told apart from the first by that alone
+    // Each has the optional fields limits and servers, which the struct writes
+    std::string const noLimits = "limits = {}\n";
+    std::string const noServers = "servers = []\n";
+    std::string const servers = noLimits + "servers = [{ host = \"a\", port = 1, enabled = true }]\n";
+    std::string const twoServers = noLimits + "servers = [{ host = \"a\", port = 1, enabled = true }, "
+        "{ host = \"b\", port = 2, enabled = true }]\n";
+    std::string const otherServer = noLimits + "servers = [{ host = \"b\", port = 2, enabled = true }]\n";
+    std::string const limits = noServers + "limits = { a = 1 }\n";
+    std::string const twoLimits = noServers + "limits = { a = 1, b = 2 }\n";
+    std::string const otherValue = noServers + "limits = { a = 2 }\n";
+    std::string const otherKey = noServers + "limits = { b = 1 }\n";
+    std::string const spare = noLimits + noServers + "spare = { width = 2, height = 2 }\n";
+    std::string const second = "[[clusters]]\nname = \"c\"\nscreen = { width = 1, height = 1 }\nnote = \"second\"\n";
+
+    // Act & Assert
+    CheckEquals(Escaped(second + servers), Escaped(RemovedFirstCluster(twoServers, servers)),
+        "a vector of another size");
+    CheckEquals(Escaped(second + otherServer), Escaped(RemovedFirstCluster(servers, otherServer)),
+        "a vector with another element");
+    CheckEquals(Escaped(second + limits), Escaped(RemovedFirstCluster(twoLimits, limits)), "a map of another size");
+    CheckEquals(Escaped(second + otherValue), Escaped(RemovedFirstCluster(limits, otherValue)),
+        "a map with another value");
+    CheckEquals(Escaped(second + otherKey), Escaped(RemovedFirstCluster(limits, otherKey)), "a map with another key");
+    CheckEquals(Escaped(second + noLimits + noServers), Escaped(RemovedFirstCluster(spare, noLimits + noServers)),
+        "an optional member that only one has");
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsAccess, "Settings")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsLoad, "Settings")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsStructs, "Settings")

@@ -365,7 +365,8 @@ public: // Typed values, built on the operations above
 
     // Sets the value at 'path' to 'value', converted with TASWTomlConverter<T> and the value options
     // (GetValueOptions(), or 'options', which the document also writes it with), as TASWTomlDocument::SetValue() sets
-    // it: a table or array that is there is merged with it. Fails with InvalidArgument for a path that isn't valid,
+    // it: a table or array that is there is merged with it, so the keys of a struct's table that its fields don't name
+    // are removed (a TASWTomlSetting's Set() keeps them). Fails with InvalidArgument for a path that isn't valid,
     // with the converter's code (e.g. InvalidValue for an enum value that has no name) and the path of the place in
     // the document that failed, or as TASWTomlDocument::SetValue() does. A text value (a string literal, a char array
     // or pointer, or a std::string_view) is set as a string (a nullptr value is "").

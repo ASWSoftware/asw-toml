@@ -24,6 +24,8 @@ SPDX-License-Identifier: MIT
 #ifndef ASWToml_DocumentH
 #define ASWToml_DocumentH
 //---------------------------------------------------------------------------
+#include <cstddef>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -232,6 +234,36 @@ struct TDocModel
     TBlockVector Blocks = TBlockVector(1); // Never empty: the block without a header first
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TElementMatch
+//
+// Says which elements of an old array and a new one are the same, for Partners(): identical values, for the
+// document's merge, or the same as far as a type knows them, for a setting's (see TASWTomlSetting::Set())
+/////////////////////////////////////////////////////////////////////////////
+class TElementMatch
+{
+public:
+    virtual ~TElementMatch() = default;
+
+    // Whether the element 'oldIndex' of the old array is the same as the element 'index' of the new one
+    virtual bool IsSame(std::size_t oldIndex, std::size_t index) const = 0;
+};
+
+//---------------------------------------------------------------------------
+
+// For each element of a new array of 'size' elements, the element of an old array of 'oldSize' elements that becomes
+// it (NoIndex for a new one), so that a merge of the old array into the new one changes the least: first the elements
+// that 'match' says are the same as new ones, as the longest common subsequence (the ones that are the same at the
+// start and the end, then the longest common subsequence of the rest when it has at most 250000 cells, 500 by 500
+// elements, else none of the rest), then between two of those, the others paired in order. The elements of the old
+// array that no new one has are removed.
+TIndexVector Partners(std::size_t oldSize, std::size_t size, TElementMatch const& match);
+
+// For arrays of a document's values, each by its address: the elements of the array that the elements of the new
+// array set in its place become, as Partners() gives them (see TASWTomlDocument::SetValue())
+using TPartnersMap = std::map<TASWTomlValue const*, TIndexVector>;
+
 } // namespace Detail
 
 
@@ -287,6 +319,10 @@ private:
     // reading options of 'options', as Parse() describes; on failure, they are left as they were
     static TASWTomlResult ReadText(std::string_view text, TASWTomlOptions const& options, Detail::TDocModel& model,
         Detail::TDocIndex& index, TASWTomlValue& root);
+
+    // SetValue() with 'values', the arrays that 'partners' has (nullptr for none) paired as it says
+    TASWTomlResult SetValueWith(TASWTomlPath const& path, TASWTomlValue const& value,
+        TASWTomlValueOptions const& values, Detail::TPartnersMap const* partners);
 
 public:
     // An empty document with the default options: no keys, tables or byte order mark, so ToText() is empty
@@ -487,6 +523,13 @@ public:
     // failure nothing changes. Throws only std::bad_alloc, and then nothing changes either.
     TASWTomlResult SetValue(TASWTomlPath const& path, TASWTomlValue const& value);
     TASWTomlResult SetValue(TASWTomlPath const& path, TASWTomlValue const& value, TASWTomlValueOptions const& values);
+
+    // As SetValue() with 'values', but the elements of each array of the document's values that 'partners' has (by its
+    // address: a value Find() or GetRoot() gives, or a part of one) are paired with the elements of the array set in
+    // its place as 'partners' says, instead of by identical values (see Detail::Partners()): for a setting's Set(),
+    // which pairs them by what its type knows of them (see TASWTomlSetting)
+    TASWTomlResult SetValue(TASWTomlPath const& path, TASWTomlValue const& value, TASWTomlValueOptions const& values,
+        Detail::TPartnersMap const& partners);
 
     // The document as text, as its writing options say: a UTF-8 byte order mark (with EBomMode::Auto, when the text
     // that was read had one), then the text. With ELineEnding::Auto every line break stays as it was; LF, CRLF and
