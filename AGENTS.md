@@ -16,7 +16,7 @@ ASWToml is a thread-safe, dependency-free C++20 library for reading and writing 
 - `third_party/asw-unit-tests/` is the ASWUnitTests framework, a git submodule pinned to a release tag. Never edit files in it.
 - `.github/workflows/ci.yml` builds and runs the unit tests on Windows (MSVC, MinGW) and Linux (GCC, Clang) at C++20, plus Linux Clang builds with ThreadSanitizer and with AddressSanitizer + UBSan (`ASWTOML_SANITIZE`); every job also builds and runs the example, and the non-sanitizer jobs check the installed CMake package (`tests/package/`). A Linux GCC coverage job (informational, it never fails the run) shows the library's line coverage on its summary page and uploads an HTML report.
 - `Deploy.bat` copies the library sources, build files, docs and example to a folder; it lists every file explicitly.
-- `README.md` contains repo details: status, design, features, quick start, project setup, API overview, links to the docs, versions and tests.
+- `README.md` contains repo details: design, features, quick start, project setup, API overview, links to the docs, versions and tests.
 - `CHANGELOG.md` records notable changes per release (see Changelog below).
 - `CONTRIBUTING.md` contains the guidelines for contributors (issues, branches, commit history, pull requests, and bug reports); it defers to this file for coding rules, so keep the two consistent.
 - `.uncrustify.cfg` and `.githooks/` define the repository formatting workflow.
