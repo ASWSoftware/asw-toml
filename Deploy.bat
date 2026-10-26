@@ -46,6 +46,17 @@ if errorlevel 1 exit /b 1
 call :CopyFile "cmake\ASWTomlConfig.cmake.in" "%TARGET_DIR%\cmake\ASWTomlConfig.cmake.in"
 if errorlevel 1 exit /b 1
 
+call :CopyFile "docs\Format.md" "%TARGET_DIR%\docs\Format.md"
+if errorlevel 1 exit /b 1
+call :CopyFile "docs\Guarantees.md" "%TARGET_DIR%\docs\Guarantees.md"
+if errorlevel 1 exit /b 1
+call :CopyFile "docs\Options.md" "%TARGET_DIR%\docs\Options.md"
+if errorlevel 1 exit /b 1
+call :CopyFile "docs\Settings.md" "%TARGET_DIR%\docs\Settings.md"
+if errorlevel 1 exit /b 1
+call :CopyFile "docs\Types.md" "%TARGET_DIR%\docs\Types.md"
+if errorlevel 1 exit /b 1
+
 call :CopyFile "ASWToml\ASWToml_Base.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Base.cpp"
 if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Base.h" "%TARGET_DIR%\ASWToml\ASWToml_Base.h"

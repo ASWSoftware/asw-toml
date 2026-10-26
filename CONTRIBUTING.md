@@ -36,9 +36,9 @@ code (`third_party/`) is only used by the unit tests.
 5. Check compiler warnings and errors; a change should not introduce new ones.
 6. If you touched platform-specific code (`#if defined(_WIN32)` or similar), validate both the
    Windows and the portable path if you can. CI builds and runs the tests on Windows (MSVC, MinGW)
-   and Linux (GCC, Clang), plus Linux builds with ThreadSanitizer and with AddressSanitizer + UBSan;
-   a pull request should pass all of them. [README.md](README.md#unit-tests) shows how to run a
-   sanitizer build yourself.
+   and Linux (GCC, Clang), plus Linux builds with ThreadSanitizer and with AddressSanitizer + UBSan,
+   and runs the example program (`example/`) in each of them; a pull request should pass all of
+   them. [README.md](README.md#unit-tests) shows how to run a sanitizer build yourself.
 7. Keep `.cpp` and `.h` files ASCII-only. MSVC reads a source file without a BOM in the system's
    code page, so other characters can change meaning. In tests, write non-ASCII text with escapes
    (e.g. `"\xCE\xBB"` for UTF-8 bytes, or `L"\x03BB"` for a Windows path).
@@ -46,8 +46,8 @@ code (`third_party/`) is only used by the unit tests.
    the Changelog rules in `AGENTS.md`). Describe the effect on someone using the library; for a
    breaking change, say what callers must change. Test-only changes need no entry. Don't change the
    version in `ASWToml/ASWToml_Version.h`; that happens when a release is prepared.
-9. If the change affects what the README describes, update it too, and compile each code snippet
-   you add or change.
+9. If the change affects what the README or the documentation in `docs/` describe, update them too,
+   and compile each code snippet you add or change.
 
 ## Formatting
 

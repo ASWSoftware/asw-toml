@@ -1,40 +1,14 @@
 # ASWToml - https://github.com/ASWSoftware/asw-toml
 
 ASWToml is a thread-safe, dependency-free C++20 library for reading and writing TOML config files on
-Windows and Linux, which keeps the file's comments and layout.
+Windows and Linux, which keeps the file's comments and layout, and lets an application declare its
+settings in one place.
 
 ## Status
 
-ASWToml is in development toward 1.0.0; the `develop` branch carries `1.0.0-dev.N` versions. So far
-it has the project structure, the version (`ASWToml_Version.h`), the CMake target and package, the
-unit-test projects and CI, and the foundations the rest builds on: the shared result and message
-types (`ASWToml_Types.h`), the options (`ASWToml_Options.h`) and the file layer with its UTF-8 path
-conversions (`ASWToml_File.h`). It also has the TOML values: `TASWTomlValue` and the date and time
-types (`ASWToml_Value.h`), and the reading and writing of TOML's strings, numbers, booleans, dates
-and times. And it reads whole TOML 1.1 documents: `TASWTomlDocument` (`ASWToml_Document.h`) keeps
-every byte of a text and writes it back unchanged, applies TOML's table rules, and gives each value
-by its path (`TASWTomlPath`, `ASWToml_Path.h`), checked against every file of toml-test's TOML 1.1
-list. And it edits them, changing only the text an edit needs: values set in place in their own
-form, new keys and tables where their table is written, keys, tables and elements removed and
-renamed, whole tables and arrays merged so only what differs changes, and the comments above keys
-and tables and at the end of their lines. And it converts TOML values to and from C++ types
-(`TASWTomlConverter<T>`, `ASWToml_Converters.h`): strings, paths, booleans, every integer type,
-`float` and `double`, enums by name, the `std::chrono` dates, time points and times of day,
-`std::vector`, `std::array`, sets, pairs and tuples as arrays, maps (with string, integer or enum
-keys) as tables, and structs through a list of their fields, so a `std::vector` of a struct is an
-array of tables. `TASWBaseToml` (`ASWToml_Base.h`) is the TOML object an application uses, from any
-number of threads: it loads a file and saves it back (atomically, with an optional backup), reads
-and writes typed values by path (`GetValue()`, `TryGetValue()`, `SetValue()` and `Append()`), and
-reports warnings and errors to a log callback. Code that only reads and writes values can take its
-interface, `IASWToml` (`ASWToml_Interface.h`). An application's settings class derives from
-`TASWBaseToml` and declares each setting once (`TASWTomlTable` and `TASWTomlSetting<T>`,
-`ASWToml_Settings.h`), with its table, key, type, default value, comment and options. Loading brings
-the file up to date: missing keys are added with their comments, keys renamed from their earlier
-names, values that aren't valid replaced by their defaults, and structs and arrays of tables brought
-up to date field by field, keeping the keys the application doesn't know. Each setting reads and
-writes its value in the document, from any thread. An example program and the rest of the
-documentation come next. [CHANGELOG.md](CHANGELOG.md) lists what each change adds. The interface
-may change in any way until 1.0.0.
+ASWToml is in development toward 1.0.0: the `develop` branch carries `1.0.0-dev.N` versions, and
+the interface may change in any way until 1.0.0. [CHANGELOG.md](CHANGELOG.md) lists what each
+change adds.
 
 ## Design
 
@@ -60,33 +34,50 @@ whose design it follows. Its goals:
   invalid value, a file that can't be written) go to a log callback, so the application logs them
   its own way.
 
-## Planned for 1.0
+## Features
 
-- TOML 1.1.0 read, and so every TOML 1.0 file; text the library writes uses only syntax that TOML
-  1.0 also reads. Checked against the official [toml-test](https://github.com/toml-lang/toml-test)
-  suite.
-- A file that isn't valid TOML (a syntax error, a key or table defined twice, invalid UTF-8) fails
-  to load with the line and column of the first error, and nothing changes.
+- Settings declared once, as members of an application's settings class (`ASWToml::TASWTomlTable`
+  and `ASWToml::TASWTomlSetting<T>`), each with its table, key, type, default value and comment,
+  and optionally a range, a validator, value options of its own (e.g. an integer written in
+  hexadecimal) and the earlier names of a renamed key. A struct is a table, and a `std::vector` of
+  one an array of tables (`[[servers]]`).
+- Loading brings the file up to date: a missing key is added with its default value and comment, a
+  value that isn't valid is replaced by the default, an old key is renamed, and a struct or an
+  array of tables is repaired field by field, keeping the user's own keys; each change is reported,
+  so `IsModified()` says whether the file needs saving.
+- TOML 1.1.0 read, and so every TOML 1.0 file; the text the library writes uses only syntax that
+  TOML 1.0 also reads. Checked against every file of the official
+  [toml-test](https://github.com/toml-lang/toml-test) suite's TOML 1.1 list. A text that isn't
+  valid TOML fails to load at its first error, with its line and column, and nothing changes.
+- A file that is loaded and saved without changes is written back byte for byte. An edit changes
+  only the text it needs, in the form the file already uses: a value in place, in its own form
+  (`0xFF` stays hexadecimal); a new key after the last key of its table, as a dotted key, or inside
+  the braces of an inline table; a new table as a `[header]`; a whole table or array merged, so
+  only what differs changes.
 - Tables however they are written (`[header]`, dotted keys, inline tables) and arrays of tables,
-  addressed by a path in TOML's dotted-key syntax (`server."host name".port`) or as a list of parts,
-  with indexes into arrays of tables (`products[0].name`). Keys compare case-sensitively, as TOML
-  specifies.
-- Edits in the form the file already uses: a new key after the last key of its table, as a dotted
-  key or inside the braces of an inline table when the table is written that way; a new table as a
-  `[header]`. The file's, a table's and a key's comments, and end-of-line comments.
-- Typed values, the same in any locale: strings, booleans, every integer type with range checks,
-  `float` and `double`, TOML's four date and time types as C++20 `std::chrono` types, enums by name,
-  `std::filesystem::path`, `std::u8string`, `std::vector<T>`, `std::array`, sets, pairs and tuples
-  as arrays, `std::map` and `std::unordered_map` (string, integer or enum keys) as tables, and
-  structs through a list of their fields, so a `std::vector` of a struct is an array of tables; plus
-  your own types.
-- An interface, `ASWToml::IASWToml`, and its implementation, `ASWToml::TASWBaseToml`, which an
-  application's settings class derives from, declaring its tables and settings
-  (`TASWTomlTable`, `TASWTomlSetting<T>`), arrays of tables included.
-- UTF-8, with or without a byte order mark (kept as the file had it); LF and CRLF line endings
-  (kept, even mixed); a size limit on loads and a nesting limit for tables, arrays and inline
-  tables.
-- Atomic saves with an optional backup, and UTF-8 file paths on Windows and Linux.
+  addressed by a path in TOML's dotted-key syntax (`server."host name".port`, `products[0].name`)
+  or as a list of parts. Keys compare byte for byte, as TOML says. The file's, a table's and a key's
+  comments, and end-of-line comments.
+- UTF-8, with or without a byte order mark (kept as the file had it). LF and CRLF line endings,
+  kept even when mixed; a new line gets the file's own (the platform's for a new file), or one
+  chosen. A size limit on loads and a nesting limit that keeps a file from overflowing the stack.
+- Typed values, the same in any locale: strings, file paths (UTF-8 on every platform), booleans,
+  every integer type with range checks, `float` and `double` (the shortest text that reads back the
+  same), TOML's four date and time types and the `std::chrono` ones, enums by name, `std::vector`,
+  `std::array`, sets, pairs and tuples, maps with string, integer or enum keys, and structs, plus
+  your own types (`TASWTomlConverter<T>`).
+- Values by path too (`GetValue()`, `TryGetValue()`, `SetValue()` and `Append()`), e.g. for tables
+  a settings class doesn't declare, and `ASWToml::TASWTomlDocument`, the document on its own, for
+  TOML text without a file or a lock.
+- Safe to use from any number of threads with no locking by the application. Loading and saving
+  read and write the file without holding the lock that lookups and edits use.
+- Atomic saves (a crash while saving leaves the previous file whole), an optional backup, missing
+  folders created, and UTF-8 file paths on Windows and Linux (`ASWToml::PathToUtf8()` and
+  `Utf8ToPath()` convert a `std::filesystem::path`).
+- No exceptions from loading, saving or editing: each returns a `TASWTomlResult`, and warnings and
+  errors (with the file, line, column and path) go to the application's log callback.
+  [docs/Settings.md](docs/Settings.md) has a callback that sends them to ASWLog.
+- A CMake target and package, and an example program with CMake and RAD Studio (Win64x) projects.
 
 # Donations:
 
@@ -97,6 +88,119 @@ PayPal: donate@aswsoftware.com
 Bitcoin: 15rKqL1numHJyE36ottMbhs5cmCjJkuowV
 
 # How to Use
+
+## Quick start
+
+```cpp
+#include <cstdint>
+#include <iostream>
+#include <string>
+#include <tuple>
+#include <vector>
+
+#include "ASWToml_Base.h"
+#include "ASWToml_Settings.h"
+
+// A server the application connects to; a std::vector of them is an array of tables
+struct TServer
+{
+    std::string Host;
+    std::uint16_t Port = 443;
+};
+
+inline auto ASWTomlFields(TServer const&)
+{
+    return std::tuple{ ASWToml::Field("host", &TServer::Host), ASWToml::Field("port", &TServer::Port) };
+}
+
+class TAppSettings : public ASWToml::TASWBaseToml
+{
+public:
+    // The root table "" holds the keys before the first header; its comment is the file comment
+    ASWToml::TASWTomlTable FileTop{ *this, "", "Settings of MyApp." };
+
+    ASWToml::TASWTomlTable General{ *this, "general", "What the application looks like." };
+    ASWToml::TASWTomlSetting<std::string> UserName{ General, "user_name", "Guest", "The name in the title bar." };
+    ASWToml::TASWTomlSetting<bool> ShowToolbar{ General, "show_toolbar", true };
+
+    ASWToml::TASWTomlTable Logging{ *this, "logging" };
+    ASWToml::TASWTomlSetting<unsigned> Level{ Logging, "level", 2, "From 0 (errors only) to 4 (everything).",
+        { .Min = 0, .Max = 4 } };
+    // Called log_days in an earlier version of the application, so Load() renames that key
+    ASWToml::TASWTomlSetting<unsigned> DaysKept{ Logging, "days_kept", 30,
+        "How many days the logs are kept; 0 keeps them forever.", { .OldKeys = { "log_days" } } };
+
+    // An array of tables, [[servers]]
+    ASWToml::TASWTomlSetting<std::vector<TServer> > Servers{ FileTop, "servers",
+        { TServer{ "main.example.com", 443 } }, "The servers, tried in order." };
+};
+
+// Where the library reports warnings, errors and notes; an application writes them to its log
+void LogMessage(ASWToml::TASWTomlMessage const& message)
+{
+    std::cout << ASWToml::ToString(message) << "\n";
+}
+
+int main()
+{
+    TAppSettings settings;
+    settings.SetLogCallback(LogMessage);
+
+    // On the first run the file is missing: Load() returns FileNotFound, reported as a warning, and the document
+    // holds every setting with its default value and comment
+    ASWToml::TASWTomlResult const loaded = settings.Load("MyApp.toml");
+    if (!loaded.IsOk() && loaded.Code != ASWToml::ETomlCode::FileNotFound)
+        return 1; // A file that can't be read, or isn't valid TOML: reported to LogMessage too
+
+    if (settings.IsModified()) // Load() added or repaired a setting: the file needs saving
+        static_cast<void>(settings.Save());
+
+    std::cout << "Hello, " << settings.UserName.Get() << "\n";
+    static_cast<void>(settings.ShowToolbar.Set(false));
+    static_cast<void>(settings.Level.Set(7)); // Out of range: fails, is reported as an error, changes nothing
+
+    for (TServer const& server : settings.Servers.Get())
+        std::cout << "Server " << server.Host << ":" << server.Port << "\n";
+
+    return settings.Save().IsOk() ? 0 : 1;
+}
+```
+
+writes `MyApp.toml` (with the platform's line endings):
+
+```toml
+# Settings of MyApp.
+
+# What the application looks like.
+[general]
+# The name in the title bar.
+user_name = "Guest"
+show_toolbar = false
+
+[logging]
+# From 0 (errors only) to 4 (everything).
+level = 2
+# How many days the logs are kept; 0 keeps them forever.
+days_kept = 30
+
+# The servers, tried in order.
+[[servers]]
+host = "main.example.com"
+port = 443
+```
+
+On the next run the file holds every setting, so `Load()` changes nothing. When a user has edited
+it, `Load()` repairs it and reports each change: with `level = 9`, `log_days = 7` and a server's
+`port = 70000` in the file, it reports that the default value 2 is used for `logging.level` and 443
+for `servers[0].port`, and that `log_days` is renamed to `days_kept`, adds any missing key and
+comment, and `IsModified()` is `true`. What the settings class doesn't declare (a user's own keys
+and tables with their comments, and a server's other keys) stays as it is; the comments it
+declares are written as the code has them (see `Writing.CommentPolicy` in
+[docs/Options.md](docs/Options.md)).
+
+The `example/src/main.cpp` program shows more: every kind of setting, a file a user edited, two
+threads, values the settings class doesn't declare, and the document on its own.
+[docs/Settings.md](docs/Settings.md) describes settings classes in full.
 
 ## Adding ASWToml to a project
 
@@ -164,6 +268,66 @@ includes them as it does from the sources (`#include "ASWToml_Version.h"`). A re
 met by any later release with the same major version. The install rules are on by default only when
 ASWToml is the top-level project; set `ASWTOML_INSTALL` to change that. `tests/package` is a small
 project that builds against an installed copy; CI runs it.
+
+## API overview
+
+**Classes.** Everything is in the `ASWToml` namespace; a name in `ASWToml::Detail` is internal.
+
+| Class | Header | What it is |
+|---|---|---|
+| `TASWBaseToml` | `ASWToml_Base.h` | The TOML object: a document behind a reader/writer lock, with its file, options and log callback. An application's settings class derives from it. |
+| `IASWToml` | `ASWToml_Interface.h` | The interface `TASWBaseToml` implements, for code that only reads and writes values. |
+| `TASWTomlTable`, `TASWTomlSetting<T>` | `ASWToml_Settings.h` | A table and a setting, declared as members of a settings class. `TASWTomlSettingOptions<T>` gives a setting its range, validator and other options. |
+| `TASWTomlDocument` | `ASWToml_Document.h` | The lossless model of a TOML text, with its lookups, edits and comments. A copyable value, with no file and no lock. |
+| `TASWTomlValue` | `ASWToml_Value.h` | A TOML value of any type (`ETomlType`), e.g. the value at a key or a whole table; `TASWTomlOffsetDateTime`, `TASWTomlLocalDateTime` and `TASWTomlLocalTime` are TOML's date and time types. |
+| `TASWTomlPath` | `ASWToml_Path.h` | The path of a table, a key or an element of an array, made from a string (`server."host name".port`) or a list of parts. |
+| `TASWTomlOptions` | `ASWToml_Options.h` | How text is read, written and saved, and how values are written. |
+| `TASWTomlConverter<T>` | `ASWToml_Converters.h` | Converts a C++ value to and from a `TASWTomlValue`; specialize it for a type of your own. An enum is written by name when it has `ASWTomlEnumNames()` (`TASWTomlEnumName<T>`), and a struct is a table when it has `ASWTomlFields()` (`Field()`, `OptionalField()`). |
+| `TASWTomlResult`, `TASWTomlMessage` | `ASWToml_Types.h` | The outcome of an operation, and a warning, error or note reported to the log callback, each with its `ETomlCode`. |
+
+`PathToUtf8()` and `Utf8ToPath()` (`ASWToml_File.h`) convert a `std::filesystem::path` to and from
+the UTF-8 path text the library takes, and `ASWToml_Version.h` has the version.
+
+**Files.** On a `TASWBaseToml`: `Load(path)`, `Save()`, `SaveAs(path)`, `IsModified()` and
+`GetFilePath()`; `LoadText(text)` and `ToText()` for a text; `SetOptions()` (before `Load()`) and
+`GetOptions()`; `SetLogCallback()`.
+
+**Settings.** On a `TASWTomlSetting<T>`: `Get()`, `Set(value)` (which fails for a value out of the
+range or one the validator refuses), `Reset()` and `IsPresent()`. Its options, with designated
+initializers: `{ .Min = 0, .Max = 4 }`, and `.Validator`, `.Optional`, `.OldKeys` and `.Values`.
+
+**Values by path**, e.g. of tables a settings class doesn't declare: `GetValue(path, default)`,
+`TryGetValue(path, value)` (which returns why it couldn't), `SetValue(path, value)` and
+`Append(path, value)`. `Contains()`, `GetKeyNames()`, `Remove()` and `Rename()`. The comments:
+`GetComment()` and `GetTrailingComment()` (the root path's comment is the file comment), and their
+`Set` methods.
+
+**The document.** `GetDocument()` gives a copy of a TOML object's document. A `TASWTomlDocument` of
+its own has `Parse()` and `ToText()`, `Find()` and `GetRoot()`, and the same edits and comments
+(with `SetComments()` for several at once).
+
+**Results.** Each operation that can fail returns a `TASWTomlResult` (`IsOk()` when it succeeded,
+else with its `Code` and `Message`) and reports the failure to the log callback, without throwing.
+`ToString()` names a code and writes a message as one line. The header comments document every
+class and operation.
+
+## Documentation
+
+- [docs/Format.md](docs/Format.md): the TOML ASWToml reads and writes: what a text with an error
+  does, tables and paths, comments, encoding and line endings, limits, what an edit changes, and
+  how each new value is written.
+- [docs/Types.md](docs/Types.md): the C++ types ASWToml converts and their TOML values: numbers,
+  strings, dates and times, enums, containers, maps, structs, `TASWTomlValue`, and a converter of
+  your own.
+- [docs/Options.md](docs/Options.md): every option, its default and what it does, and when options
+  apply.
+- [docs/Settings.md](docs/Settings.md): settings classes: declaring and using settings, what
+  `Load()` does, structs and arrays of tables, comments, threads, the raw API alongside, the
+  messages, and sending them to ASWLog.
+- [docs/Guarantees.md](docs/Guarantees.md): what is returned and reported instead of thrown, thread
+  safety, what callbacks may do, object lifetimes, nesting and stack, saving and crashes, and every
+  `ETomlCode`.
+- [CHANGELOG.md](CHANGELOG.md): the changes in each release.
 
 ## Versions
 

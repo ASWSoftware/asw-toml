@@ -337,5 +337,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   library reports and the file, and returns 0 when every step did what it shows. Build it with
   `example/cmake`, with the root project and `-DASWTOML_BUILD_EXAMPLE=ON`, or with RAD Studio's
   `example/rad370/ASWTomlExample.cbproj` (Win64x).
+- The documentation, in `docs/`: `Format.md` (the TOML ASWToml reads and writes, what an edit
+  changes and how each new value is written), `Types.md` (the C++ types it converts, and a
+  converter of your own), `Options.md` (every option, its default and what it does), `Settings.md`
+  (a guide to settings classes, with a log callback that sends the messages to ASWLog) and
+  `Guarantees.md` (errors, threads, callbacks, lifetimes, nesting and stack, saving and crashes,
+  and every `ETomlCode`). The README has a quick start, an API overview and links to them.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop
