@@ -237,6 +237,7 @@ ASW_TEST(TTest_ASWToml_WritingOptions, Defaults_MatchDocumentedValues)
     CheckEquals(ASWToml::ELineEnding::Auto, options.LineEnding, "LineEnding");
     CheckEquals(ASWToml::EBomMode::Auto, options.Bom, "Bom");
     CheckTrue(options.BlankLineBeforeNewTable, "BlankLineBeforeNewTable should be on");
+    CheckEquals(ASWToml::ECommentPolicy::CodeWins, options.CommentPolicy, "CommentPolicy");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_WritingOptions, ToString_EnumNames)
@@ -253,6 +254,12 @@ ASW_TEST(TTest_ASWToml_WritingOptions, ToString_EnumNames)
     CheckEquals(std::string("Never"), std::string(ASWToml::ToString(ASWToml::EBomMode::Never)), "EBomMode::Never");
     CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::EBomMode>(99))),
         "an unknown EBomMode");
+    CheckEquals(std::string("CodeWins"), std::string(ASWToml::ToString(ASWToml::ECommentPolicy::CodeWins)),
+        "ECommentPolicy::CodeWins");
+    CheckEquals(std::string("FileWins"), std::string(ASWToml::ToString(ASWToml::ECommentPolicy::FileWins)),
+        "ECommentPolicy::FileWins");
+    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::ECommentPolicy>(99))),
+        "an unknown ECommentPolicy");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_WritingOptions, Validate_AcceptsCommentPrefixVariants)
@@ -319,6 +326,10 @@ ASW_TEST(TTest_ASWToml_WritingOptions, Validate_RejectsUnknownEnumValues)
     options = ASWToml::TASWTomlWritingOptions();
     options.Bom = static_cast<ASWToml::EBomMode>(7);
     CheckInvalid(options, "Writing.Bom", "an unknown EBomMode");
+
+    options = ASWToml::TASWTomlWritingOptions();
+    options.CommentPolicy = static_cast<ASWToml::ECommentPolicy>(7);
+    CheckInvalid(options, "Writing.CommentPolicy", "an unknown ECommentPolicy");
 }
 //---------------------------------------------------------------------------
 

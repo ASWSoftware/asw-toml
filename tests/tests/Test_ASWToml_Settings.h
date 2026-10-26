@@ -59,6 +59,51 @@ public:
     void TearDown_Test(ITestCase& testCase) override;
 };
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_SettingsLoad
+//
+// What Load() and LoadText() do with the settings and tables bound to the object: missing keys added, values that
+// aren't valid replaced, comments as the CommentPolicy says, the edits they take, what is reported, and the bindings'
+// lifetimes
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_SettingsLoad : public TAutoTestGroup<TTest_ASWToml_SettingsLoad>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_SettingsLoad> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Bindings_FollowTheirLifetimes();
+    void Test_Comments_CodeWinsReplacesTheFilesComments();
+    void Test_Comments_EmptyCodeCommentKeepsTheFiles();
+    void Test_Comments_FileWinsKeepsTheFilesComments();
+    void Test_Comments_WithoutALineOfTheirOwnAreSkipped();
+    void Test_Load_AddsMissingKeysInDeclarationOrder();
+    void Test_Load_CommentThatCantBeWrittenIsAnError();
+    void Test_Load_DeclaredTableThatIsntOneIsReplaced();
+    void Test_Load_FailureAppliesNothing();
+    void Test_Load_InvalidDefaultIsAnError();
+    void Test_Load_LeavesAValidDocumentAsItIs();
+    void Test_Load_MessagesNameTheFileLoaded();
+    void Test_Load_MissingFileGetsEverySetting();
+    void Test_Load_OptionalKeyIsNotAdded();
+    void Test_Load_PathsThatCantBeUsedAreErrors();
+    void Test_Load_ReplacesAnInvalidValueWithTheDefault();
+    void Test_Load_TablesWithoutSettingsGetTheirComments();
+    void Test_Load_WriteFailuresAreErrors();
+    void Test_LoadText_AppliesTheSettings();
+    void Test_SetOptions_DoesntApplyTheSettings();
+
+public:
+    TTest_ASWToml_SettingsLoad();
+    ~TTest_ASWToml_SettingsLoad() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------

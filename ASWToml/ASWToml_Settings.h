@@ -9,7 +9,8 @@ and TASWTomlSetting<T>, one setting declared once with its table, key,
 type, default value, comment and options (TASWTomlSettingOptions<T>: a
 range, a validator, its own value options). A setting reads and writes its
 value in the document of the TOML object that owns its table
-(TASWBaseToml), so it is thread-safe as that object is.
+(TASWBaseToml), so it is thread-safe as that object is, and the object's
+Load() and LoadText() apply the settings to the document they read.
 
 Requires C++ 20 or higher.
 
@@ -28,15 +29,18 @@ SPDX-License-Identifier: MIT
 #define ASWToml_SettingsH
 //---------------------------------------------------------------------------
 #include <concepts>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
+#include "ASWToml_Document.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
@@ -93,9 +97,119 @@ using TRangeEnd = std::conditional_t<LessComparable<T>, std::optional<T>, TNoRan
 // doesn't have, or that can't be written): "The value 9 is out of the setting's range: it must be from 0 to 4."
 TASWTomlResult OutOfSettingRange(TASWTomlValue const& value, TASWTomlValue const* min, TASWTomlValue const* max);
 
+// Whether 'path' can be the path of a table of settings: a valid path of key parts only (the root path too)
+bool IsSettingsTablePath(TASWTomlPath const& path) noexcept;
+
 // The InvalidValue result of 'value', which a setting's validator refused with 'problem': "The value "" isn't valid:
 // it can't be empty." (a '.' is added unless 'problem' ends with one)
 TASWTomlResult RefusedValue(TASWTomlValue const& value, std::string_view problem);
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TSettingChange
+//
+// A value that applying a setting gives its key (see TSettingsApply): its default, for a key that is missing or whose
+// value isn't valid
+/////////////////////////////////////////////////////////////////////////////
+struct TSettingChange
+{
+    TASWTomlPath Path; // The setting's path
+    std::string Key; // The setting's key in its table
+    TASWTomlValue Value;
+    std::optional<TASWTomlValueOptions> Values; // The setting's own value options; none for the document's
+
+    // The index of the change's message in TSettingsApply's messages: KeyAdded for a key that is added, or a message
+    // with the code Ok, which is dropped, for a value that is replaced; replaced by an Error when the write fails
+    std::size_t Message = 0;
+};
+
+// The changes of one table, in the order of their settings
+using TSettingChangeVector = std::vector<TSettingChange>;
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TSettingComment
+//
+// A comment that applying the settings writes, as the comment policy says, once the values are written (see
+// TSettingsApply): a setting's, or a table's (the file comment for the root table)
+/////////////////////////////////////////////////////////////////////////////
+struct TSettingComment
+{
+    TASWTomlPath Path;
+    std::string Text;
+    bool IsTable = false; // Whether it is a table's: written only when there is a table at Path
+};
+
+// The comments to write, in order
+using TSettingCommentVector = std::vector<TSettingComment>;
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTableChanges
+//
+// The changes of the settings of one table (see TSettingsApply)
+/////////////////////////////////////////////////////////////////////////////
+struct TTableChanges
+{
+    TASWTomlPath Path;
+    TSettingChangeVector Changes;
+};
+
+// The tables that have changes, in the order of their first setting
+using TTableChangesVector = std::vector<TTableChanges>;
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TSettingsApply
+//
+// Applies the settings of a TOML object to a document that Load() or LoadText() read, before anyone sees it (see
+// TASWBaseToml::ApplySettings()): each setting adds the value its key gets (AddValue()), its messages (AddMessage())
+// and its comment (AddComment()), and so does each table its comment; Write() then writes the values with one edit
+// per table (a setting with value options of its own with one of its own), and all the comments with one more, as
+// Writing.CommentPolicy says. Not copyable.
+/////////////////////////////////////////////////////////////////////////////
+class TSettingsApply
+{
+private:
+    TASWTomlDocument& m_Document;
+    TTableChangesVector m_Tables;
+    TSettingCommentVector m_Comments;
+    TMessageVector m_Messages; // In order; one with the code Ok is dropped (see TSettingChange::Message)
+
+    // Writes 'm_Comments' that the policy asks for, in one edit, or when that fails, one at a time: one that has no
+    // line of its own (InvalidArgument: e.g. a key in an inline table) is skipped, and any other failure is an Error
+    void WriteComments();
+
+    // Writes the changes of 'table': those without value options of their own merged into the table at its path in one
+    // edit (a value there that isn't a table is first removed, with a Warning), or, when that fails, one at a time;
+    // then the others, one at a time. A change that fails replaces its message with an Error.
+    void WriteTable(TTableChanges const& table);
+
+public:
+    // Applies settings to 'document'
+    explicit TSettingsApply(TASWTomlDocument& document);
+    TSettingsApply(TSettingsApply const&) = delete;
+    TSettingsApply& operator=(TSettingsApply const&) = delete;
+
+    // Adds 'text' as the comment of 'path', a setting's or (with 'isTable') a table's; an empty 'text' adds nothing
+    void AddComment(TASWTomlPath const& path, std::string const& text, bool isTable);
+
+    // Adds 'message', which Write() gives in order with the others
+    void AddMessage(TASWTomlMessage message);
+
+    // Adds 'value' as the value of the key 'key' at 'path' in the table at 'tablePath', written with 'values' (the
+    // setting's own value options; nullptr for the document's), and 'added' (when the key is missing: its KeyAdded
+    // message; nullptr for a value that is replaced)
+    void AddValue(TASWTomlPath const& tablePath, TASWTomlPath const& path, std::string const& key, TASWTomlValue value,
+        TASWTomlValueOptions const* values, TASWTomlMessage const* added);
+
+    // The document the settings are applied to, as it was read (Write() changes it)
+    TASWTomlDocument const& GetDocument() const noexcept;
+
+    // Writes the values, then the comments, to the document, and adds the messages to 'messages', in order. May throw
+    // std::bad_alloc, and then the document may be partly changed: the caller drops it.
+    void Write(TMessageVector& messages);
+};
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -107,7 +221,11 @@ TASWTomlResult RefusedValue(TASWTomlValue const& value, std::string_view problem
 class TSettingBase
 {
 private:
+    friend class ASWToml::TASWBaseToml;
+
+private:
     TASWBaseToml* m_Owner;
+    TASWTomlPath m_TablePath;
     TASWTomlPath m_Path; // The table's path and the key
     std::string m_Key;
     std::string m_Comment;
@@ -116,10 +234,32 @@ private:
     // UTF-8); empty when it can
     std::string m_PathError;
 
+private:
+    // Applies the setting to the document of 'apply', which Load() or LoadText() read (see TASWTomlSetting)
+    virtual void Apply(TSettingsApply& apply) const = 0;
+
 protected:
-    // A setting of key 'key' in table 'table', with comment 'comment'
+    // A setting of key 'key' in table 'table', with comment 'comment'. The derived class registers it with its owner
+    // (Register()) once it is complete, and unregisters it (Unregister()) in its destructor.
     TSettingBase(TASWTomlTable const& table, std::string_view key, std::string_view comment);
     virtual ~TSettingBase() = default;
+
+    // Adds 'result', a failure of applying the setting, to 'apply' as an Error
+    void AddFailure(TSettingsApply& apply, TASWTomlResult const& result) const;
+
+    // Adds to 'apply' the Error that the default value can't be used, as it failed with 'result' (it can't be written,
+    // or the range or the validator refuses it)
+    void AddInvalidDefault(TSettingsApply& apply, TASWTomlResult const& result) const;
+
+    // Adds the setting's comment to 'apply' (none when it has none)
+    void ApplyComment(TSettingsApply& apply) const;
+
+    // Adds to 'apply' the default value 'defaultValue' (written with 'values', the setting's own value options, or
+    // nullptr for the document's) as the key's value, and the setting's comment. With 'problem' (the value there isn't
+    // valid), adds the Warning of DefaultUsedMessage(); without it (the key is missing), the Info that the key is added
+    // (ETomlCode::KeyAdded).
+    void ApplyDefault(TSettingsApply& apply, TASWTomlValue const& defaultValue, TASWTomlValueOptions const* values,
+        TASWTomlResult const* problem) const;
 
     // The UnexpectedException result of Set() for the exception being handled (call it in a catch block), with the
     // setting's path (see IASWToml's CaughtException())
@@ -129,16 +269,22 @@ protected:
     // path that can't be used is reported as an Error (InvalidArgument), and gives false.
     bool FindValue(TASWTomlValue& value) const;
 
+    // The Warning that the default value is used, as the value at the setting's path failed with 'result' (its
+    // converter's, range's or validator's failure, with a Path inside the value): the result's code, its text followed
+    // by " The default value <defaultValue> is used." (or " The default value is used." when 'defaultValue' is nullptr:
+    // it can't be written), and the setting's path joined with the result's
+    TASWTomlMessage DefaultUsedMessage(TASWTomlResult const& result, TASWTomlValue const* defaultValue) const;
+
     TASWBaseToml& GetOwner() const noexcept;
 
     // Ok, or the InvalidArgument result of a setting whose path can't be used, with the reason
     TASWTomlResult PathProblem() const;
 
-    // Reports that Get() gives the default value, as the value at the setting's path failed with 'result' (its
-    // converter's, range's or validator's failure, with a Path inside the value): a Warning with the result's code,
-    // its text followed by " The default value <defaultValue> is used." (or " The default value is used." when
-    // 'defaultValue' is nullptr: it can't be written), and the setting's path joined with the result's. A message
-    // that can't be made (std::bad_alloc) is dropped.
+    // Adds the setting at the end of the ones bound to its owner
+    void Register() const;
+
+    // Reports DefaultUsedMessage() (Get() gives the default value). A message that can't be made (std::bad_alloc) is
+    // dropped.
     void ReportDefaultUsed(TASWTomlResult const& result, TASWTomlValue const* defaultValue) const noexcept;
 
     // Reports 'result', a failure of Set(), as an Error message (see IASWToml::ReportFailure())
@@ -147,6 +293,9 @@ protected:
     // 'result', a failure of the setting's value, with the setting's path in front of its Path (see
     // Detail::PathFailure())
     TASWTomlResult SetFailure(TASWTomlResult result) const;
+
+    // Removes the setting from the ones bound to its owner, waiting for a Load() that is applying it
+    void Unregister() const;
 
     // Sets the value at the setting's path in the owner's document to 'value', written with the value options
     // 'values', as IASWToml's SetValue() does (reporting a failure); a key that it adds gets the setting's comment
@@ -180,7 +329,11 @@ public:
 // parts only, e.g. "logging", "logging.files" or { "hosts", "example.com" }; the root path "" for the keys before the
 // first header) and its comment. Its settings (TASWTomlSetting) take it in their constructors, so it is declared
 // before them, and it must not outlive its owner; both hold when the table and its settings are members of the
-// application's settings class, which derives from TASWBaseToml:
+// application's settings class, which derives from TASWBaseToml. It is bound to its owner from its constructor to its
+// destructor: after the owner's Load() or LoadText() has applied the settings, its comment, if it has one, is set as
+// the options' Writing.CommentPolicy says, when the table is in the document (applying adds no table for its comment
+// alone, but a table a missing setting adds gets it) and has a line of its own for it (not one only dotted keys or
+// longer headers make, nor an inline table):
 //
 //     class TAppSettings : public ASWToml::TASWBaseToml
 //     {
@@ -200,10 +353,11 @@ private:
     std::string m_Comment;
 
 public:
-    // Table 'path' of 'owner', with comment 'comment' ("" for none)
+    // Table 'path' of 'owner', with comment 'comment' ("" for none), bound to 'owner'
     TASWTomlTable(TASWBaseToml& owner, TASWTomlPath const& path, std::string_view comment = std::string_view());
     TASWTomlTable(TASWTomlTable const&) = delete;
     TASWTomlTable& operator=(TASWTomlTable const&) = delete;
+    ~TASWTomlTable();
 
     std::string const& GetComment() const noexcept;
     TASWBaseToml& GetOwner() const noexcept;
@@ -262,7 +416,20 @@ struct TASWTomlSettingOptions
 // from the owner's document and Set() writes it there, so a setting always agrees with the document (with Load(), and
 // with a raw SetValue() of the same key), and any thread may call them, as the owner's operations. A value is valid
 // when it converts, is in the range and the validator accepts it; Get() gives the default value for one that isn't.
-// A setting must not outlive its table's owner (see TASWTomlTable). Neither copyable nor movable.
+// A setting is bound to its owner from its constructor to its destructor, in the order settings are declared. When
+// the owner's Load() or LoadText() has read a document, before anyone sees it, each setting bound to it is applied to
+// it, in that order: a missing key is added with the default value and the setting's comment, reported as an Info
+// message (ETomlCode::KeyAdded), unless the setting is optional (see TASWTomlSettingOptions::Optional); a value that
+// isn't valid is replaced by the default value, reported as a Warning (as Get() reports it), and a valid one is left
+// as it is; the key's comment is set to the setting's (if it has one) as the options' Writing.CommentPolicy says. A
+// table of settings that the document holds as another kind of value is replaced by a table of its settings' default
+// values, with a Warning. So the document then holds every setting with a valid value, and the owner's IsModified()
+// says whether that changed it (whether it needs saving). A default value that can't be written, or that the range or
+// the validator refuses, is reported as an Error, and the key is left as it is. The values are written with one edit
+// per table (a setting with value options of its own with an edit of its own), and the comments with one more. The
+// converter and the validator are called with the owner's file lock held, so they must not call its Load(),
+// LoadText(), Save(), SaveAs() or SetOptions(). SetOptions() doesn't apply the settings. A setting must not outlive
+// its table's owner (see TASWTomlTable). Neither copyable nor movable.
 /////////////////////////////////////////////////////////////////////////////
 template <TomlConvertible T>
 class TASWTomlSetting : public Detail::TSettingBase
@@ -272,6 +439,50 @@ private:
     TASWTomlSettingOptions<T> m_Options;
 
 private:
+    void Apply(Detail::TSettingsApply& apply) const override
+    {
+        TASWTomlResult result = PathProblem();
+        if (!result.IsOk())
+        {
+            AddFailure(apply, result);
+            return;
+        }
+
+        // The setting's own value options, or the document's (the owner's, which it was read with)
+        TASWTomlDocument const& document = apply.GetDocument();
+        TASWTomlValueOptions const* const values = m_Options.Values.has_value() ? &*m_Options.Values : nullptr;
+        TASWTomlValueOptions const options = values != nullptr ? *values : document.GetOptions().Values;
+        TASWTomlValue defaultValue;
+        result = TASWTomlConverter<T>::ToValue(m_Default, defaultValue, options);
+        if (result.IsOk())
+            result = Check(m_Default, defaultValue, options);
+
+        if (!result.IsOk())
+        {
+            AddInvalidDefault(apply, result);
+            return;
+        }
+
+        TASWTomlValue const* const found = document.Find(GetPath());
+        if (found == nullptr)
+        {
+            if (!m_Options.Optional)
+                ApplyDefault(apply, defaultValue, values, nullptr);
+
+            return;
+        }
+
+        T value = m_Default;
+        result = TASWTomlConverter<T>::FromValue(*found, value, options);
+        if (result.IsOk())
+            result = Check(value, *found, options);
+
+        if (result.IsOk())
+            ApplyComment(apply);
+        else
+            ApplyDefault(apply, defaultValue, values, &result);
+    }
+
     // Ok when 'value' (written as 'written') is in the range and the validator accepts it, else the failure
     // (ValueOutOfRange or InvalidValue), with a message that shows 'written'; the range's ends are written with
     // 'options'
@@ -321,6 +532,12 @@ public:
           m_Default(defaultValue),
           m_Options(options)
     {
+        Register();
+    }
+
+    ~TASWTomlSetting() override
+    {
+        Unregister();
     }
 
     // The value at the setting's path in the owner's document, converted with TASWTomlConverter<T> and the value

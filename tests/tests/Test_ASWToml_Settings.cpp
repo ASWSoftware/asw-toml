@@ -24,12 +24,14 @@ SPDX-License-Identifier: MIT
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
+#include "ASWToml_File.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
 #include "ASWToml_Settings.h"
@@ -38,6 +40,7 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "UT_Helper_Converters.h"
 #include "UT_Helper_FailingAlloc.h"
+#include "UT_Helper_TempDir.h"
 //---------------------------------------------------------------------------
 
 // Neither copyable nor movable
@@ -81,7 +84,25 @@ using ASWToml::TMessageVector;
 using ASWToml::TStringVector;
 
 using TLimitMap = std::map<std::string, int>;
+using TNestedVector = std::vector<std::vector<int> >;
 using TServerVector = std::vector<TTestServer>;
+
+// The text a first run of TLoadSettings writes: every setting that isn't optional with its default value and its
+// comment, the tables' comments and the file comment
+constexpr char const* FirstRunText =
+    "# Settings of the test.\n"
+    "\n"
+    "# What it looks like.\n"
+    "[general]\n"
+    "# The name.\n"
+    "name = \"Guest\"\n"
+    "# From 0 to 4.\n"
+    "level = 2\n"
+    "\n"
+    "[logging]\n"
+    "# Days kept.\n"
+    "days = 30\n"
+    "mask = 0xFF\n";
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -102,14 +123,57 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
-// TTestSettings
+// TPreloaded
 //
-// A settings class with a setting of each kind: every message it reports is in Messages, and new lines end with LF
+// A TOML object that is given a text before a derived class's settings are bound to it, so they aren't applied to it:
+// every message it reports is in Messages, and new lines end with LF
 /////////////////////////////////////////////////////////////////////////////
-class TTestSettings : public TASWBaseToml
+class TPreloaded : public TASWBaseToml
 {
 public:
     TMessageVector Messages;
+    bool Parsed = false; // Whether the text parsed
+
+public:
+    explicit TPreloaded(std::string_view text);
+
+    // Value options that write an integer in hexadecimal
+    static TASWTomlValueOptions Hexadecimal();
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TLoadSettings
+//
+// A settings class for what Load() does: a file comment, tables with and without a comment, an optional setting, a
+// range, and value options of a setting's own (see FirstRunText)
+/////////////////////////////////////////////////////////////////////////////
+class TLoadSettings : public TPreloaded
+{
+public:
+    TASWTomlTable Root{ *this, "", "Settings of the test." };
+    TASWTomlTable General{ *this, "general", "What it looks like." };
+    TASWTomlSetting<std::string> Name{ General, "name", "Guest", "The name." };
+    TASWTomlSetting<bool> Cheats{ General, "cheats", false, "", { .Optional = true } };
+    TASWTomlSetting<unsigned> Level{ General, "level", 2, "From 0 to 4.", { .Min = 0, .Max = 4 } };
+
+    TASWTomlTable Logging{ *this, "logging" };
+    TASWTomlSetting<int> Days{ Logging, "days", 30, "Days kept." };
+    TASWTomlSetting<int> Mask{ Logging, "mask", 255, "", { .Values = Hexadecimal() } };
+
+public:
+    explicit TLoadSettings(std::string_view text = std::string_view());
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TTestSettings
+//
+// A settings class with a setting of each kind, whose document is a text as it is (see TPreloaded)
+/////////////////////////////////////////////////////////////////////////////
+class TTestSettings : public TPreloaded
+{
+public:
 
     TASWTomlTable General{ *this, "general", "The general settings." };
     TASWTomlSetting<std::string> Name{ General, "name", "Guest", "The name.", { .Validator = NotEmpty } };
@@ -133,10 +197,7 @@ public:
     TASWTomlSetting<TLimitMap> Limits{ Net, "limits", TLimitMap{ { "a", 1 } } };
 
 public:
-    TTestSettings();
-
-    // Value options that write an integer in hexadecimal
-    static TASWTomlValueOptions Hexadecimal();
+    explicit TTestSettings(std::string_view text = std::string_view());
 
     // The validator of a text that can't be empty
     static std::string NotEmpty(std::string const& value);
@@ -147,15 +208,39 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TSaveAsOnFirst
+//
+// A log callback that adds each message to a vector and, on the first one, saves its TOML object as another file, so
+// the object's file path is that file when the messages after it are reported
+/////////////////////////////////////////////////////////////////////////////
+class TSaveAsOnFirst
+{
+private:
+    TASWBaseToml* m_Toml;
+    std::string m_OtherFile;
+    TMessageVector* m_Messages;
+
+public:
+    TSaveAsOnFirst(TASWBaseToml& toml, std::string otherFile, TMessageVector& messages);
+
+    void operator()(TASWTomlMessage const& message) const;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TSetDuringSave
 //
-// TTestSettings whose saves write no file, but set a setting while the file would be written: the first one Level to
-// 3 (a key added with its comment), the others Zoom to 2.0 (a key that is there, without a comment)
+// TTestSettings whose saves write no file, but set a setting while the file would be written: Level to 3 (a key added
+// with its comment) or Zoom to 2.0 (a key that is there, without a comment)
 /////////////////////////////////////////////////////////////////////////////
 class TSetDuringSave : public TTestSettings
 {
 private:
-    int m_Saves = 0;
+    bool m_AddKey;
+
+public:
+    // Settings of 'text' whose save sets Level when 'addKey' is set, else Zoom
+    TSetDuringSave(std::string_view text, bool addKey);
 
 protected:
     TASWTomlResult WriteFile(std::string const& filePath, std::string_view contents,
@@ -176,8 +261,22 @@ public:
 
 //---------------------------------------------------------------------------
 
+TASWTomlOptions LfOptions();
 std::string MessagesText(TMessageVector const& messages);
 
+//---------------------------------------------------------------------------
+/*
+    LfOptions
+
+    The default options, but new lines end with LF (as TPreloaded's)
+*/
+TASWTomlOptions LfOptions()
+{
+    TASWTomlOptions options;
+    options.Writing.LineEnding = ASWToml::ELineEnding::LF;
+
+    return options;
+}
 //---------------------------------------------------------------------------
 /*
     MessagesText
@@ -191,6 +290,40 @@ std::string MessagesText(TMessageVector const& messages)
         text += ASWToml::ToString(message) + "\n";
 
     return text;
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TPreloaded
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TPreloaded::TPreloaded(std::string_view text)
+{
+    static_cast<void>(SetOptions(LfOptions()));
+    SetLogCallback(TRecorder(Messages));
+    Parsed = LoadText(text).IsOk();
+}
+//---------------------------------------------------------------------------
+TASWTomlValueOptions TPreloaded::Hexadecimal()
+{
+    TASWTomlValueOptions values;
+    values.IntegerBase = EIntegerBase::Hexadecimal;
+
+    return values;
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TLoadSettings
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TLoadSettings::TLoadSettings(std::string_view text)
+    : TPreloaded(text)
+{
 }
 //---------------------------------------------------------------------------
 
@@ -217,20 +350,9 @@ void TRecorder::operator()(TASWTomlMessage const& message) const
 /////////////////////////////////////////////////////////////////////////////
 
 //---------------------------------------------------------------------------
-TTestSettings::TTestSettings()
+TTestSettings::TTestSettings(std::string_view text)
+    : TPreloaded(text)
 {
-    TASWTomlOptions options;
-    options.Writing.LineEnding = ASWToml::ELineEnding::LF;
-    static_cast<void>(SetOptions(options));
-    SetLogCallback(TRecorder(Messages));
-}
-//---------------------------------------------------------------------------
-TASWTomlValueOptions TTestSettings::Hexadecimal()
-{
-    TASWTomlValueOptions values;
-    values.IntegerBase = EIntegerBase::Hexadecimal;
-
-    return values;
 }
 //---------------------------------------------------------------------------
 std::string TTestSettings::NotEmpty(std::string const& value)
@@ -246,16 +368,41 @@ std::string TTestSettings::NotLong(TTestWord const& value)
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TSaveAsOnFirst
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TSaveAsOnFirst::TSaveAsOnFirst(TASWBaseToml& toml, std::string otherFile, TMessageVector& messages)
+    : m_Toml(&toml),
+      m_OtherFile(std::move(otherFile)),
+      m_Messages(&messages)
+{
+}
+//---------------------------------------------------------------------------
+void TSaveAsOnFirst::operator()(TASWTomlMessage const& message) const
+{
+    m_Messages->push_back(message);
+    if (m_Messages->size() == 1)
+        static_cast<void>(m_Toml->SaveAs(m_OtherFile));
+}
+//---------------------------------------------------------------------------
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TSetDuringSave
 /////////////////////////////////////////////////////////////////////////////
 
 //---------------------------------------------------------------------------
+TSetDuringSave::TSetDuringSave(std::string_view text, bool addKey)
+    : TTestSettings(text),
+      m_AddKey(addKey)
+{
+}
+//---------------------------------------------------------------------------
 TASWTomlResult TSetDuringSave::WriteFile(std::string const& /*filePath*/, std::string_view /*contents*/,
     ASWToml::TASWTomlSavingOptions const& /*options*/, TMessageVector& /*warnings*/)
 {
-    ++m_Saves;
-
-    return m_Saves == 1 ? Level.Set(3) : Zoom.Set(2.0);
+    return m_AddKey ? Level.Set(3) : Zoom.Set(2.0);
 }
 //---------------------------------------------------------------------------
 
@@ -311,9 +458,9 @@ void TTest_ASWToml_SettingsAccess::TearDown_Test(ITestCase& /*testCase*/)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Get_InvalidValueGivesTheDefault)
 {
     // Arrange
-    TTestSettings settings;
-    CheckTrue(settings.LoadText("[general]\nlevel = \"x\"\nunnamed = \"Purple\"\n[[net.servers]]\nhost = \"a\"\n"
-        "port = 1\n[[net.servers]]\nhost = \"b\"\nport = \"x\"\n").IsOk(), "the text should parse");
+    TTestSettings settings("[general]\nlevel = \"x\"\nunnamed = \"Purple\"\n[[net.servers]]\nhost = \"a\"\n"
+        "port = 1\n[[net.servers]]\nhost = \"b\"\nport = \"x\"\n");
+    CheckTrue(settings.Parsed, "the text should parse");
 
     // Act
     unsigned const level = settings.Level.Get();
@@ -345,11 +492,11 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Get_InvalidValueGivesTheDefault)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Get_ReadsTheDocument)
 {
     // Arrange
-    TTestSettings settings;
-    CheckTrue(settings.LoadText("[general]\nname = \"Ann\"\ncheats = true\nlevel = 3\nzoom = 1.5\ncolor = \"lime\"\n"
+    TTestSettings settings("[general]\nname = \"Ann\"\ncheats = true\nlevel = 3\nzoom = 1.5\ncolor = \"lime\"\n"
         "folder = 'C:\\data'\ncolumns = [\"a\", \"b\", \"c\"]\nmask = 0x10\nword = \"hello\"\n"
         "[net.server]\nhost = \"h\"\nport = 81\n[net.limits]\nx = 2\n[[net.servers]]\nhost = \"a\"\nport = 1\n"
-        "[[net.servers]]\nhost = \"b\"\nport = 80\nenabled = false\n").IsOk(), "the text should parse");
+        "[[net.servers]]\nhost = \"b\"\nport = 80\nenabled = false\n");
+    CheckTrue(settings.Parsed, "the text should parse");
     TTestServer const first{ "a", 1, true, std::nullopt };
     TTestServer const second{ "b", 80, false, std::nullopt };
     TServerVector const servers{ first, second };
@@ -415,8 +562,7 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, OutOfMemory_SetChangesNothing)
     // Each allocation of a Set() that adds a key with its comment fails in turn, on a new object, until there are none
     for (std::size_t number = 1; number < 10000; ++number)
     {
-        TTestSettings settings;
-        static_cast<void>(settings.LoadText(text));
+        TTestSettings settings(text);
         std::string const which = " (allocation " + std::to_string(number) + ")";
         TASWTomlResult result;
         bool failed = false;
@@ -450,13 +596,13 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, OutOfMemory_SetChangesNothing)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Paths_ThatCantBeUsedAreErrors)
 {
     // Arrange
-    TTestSettings settings;
+    TTestSettings settings("[[servers]]\nx = 5\n");
     TASWTomlTable badTable{ settings, "a..b" };
     TASWTomlTable element{ settings, "servers[0]" };
     TASWTomlSetting<int> inBadTable{ badTable, "x", 1 };
     TASWTomlSetting<int> inElement{ element, "x", 1 };
     TASWTomlSetting<int> badKey{ settings.General, "\xFF", 1 };
-    CheckTrue(settings.LoadText("[[servers]]\nx = 5\n").IsOk(), "the text should parse");
+    CheckTrue(settings.Parsed, "the text should parse");
 
     // Act
     int const fromBadTable = inBadTable.Get();
@@ -485,13 +631,17 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Paths_ThatCantBeUsedAreErrors)
     }
 
     CheckEquals("[[servers]]\nx = 5\n"s, settings.ToText(), "nothing changes");
+    CheckTrue(ASWToml::Detail::IsSettingsTablePath("") && ASWToml::Detail::IsSettingsTablePath("a.b"),
+        "a table of settings has a path of keys, or the root path");
+    CheckFalse(ASWToml::Detail::IsSettingsTablePath("a..b") || ASWToml::Detail::IsSettingsTablePath("a[0]"),
+        "not one that isn't valid, or has an index");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsAccess, Range_ChecksGetAndSet)
 {
     // Arrange
-    TTestSettings settings;
-    CheckTrue(settings.LoadText("[general]\nlevel = 9\nat_least = 0\nat_most = 10\n").IsOk(), "the text should parse");
+    TTestSettings settings("[general]\nlevel = 9\nat_least = 0\nat_most = 10\n");
+    CheckTrue(settings.Parsed, "the text should parse");
 
     // Act
     unsigned const level = settings.Level.Get();
@@ -529,8 +679,8 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Range_ChecksGetAndSet)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Reset_SetsTheDefault)
 {
     // Arrange
-    TTestSettings settings;
-    CheckTrue(settings.LoadText("[general]\nlevel = 3  # Mine\n").IsOk(), "the text should parse");
+    TTestSettings settings("[general]\nlevel = 3  # Mine\n");
+    CheckTrue(settings.Parsed, "the text should parse");
 
     // Act
     TASWTomlResult const result = settings.Level.Reset();
@@ -544,15 +694,14 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Reset_SetsTheDefault)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Set_AddsTheKeyWithItsComment)
 {
     // Arrange
-    TTestSettings inTable;
-    TTestSettings mine;
-    TTestSettings newTable;
-    TTestSettings inlineTable;
-    TTestSettings structs;
-    TTestSettings noComment;
-    CheckTrue(inTable.LoadText("[general]\nother = 1\n").IsOk() && mine.LoadText("[general]\n# Mine\nlevel = 1\n")
-        .IsOk() && newTable.LoadText("x = 1\n").IsOk() && inlineTable.LoadText("general = { other = 1 }\n").IsOk() &&
-        structs.LoadText("x = 1\n").IsOk() && noComment.LoadText("[general]\n").IsOk(), "the texts should parse");
+    TTestSettings inTable("[general]\nother = 1\n");
+    TTestSettings mine("[general]\n# Mine\nlevel = 1\n");
+    TTestSettings newTable("x = 1\n");
+    TTestSettings inlineTable("general = { other = 1 }\n");
+    TTestSettings structs("x = 1\n");
+    TTestSettings noComment("[general]\n");
+    CheckTrue(inTable.Parsed && mine.Parsed && newTable.Parsed && inlineTable.Parsed && structs.Parsed &&
+        noComment.Parsed, "the texts should parse");
     TServerVector const servers{ TTestServer{ "a", 1, true, std::nullopt } };
 
     // Act
@@ -582,12 +731,11 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Set_AddsTheKeyWithItsComment)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Set_CommentThatCantBeWrittenChangesNothing)
 {
     // Arrange
-    TTestSettings settings;
+    TTestSettings settings("[general]\n");
     TASWTomlSetting<int> badComment{ settings.General, "bad", 1, "Bad\x01" };
-    TTestSettings there;
+    TTestSettings there("[general]\nbad = 1\n");
     TASWTomlSetting<int> badCommentThere{ there.General, "bad", 1, "Bad\x01" };
-    CheckTrue(settings.LoadText("[general]\n").IsOk() && there.LoadText("[general]\nbad = 1\n").IsOk(),
-        "the texts should parse");
+    CheckTrue(settings.Parsed && there.Parsed, "the texts should parse");
 
     // Act
     TASWTomlResult const added = badComment.Set(2);
@@ -606,31 +754,29 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Set_CommentThatCantBeWrittenChangesNothin
 ASW_TEST(TTest_ASWToml_SettingsAccess, Set_DuringASaveKeepsTheDocumentModified)
 {
     // Arrange
-    TSetDuringSave settings;
     std::string const text = "[general]\nzoom = 1.0\n";
-    CheckTrue(settings.LoadText(text).IsOk(), "the text should parse");
+    TSetDuringSave adding(text, true);
+    TSetDuringSave changing(text, false);
+    CheckTrue(adding.Parsed && changing.Parsed, "the texts should parse");
 
     // Act
-    TASWTomlResult const added = settings.SaveAs("unused.toml");
-    bool const modifiedAfterAdd = settings.IsModified();
-    CheckTrue(settings.LoadText(text).IsOk(), "the text should parse again");
-    TASWTomlResult const changed = settings.Save();
-    bool const modifiedAfterChange = settings.IsModified();
+    TASWTomlResult const added = adding.SaveAs("unused.toml");
+    TASWTomlResult const changed = changing.SaveAs("unused.toml");
 
     // Assert
     CheckTrue(added.IsOk() && changed.IsOk(), "both saves should succeed");
-    CheckTrue(modifiedAfterAdd, "a key added while the file is written isn't in it, so the document stays modified");
-    CheckTrue(modifiedAfterChange, "nor is a value changed then");
-    CheckEquals("[general]\nzoom = 2.0\n"s, settings.ToText(), "the value is changed");
+    CheckTrue(adding.IsModified(), "a key added while the file is written isn't in it, so the document stays modified");
+    CheckTrue(changing.IsModified(), "nor is a value changed then");
+    CheckEquals("[general]\nzoom = 2.0\n"s, changing.ToText(), "the value is changed");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_SettingsAccess, Set_FailuresAreReported)
 {
     // Arrange
-    TTestSettings settings;
-    TASWTomlSetting<int> throwing{ settings.General, "throwing", 1, "", { .Validator = TThrowingValidator() } };
     std::string const text = "[general]\ncolor = \"Red\"\n";
-    CheckTrue(settings.LoadText(text).IsOk(), "the text should parse");
+    TTestSettings settings(text);
+    TASWTomlSetting<int> throwing{ settings.General, "throwing", 1, "", { .Validator = TThrowingValidator() } };
+    CheckTrue(settings.Parsed, "the text should parse");
     TTestServer const valid{ "a", 1, true, std::nullopt };
     TTestServer const invalid{ "b\xFF", 2, true, std::nullopt };
     TServerVector const servers{ valid, invalid };
@@ -665,11 +811,10 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Set_FailuresAreReported)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Set_WritesTheDocument)
 {
     // Arrange
-    TTestSettings settings;
-    TTestSettings same;
+    TTestSettings settings("[general]\nlevel = 1  # End\n");
+    TTestSettings same("[general]\nlevel = 1\n");
     TTestSettings empty;
-    CheckTrue(settings.LoadText("[general]\nlevel = 1  # End\n").IsOk() && same.LoadText("[general]\nlevel = 1\n")
-        .IsOk() && empty.LoadText("").IsOk(), "the texts should parse");
+    CheckTrue(settings.Parsed && same.Parsed && empty.Parsed, "the texts should parse");
     TServerVector const servers{ TTestServer{ "a", 1, true, std::nullopt }, TTestServer{ "b", 2, false, "Spare" } };
 
     // Act
@@ -696,8 +841,8 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Set_WritesTheDocument)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Types_WithoutOperatorLessWork)
 {
     // Arrange
-    TTestSettings settings;
-    CheckTrue(settings.LoadText("[general]\nword = \"two words\"\n").IsOk(), "the text should parse");
+    TTestSettings settings("[general]\nword = \"two words\"\n");
+    CheckTrue(settings.Parsed, "the text should parse");
 
     // Act
     TTestWord const invalid = settings.Word.Get();
@@ -723,8 +868,8 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Types_WithoutOperatorLessWork)
 ASW_TEST(TTest_ASWToml_SettingsAccess, Validator_ChecksGetAndSet)
 {
     // Arrange
-    TTestSettings settings;
-    CheckTrue(settings.LoadText("[general]\nname = \"\"\n").IsOk(), "the text should parse");
+    TTestSettings settings("[general]\nname = \"\"\n");
+    CheckTrue(settings.Parsed, "the text should parse");
 
     // Act
     std::string const name = settings.Name.Get();
@@ -750,12 +895,11 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, Validator_ChecksGetAndSet)
 ASW_TEST(TTest_ASWToml_SettingsAccess, ValueOptions_AreTheSettingsOwnOrTheOwners)
 {
     // Arrange
-    TTestSettings settings;
+    TTestSettings settings("[general]\n");
     TASWTomlOptions octal;
     octal.Writing.LineEnding = ASWToml::ELineEnding::LF;
     octal.Values.IntegerBase = EIntegerBase::Octal;
-    CheckTrue(settings.SetOptions(octal).IsOk() && settings.LoadText("[general]\n").IsOk(),
-        "the options and the text should be taken");
+    CheckTrue(settings.Parsed && settings.SetOptions(octal).IsOk(), "the text and the options should be taken");
 
     // Act
     TASWTomlResult const mask = settings.Mask.Set(255);
@@ -769,7 +913,525 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, ValueOptions_AreTheSettingsOwnOrTheOwners
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_SettingsLoad
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_SettingsLoad::TTest_ASWToml_SettingsLoad()
+    : inherited("ASWToml_SettingsLoad_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_SettingsLoad::~TTest_ASWToml_SettingsLoad()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsLoad::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsLoad::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsLoad::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsLoad::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Bindings_FollowTheirLifetimes)
+{
+    // Arrange
+    TLoadSettings settings;
+    std::string withLocal;
+
+    // Act
+    {
+        TASWTomlSetting<int> local{ settings.Logging, "local", 1, "Local." };
+        TASWTomlTable extra{ settings, "extra", "Extra." };
+        TASWTomlSetting<int> extraKey{ extra, "key", 1 };
+        CheckTrue(settings.LoadText("").IsOk(), "the empty text should load");
+        withLocal = settings.ToText();
+    }
+
+    TASWTomlResult const loaded = settings.LoadText("");
+
+    // Assert
+    CheckEquals(Escaped("# Settings of the test.\n\n# What it looks like.\n[general]\n# The name.\nname = \"Guest\"\n"
+        "# From 0 to 4.\nlevel = 2\n\n[logging]\n# Days kept.\ndays = 30\n# Local.\nlocal = 1\nmask = 0xFF\n\n"
+        "# Extra.\n[extra]\nkey = 1\n"), Escaped(withLocal), "a setting and a table are applied while they exist, in "
+        "declaration order");
+    CheckTrue(loaded.IsOk(), "the empty text should load again");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()), "and isn't once it is destroyed");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Comments_CodeWinsReplacesTheFilesComments)
+{
+    // Arrange
+    std::string const edited = "# Old file comment.\n\n# Old\n[general]\n# Mine\nname = \"Guest\"\n# From 0 to 4.\n"
+        "level = 2\n\n[logging]\n# Days kept.\ndays = 30\nmask = 0xFF\n";
+    TLoadSettings settings;
+    TLoadSettings same;
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText(edited);
+    TASWTomlResult const loadedSame = same.LoadText(FirstRunText);
+
+    // Assert
+    CheckTrue(loaded.IsOk() && loadedSame.IsOk(), "the texts should load");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()), "the code's comments replace the file's");
+    CheckTrue(settings.IsModified(), "which modifies the document");
+    CheckEquals(Escaped(FirstRunText), Escaped(same.ToText()), "comments that read the same stay");
+    CheckFalse(same.IsModified(), "and don't modify it");
+    CheckTrue(settings.Messages.empty() && same.Messages.empty(), "nothing is reported");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Comments_EmptyCodeCommentKeepsTheFiles)
+{
+    // Arrange
+    // Comments of the table logging and the setting cheats, which have none in the code
+    std::string text = FirstRunText;
+    text.replace(text.find("level = 2\n"), 10, "level = 2\n# Mine\ncheats = true\n");
+    text.replace(text.find("[logging]"), 9, "# My logging\n[logging]");
+    TLoadSettings settings;
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText(text);
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped(text), Escaped(settings.ToText()), "a setting or table without a comment keeps the file's");
+    CheckFalse(settings.IsModified(), "so nothing changes");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Comments_FileWinsKeepsTheFilesComments)
+{
+    // Arrange
+    std::string const edited = "# Old file comment.\n\n# Old\n[general]\n# Mine\nname = \"Guest\"\n# From 0 to 4.\n"
+        "level = 2\n\n[logging]\n# Days kept.\ndays = 30\nmask = 0xFF\n";
+    TASWTomlOptions fileWins = LfOptions();
+    fileWins.Writing.CommentPolicy = ASWToml::ECommentPolicy::FileWins;
+    TLoadSettings settings;
+    TLoadSettings bare;
+    CheckTrue(settings.SetOptions(fileWins).IsOk() && bare.SetOptions(fileWins).IsOk(), "the options should be taken");
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText(edited);
+    TASWTomlResult const loadedBare = bare.LoadText("[general]\nname = \"Ann\"\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk() && loadedBare.IsOk(), "the texts should load");
+    CheckEquals(Escaped(edited), Escaped(settings.ToText()), "the file's comments stay");
+    CheckFalse(settings.IsModified(), "so nothing changes");
+    CheckEquals(Escaped("# Settings of the test.\n\n# What it looks like.\n[general]\n# The name.\nname = \"Ann\"\n"
+        "# From 0 to 4.\nlevel = 2\n\n[logging]\n# Days kept.\ndays = 30\nmask = 0xFF\n"), Escaped(bare.ToText()),
+        "the code's comments go where the file has none");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Comments_WithoutALineOfTheirOwnAreSkipped)
+{
+    // Arrange
+    TLoadSettings settings;
+
+    // Act
+    // The table general is made by dotted keys, and the keys of logging are in an inline table
+    TASWTomlResult const loaded = settings.LoadText("general.name = \"Ann\"\ngeneral.level = 1\n"
+        "logging = { days = 3, mask = 0x10 }\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("# Settings of the test.\n\n# The name.\ngeneral.name = \"Ann\"\n# From 0 to 4.\n"
+        "general.level = 1\nlogging = { days = 3, mask = 0x10 }\n"), Escaped(settings.ToText()),
+        "the comments that have a line are set, the others skipped");
+    CheckTrue(settings.Messages.empty(), "without a message: " + MessagesText(settings.Messages));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_AddsMissingKeysInDeclarationOrder)
+{
+    // Arrange
+    TLoadSettings settings;
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText("[logging]\nother = 1\n\n[general]\nname = \"Ann\"\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("# Settings of the test.\n\n[logging]\nother = 1\n# Days kept.\ndays = 30\nmask = 0xFF\n\n"
+        "# What it looks like.\n[general]\n# The name.\nname = \"Ann\"\n# From 0 to 4.\nlevel = 2\n"),
+        Escaped(settings.ToText()), "missing keys after their table's last key, in declaration order");
+    CheckTrue(settings.IsModified(), "the document needs saving");
+    CheckEquals(std::size_t(3), settings.Messages.size(), "one note per key added: " + MessagesText(settings.Messages));
+    if (settings.Messages.size() == 3)
+    {
+        TASWTomlMessage const& level = settings.Messages[0];
+        CheckTrue(level.Severity == ESeverity::Info && level.Code == ETomlCode::KeyAdded, "an Info, KeyAdded");
+        CheckEquals("The key general.level is missing: it is added with its default value 2."s, level.Text,
+            "its text");
+        CheckEquals("general.level"s, level.Path, "its path");
+        CheckEquals("logging.days"s, settings.Messages[1].Path, "in declaration order");
+        CheckEquals("logging.mask"s, settings.Messages[2].Path, "a setting with value options of its own too");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_CommentThatCantBeWrittenIsAnError)
+{
+    // Arrange
+    TLoadSettings settings;
+    TASWTomlSetting<int> badComment{ settings.Logging, "bad", 1, "Bad\x01" };
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText(FirstRunText);
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped(FirstRunText + "bad = 1\n"s), Escaped(settings.ToText()), "the key is added without it");
+    CheckEquals(std::size_t(2), settings.Messages.size(), "the key added and the comment that failed: " +
+        MessagesText(settings.Messages));
+    if (settings.Messages.size() == 2)
+    {
+        TASWTomlMessage const& failure = settings.Messages[1];
+        CheckTrue(failure.Severity == ESeverity::Error && failure.Code == ETomlCode::InvalidValue,
+            "an Error with the edit's code");
+        CheckEquals("logging.bad"s, failure.Path, "its path");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_DeclaredTableThatIsntOneIsReplaced)
+{
+    // Arrange
+    TLoadSettings settings;
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText("logging = 5\n[general]\nname = \"Ann\"\nlevel = 1\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("# Settings of the test.\n\n# What it looks like.\n[general]\n# The name.\nname = \"Ann\"\n"
+        "# From 0 to 4.\nlevel = 1\n\n[logging]\n# Days kept.\ndays = 30\nmask = 0xFF\n"),
+        Escaped(settings.ToText()), "the value is replaced by a table of the settings");
+    CheckEquals(std::size_t(3), settings.Messages.size(), "the keys added and the value replaced: " +
+        MessagesText(settings.Messages));
+    if (settings.Messages.size() == 3)
+    {
+        TASWTomlMessage const& replaced = settings.Messages[2];
+        CheckTrue(replaced.Severity == ESeverity::Warning && replaced.Code == ETomlCode::TypeMismatch,
+            "a Warning, TypeMismatch");
+        CheckEquals("The value 5 is an integer, not a table. It is replaced by a table of its settings' values."s,
+            replaced.Text, "its text");
+        CheckEquals("logging"s, replaced.Path, "the table's path");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_FailureAppliesNothing)
+{
+    // Arrange
+    TLoadSettings settings(FirstRunText);
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText("[general\n");
+
+    // Assert
+    CheckEquals(ETomlCode::ParseFailed, loaded.Code, "the text doesn't parse");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()), "the document stays");
+    CheckEquals(std::size_t(1), settings.Messages.size(), "only the failure is reported: " +
+        MessagesText(settings.Messages));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_InvalidDefaultIsAnError)
+{
+    // Arrange
+    TLoadSettings settings;
+    TASWTomlSetting<unsigned> outOfRange{ settings.General, "out_of_range", 9, "", { .Max = 4 } };
+    TASWTomlSetting<EColor> unnamed{ settings.General, "unnamed", EColor::Unlisted };
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText(FirstRunText);
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()), "the keys aren't added");
+    CheckEquals(std::size_t(2), settings.Messages.size(), "each is reported: " + MessagesText(settings.Messages));
+    if (settings.Messages.size() == 2)
+    {
+        TASWTomlMessage const& range = settings.Messages[0];
+        CheckTrue(range.Severity == ESeverity::Error && range.Code == ETomlCode::ValueOutOfRange,
+            "an Error with the check's code");
+        CheckEquals("The default value of the setting general.out_of_range can't be used: The value 9 is out of the "
+            "setting's range: it must be at most 4."s, range.Text, "its text");
+        CheckEquals("general.out_of_range"s, range.Path, "its path");
+        CheckEquals(ETomlCode::InvalidValue, settings.Messages[1].Code, "a default that can't be written");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_LeavesAValidDocumentAsItIs)
+{
+    // Arrange
+    // Valid values in other forms than the settings would write
+    std::string const otherForms = std::string(FirstRunText).replace(std::string(FirstRunText).find("level = 2"), 9,
+        "level = 0x2").replace(std::string(FirstRunText).find("mask = 0xFF") + 2, 11, "mask = 255");
+    TLoadSettings settings;
+    TLoadSettings forms;
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText(FirstRunText);
+    TASWTomlResult const loadedForms = forms.LoadText(otherForms);
+
+    // Assert
+    CheckTrue(loaded.IsOk() && loadedForms.IsOk(), "the texts should load");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()), "a document that needs nothing stays byte for byte");
+    CheckFalse(settings.IsModified(), "and isn't modified");
+    CheckEquals(Escaped(otherForms), Escaped(forms.ToText()), "a valid value keeps its form");
+    CheckFalse(forms.IsModified(), "nor is that modified");
+    CheckTrue(settings.Messages.empty() && forms.Messages.empty(), "nothing is reported");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_MessagesNameTheFileLoaded)
+{
+    // Arrange
+    // The callback saves the object as another file on the first message, so the object's file path is that file when
+    // the others are reported
+    TTempDir const folder;
+    std::string const file = ASWToml::PathToUtf8(folder.Path() / "app.toml");
+    std::string const other = ASWToml::PathToUtf8(folder.Path() / "other.toml");
+    TMessageVector messages;
+    TLoadSettings settings;
+    settings.SetLogCallback(TSaveAsOnFirst(settings, other, messages));
+
+    // Act
+    TASWTomlResult const loaded = settings.Load(file);
+
+    // Assert
+    CheckEquals(ETomlCode::FileNotFound, loaded.Code, "the file is missing");
+    CheckEquals(other, settings.GetFilePath(), "the callback saved the object elsewhere");
+    CheckEquals(std::size_t(5), messages.size(), "the missing file and the keys added: " + MessagesText(messages));
+    for (TASWTomlMessage const& message : messages)
+        CheckEquals(file, message.FilePath, "each names the file loaded: " + ASWToml::ToString(message));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_MissingFileGetsEverySetting)
+{
+    // Arrange
+    TTempDir const folder;
+    std::string const file = ASWToml::PathToUtf8(folder.Path() / "app.toml");
+    TLoadSettings settings;
+    TLoadSettings again;
+
+    // Act
+    TASWTomlResult const loaded = settings.Load(file);
+    TASWTomlResult const saved = settings.Save();
+    std::string written;
+    bool const read = ReadTestFile(folder.Path() / "app.toml", written);
+    TASWTomlResult const reloaded = again.Load(file);
+
+    // Assert
+    CheckEquals(ETomlCode::FileNotFound, loaded.Code, "a first run has no file");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()), "the document gets every setting");
+    CheckTrue(saved.IsOk() && read, "Save() creates the file");
+    CheckEquals(Escaped(FirstRunText), Escaped(written), "with the document's text");
+    CheckTrue(reloaded.IsOk() && !again.IsModified() && again.Messages.empty(),
+        "a file that needs nothing loads without a change or a message");
+    CheckEquals(std::size_t(5), settings.Messages.size(), "the missing file and each key added: " +
+        MessagesText(settings.Messages));
+    if (settings.Messages.size() == 5)
+    {
+        CheckEquals(ETomlCode::FileNotFound, settings.Messages[0].Code, "the missing file's Warning first");
+        for (TASWTomlMessage const& message : settings.Messages)
+            CheckEquals(file, message.FilePath, "each names the file: " + ASWToml::ToString(message));
+
+        CheckEquals("general.name"s, settings.Messages[1].Path, "then the keys added, in declaration order");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_OptionalKeyIsNotAdded)
+{
+    // Arrange
+    TLoadSettings settings;
+    TASWTomlTable hidden{ settings, "hidden", "Hidden." };
+    TASWTomlSetting<bool> secret{ hidden, "secret", false, "A secret.", { .Optional = true } };
+    TLoadSettings present;
+    TASWTomlTable presentHidden{ present, "hidden", "Hidden." };
+    TASWTomlSetting<bool> presentSecret{ presentHidden, "secret", false, "A secret.", { .Optional = true } };
+    TLoadSettings value;
+    TASWTomlTable valueHidden{ value, "hidden", "Hidden." };
+    TASWTomlSetting<bool> valueSecret{ valueHidden, "secret", false, "A secret.", { .Optional = true } };
+    std::string const firstRun = FirstRunText;
+    std::string const fileComment = "# Settings of the test.\n\n";
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText("");
+    TASWTomlResult const loadedPresent = present.LoadText(FirstRunText + "\n[hidden]\nsecret = true\n"s);
+    TASWTomlResult const loadedValue = value.LoadText("hidden = 5\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk() && loadedPresent.IsOk(), "the texts should load");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()),
+        "an optional key isn't added, nor a table whose settings are all optional");
+    CheckEquals(Escaped(FirstRunText + "\n# Hidden.\n[hidden]\n# A secret.\nsecret = true\n"s),
+        Escaped(present.ToText()), "one that is there gets its comment, and so does its table");
+    CheckTrue(presentSecret.Get(), "and its value is read");
+    CheckTrue(loadedValue.IsOk(), "a text where the table is another value should load");
+    CheckEquals(Escaped(fileComment + "hidden = 5\n\n" + firstRun.substr(fileComment.size())), Escaped(value.ToText()),
+        "a table that is another value, with no setting to add, stays as it is, without the table's comment");
+    TMessageVector reported = settings.Messages;
+    reported.insert(reported.end(), value.Messages.begin(), value.Messages.end());
+    for (TASWTomlMessage const& message : reported)
+    {
+        CheckTrue(message.Code == ETomlCode::KeyAdded, "only the keys added are reported, not the comment of a "
+            "table that is missing or another value: " + ASWToml::ToString(message));
+    }
+
+    CheckTrue(present.Messages.empty(), "nothing is reported for a file that has it all: " +
+        MessagesText(present.Messages));
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_PathsThatCantBeUsedAreErrors)
+{
+    // Arrange
+    TLoadSettings settings;
+    TASWTomlTable badTable{ settings, "a..b", "Bad." };
+    TASWTomlSetting<int> inBadTable{ badTable, "x", 1 };
+    TASWTomlTable element{ settings, "servers[0]", "Element." };
+    TASWTomlSetting<int> inElement{ element, "x", 1 };
+    std::string const text = FirstRunText + "\n[[servers]]\nx = 5\n"s;
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText(text);
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped(text), Escaped(settings.ToText()), "nothing is written for them, nor a table's comment");
+    CheckEquals(std::size_t(2), settings.Messages.size(), "each setting is reported: " +
+        MessagesText(settings.Messages));
+    for (TASWTomlMessage const& message : settings.Messages)
+    {
+        CheckTrue(message.Severity == ESeverity::Error && message.Code == ETomlCode::InvalidArgument,
+            "as an Error (InvalidArgument): " + ASWToml::ToString(message));
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_ReplacesAnInvalidValueWithTheDefault)
+{
+    // Arrange
+    TLoadSettings settings;
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText("[general]\n# The name.\nname = 5  # Mine\n# From 0 to 4.\n"
+        "level = 9\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("# Settings of the test.\n\n# What it looks like.\n[general]\n# The name.\n"
+        "name = \"Guest\"  # Mine\n# From 0 to 4.\nlevel = 2\n\n[logging]\n# Days kept.\ndays = 30\nmask = 0xFF\n"),
+        Escaped(settings.ToText()), "values that aren't valid are replaced in place");
+    CheckEquals(std::size_t(4), settings.Messages.size(), "two Warnings, two keys added: " +
+        MessagesText(settings.Messages));
+    if (settings.Messages.size() == 4)
+    {
+        TASWTomlMessage const& name = settings.Messages[0];
+        CheckTrue(name.Severity == ESeverity::Warning && name.Code == ETomlCode::TypeMismatch, "a Warning");
+        CheckEquals("The value 5 is an integer, not a string. The default value \"Guest\" is used."s, name.Text,
+            "that says what was read and that the default is used");
+        CheckEquals("general.name"s, name.Path, "its path");
+        CheckEquals("The value 9 is out of the setting's range: it must be from 0 to 4. The default value 2 is used."s,
+            settings.Messages[1].Text, "a value out of range");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_TablesWithoutSettingsGetTheirComments)
+{
+    // Arrange
+    TPreloaded toml("");
+    TASWTomlTable root{ toml, "", "The file." };
+    TASWTomlTable table{ toml, "t", "The table." };
+
+    // Act
+    TASWTomlResult const loaded = toml.LoadText("x = 1\n[t]\ny = 2\n");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped("# The file.\n\nx = 1\n# The table.\n[t]\ny = 2\n"), Escaped(toml.ToText()),
+        "an object with tables and no settings sets the tables' comments");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, Load_WriteFailuresAreErrors)
+{
+    // Arrange
+    // A default the table can't hold: nested deeper than the reading options allow
+    TASWTomlOptions shallow = LfOptions();
+    shallow.Reading.MaxNestingDepth = 2;
+    std::vector<int> const one{ 1 };
+    TNestedVector const nested{ one };
+    TLoadSettings settings;
+    TASWTomlSetting<TNestedVector> deep{ settings.General, "deep", nested };
+    CheckTrue(settings.SetOptions(shallow).IsOk(), "the options should be taken");
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText("");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the text should load");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()), "the other settings of the table are written");
+    CheckEquals(std::size_t(5), settings.Messages.size(), "four keys added and one failure: " +
+        MessagesText(settings.Messages));
+    if (settings.Messages.size() == 5)
+    {
+        TASWTomlMessage const& failure = settings.Messages[4];
+        CheckTrue(failure.Severity == ESeverity::Error && failure.Code == ETomlCode::NestingTooDeep,
+            "an Error with the edit's code, in the setting's place: " + ASWToml::ToString(failure));
+        CheckEquals("general.deep"s, failure.Path, "its path");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, LoadText_AppliesTheSettings)
+{
+    // Arrange
+    TLoadSettings settings;
+
+    // Act
+    TASWTomlResult const loaded = settings.LoadText("");
+
+    // Assert
+    CheckTrue(loaded.IsOk(), "the empty text should load");
+    CheckEquals(Escaped(FirstRunText), Escaped(settings.ToText()), "the document gets every setting");
+    CheckTrue(settings.IsModified(), "and needs saving");
+    CheckEquals(std::size_t(4), settings.Messages.size(), "one note per key: " + MessagesText(settings.Messages));
+    if (!settings.Messages.empty())
+    {
+        CheckEquals("The key general.name is missing: it is added with its default value \"Guest\"."s,
+            settings.Messages[0].Text, "the first one");
+        CheckEmpty(settings.Messages[0].FilePath, "about no file");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsLoad, SetOptions_DoesntApplyTheSettings)
+{
+    // Arrange
+    TASWTomlOptions fileWins = LfOptions();
+    fileWins.Writing.CommentPolicy = ASWToml::ECommentPolicy::FileWins;
+    TLoadSettings settings("x = 1\n");
+
+    // Act
+    TASWTomlResult const set = settings.SetOptions(fileWins);
+
+    // Assert
+    CheckTrue(set.IsOk(), "the options should be taken");
+    CheckEquals("x = 1\n"s, settings.ToText(), "the settings aren't applied");
+    CheckFalse(settings.IsModified(), "nothing changes");
+    CheckTrue(settings.Messages.empty(), "nothing is reported");
+}
+//---------------------------------------------------------------------------
+
 } // namespace ASWUnitTests
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsAccess, "Settings")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsLoad, "Settings")

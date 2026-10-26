@@ -7,10 +7,10 @@ A TOML file reader/writer library.
 TASWTomlOptions and its four groups: how TOML text is read
 (TASWTomlReadingOptions: the largest file, the deepest nesting), written
 (TASWTomlWritingOptions: comment prefix, line ending, byte order mark, blank
-line before a new table) and saved (TASWTomlSavingOptions: atomically, with
-a backup, creating the folder), and how values are written
-(TASWTomlValueOptions: the form of a string, the base of an integer), each
-with Validate() to check that the options can be used.
+line before a new table, the settings' comment policy) and saved
+(TASWTomlSavingOptions: atomically, with a backup, creating the folder), and
+how values are written (TASWTomlValueOptions: the form of a string, the base
+of an integer), each with Validate() to check that the options can be used.
 
 Requires C++ 20 or higher.
 
@@ -52,6 +52,16 @@ enum class EBomMode : int
     Auto = 0, // As the loaded file did; none for a new file
     Always = 1,
     Never = 2,
+};
+
+// Whether the comments a settings class declares (see TASWTomlSetting and TASWTomlTable) are written over the
+// comments a loaded file has: applied when a file is loaded, to the comments of the settings' keys, of their tables and
+// the file comment. A comment that reads the same already is left as it is under either policy, and a setting or table
+// declared without a comment never changes the file's.
+enum class ECommentPolicy : int
+{
+    CodeWins = 0, // The code's comment replaces the file's, so a comment edited by hand comes back as the code has it
+    FileWins = 1, // The code's comment is written only where the file has none (e.g. for a key just added)
 };
 
 // How a string value is written; every form is read, whichever this is. A literal string ('...') holds its text as
@@ -119,8 +129,8 @@ struct TASWTomlReadingOptions
 // TASWTomlWritingOptions
 //
 // How new lines are written: the comment prefix of comments that are added, the line ending and byte order mark of
-// the whole text, and the blank line before a new table. Text read from a file is written back as it was, apart from
-// what an edit changes.
+// the whole text, the blank line before a new table, and whose comments win, the settings' or the file's. Text read
+// from a file is written back as it was, apart from what an edit changes.
 /////////////////////////////////////////////////////////////////////////////
 struct TASWTomlWritingOptions
 {
@@ -137,6 +147,9 @@ struct TASWTomlWritingOptions
 
     // Whether a new table's header is written after a blank line (unless it is the first thing in the file)
     bool BlankLineBeforeNewTable = true;
+
+    // Whether a settings class's comments replace a loaded file's
+    ECommentPolicy CommentPolicy = ECommentPolicy::CodeWins;
 
     // Ok if these options can be used, else ETomlCode::InvalidOptions with the first problem found, e.g. a
     // CommentPrefix that doesn't start with '#'
@@ -216,6 +229,7 @@ struct TASWTomlOptions
 
 // The value's name, e.g. "CRLF"; "Unknown" for a value that isn't one of the enumerators
 char const* ToString(EBomMode bom) noexcept;
+char const* ToString(ECommentPolicy commentPolicy) noexcept;
 char const* ToString(EIntegerBase integerBase) noexcept;
 char const* ToString(ELineEnding lineEnding) noexcept;
 char const* ToString(EStringStyle stringStyle) noexcept;

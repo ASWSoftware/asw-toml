@@ -30,6 +30,7 @@ SPDX-License-Identifier: MIT
 #include <shared_mutex>
 #include <string>
 #include <string_view>
+#include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Document.h"
 #include "ASWToml_Interface.h"
@@ -41,6 +42,8 @@ SPDX-License-Identifier: MIT
 
 namespace ASWToml
 {
+
+class TASWTomlTable;
 
 // The internals of TASWBaseToml
 namespace Detail
@@ -111,12 +114,14 @@ public:
 // without that lock, and Save() writes the file without it, so lookups and edits go on meanwhile; a second lock keeps
 // loads, saves and SetOptions() from overlapping. Failures and warnings are reported after the locks are released (see
 // TASWTomlLogCallback). An application's settings class derives from it, and declares its settings (TASWTomlTable,
-// TASWTomlSetting<T>, in ASWToml_Settings.h). Neither copyable nor movable.
+// TASWTomlSetting<T>, in ASWToml_Settings.h), which Load() and LoadText() apply to the document they read before
+// swapping it in. Neither copyable nor movable.
 /////////////////////////////////////////////////////////////////////////////
 class TASWBaseToml : public IASWToml
 {
 private:
     friend class Detail::TSettingBase;
+    friend class TASWTomlTable;
 
     // The log callback, shared with the reports that are calling it, so SetLogCallback() may replace it meanwhile
     using TLogCallbackPtr = std::shared_ptr<TASWTomlLogCallback const>;
@@ -126,6 +131,10 @@ private:
     using TValueMethod = TASWTomlResult (TASWTomlDocument::*)(TASWTomlPath const&, TASWTomlValue const&,
         TASWTomlValueOptions const&);
 
+    // The settings and the tables bound to the object, in the order they were declared
+    using TSettingVector = std::vector<Detail::TSettingBase const*>;
+    using TTableVector = std::vector<TASWTomlTable const*>;
+
 private:
     mutable Detail::TSharedMutex m_Mutex; // Guards the members after it
     TASWTomlDocument m_Document;
@@ -134,10 +143,19 @@ private:
     unsigned long long m_EditCount = 0; // Counts the edits that succeeded, so a save can tell whether one was made
 
     // Held for the whole of Load(), LoadText(), Save(), SaveAs() and SetOptions(), so they never overlap; taken before
-    // m_Mutex, never after it
+    // m_Mutex, never after it. Guards the members after it.
     Detail::TMutex m_FileMutex;
+    TSettingVector m_Settings;
+    TTableVector m_Tables;
 
 private:
+    // Applies the settings and then the tables' comments to 'document', a document Load() or LoadText() read, before
+    // anyone else can see it (see TASWTomlSetting and TASWTomlTable), and then adds what they report to 'messages',
+    // with 'filePath' (the file read, or "") as the file path of each. Called with the file lock held. May throw
+    // (std::bad_alloc, or what a converter or a validator throws), and then adds nothing to 'messages', so a load that
+    // fails doesn't report changes it didn't make.
+    void ApplySettings(TASWTomlDocument& document, std::string_view filePath, TMessageVector& messages) const;
+
     // Calls 'method', an edit of TASWTomlDocument, with 'path' and 'args' on the document under the lock, and counts
     // it when it succeeds; an exception becomes CaughtException(path). Reports a failed result.
     template <typename TMethod, typename ... TArgs>
@@ -146,6 +164,11 @@ private:
     // Load()'s work, which may throw: adds the warnings to 'messages', and sets 'missing' when the file doesn't exist
     // and the document was emptied
     TASWTomlResult LoadFile(std::string_view filePath, TMessageVector& messages, bool& missing);
+
+    // Adds 'setting' or 'table' at the end of the ones bound to the object, under the file lock: a setting's or a
+    // table's constructor calls it, once it is complete
+    void Register(Detail::TSettingBase const& setting);
+    void Register(TASWTomlTable const& table);
 
     // Reports each of 'messages', in order (with no lock held)
     void ReportAll(TMessageVector const& messages) const noexcept;
@@ -163,6 +186,11 @@ private:
     // has no line of its own for a comment (in an inline table) is added without it
     TASWTomlResult SetSettingValue(TASWTomlPath const& path, TASWTomlValue const& value,
         TASWTomlValueOptions const& values, std::string_view comment);
+
+    // Removes 'setting' or 'table' from the ones bound to the object, under the file lock (so after a Load() that is
+    // applying it): a setting's or a table's destructor calls it
+    void Unregister(Detail::TSettingBase const& setting);
+    void Unregister(TASWTomlTable const& table);
 
 protected:
     TASWTomlResult DocumentAppend(TASWTomlPath const& path, TASWTomlValue const& value,

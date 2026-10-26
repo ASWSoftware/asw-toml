@@ -33,7 +33,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     load with `NestingTooDeep`, so a file can't overflow the stack).
   - `Writing` (`TASWTomlWritingOptions`): the comment prefix of new comment lines (`"# "`), the
     line ending (`ELineEnding`) and byte order mark (`EBomMode`), both as the loaded file had them
-    by default, and a blank line before a new table (on).
+    by default, a blank line before a new table (on), and whose comments win when a settings class
+    is applied to a loaded file (`ECommentPolicy`: `CodeWins`, the default, or `FileWins`).
   - `Saving` (`TASWTomlSavingOptions`): atomic saves (on), backups (off, `.bak`) and creating
     missing folders (on).
   - `Values` (`TASWTomlValueOptions`): how a string is written (`EStringStyle`: `Auto`, a literal
@@ -294,10 +295,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `std::vector` of one included), its default value, a comment and `TASWTomlSettingOptions<T>`,
   given with designated initializers: a range (`{ .Min = 0, .Max = 4 }`, only for a type that
   `operator<` compares), a validator that says what is wrong with a value, and value options of its
-  own. A setting holds no value: `Get()` reads the owner's document, giving the default for a
-  missing key and, with a Warning, for a value that doesn't convert, is out of range or that the
-  validator refuses; `Set()` writes it, adding a missing key with the setting's comment above it in
-  the same edit, and fails (an Error, nothing changed) for a value that is out of range, refused or
-  can't be written; `Reset()` sets the default and `IsPresent()` says whether the key is there.
+  own, and whether it is optional. A setting holds no value: `Get()` reads the owner's document,
+  giving the default for a missing key and, with a Warning, for a value that doesn't convert, is
+  out of range or that the validator refuses; `Set()` writes it, adding a missing key with the
+  setting's comment above it in the same edit, and fails (an Error, nothing changed) for a value
+  that is out of range, refused or can't be written; `Reset()` sets the default and `IsPresent()`
+  says whether the key is there. `Load()` and `LoadText()` apply the settings to the document they
+  read before anyone sees it, so it holds every setting with a valid value and `IsModified()` says
+  whether it needs saving: a missing key is added with its default value and comment (an Info,
+  `KeyAdded`), unless the setting is optional; a value that isn't valid is replaced by the default
+  (a Warning), a valid one left as written; a table of settings the file holds as another kind of
+  value is replaced by a table of them (a Warning); the comments of the settings, of the tables and
+  the file comment (the root table's) are set as `Writing.CommentPolicy` says, where they have a
+  line of their own. A file that needs nothing stays byte for byte, and a first run (a missing
+  file) gets everything. The values are written with one edit per table and the comments with one
+  more, so applying 200 settings to an empty file takes a few milliseconds. A load that fails
+  changes nothing and reports none of it.
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

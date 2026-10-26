@@ -82,6 +82,20 @@ char const* ToString(EBomMode bom) noexcept
     return "Unknown";
 }
 //---------------------------------------------------------------------------
+char const* ToString(ECommentPolicy commentPolicy) noexcept
+{
+    switch (commentPolicy)
+    {
+        case ECommentPolicy::CodeWins:
+            return "CodeWins";
+
+        case ECommentPolicy::FileWins:
+            return "FileWins";
+    }
+
+    return "Unknown";
+}
+//---------------------------------------------------------------------------
 char const* ToString(EIntegerBase integerBase) noexcept
 {
     switch (integerBase)
@@ -197,6 +211,9 @@ TASWTomlResult TASWTomlWritingOptions::Validate() const
 
     if (std::string_view(ToString(Bom)) == "Unknown")
         return Invalid("Writing.Bom isn't one of the EBomMode values.");
+
+    if (std::string_view(ToString(CommentPolicy)) == "Unknown")
+        return Invalid("Writing.CommentPolicy isn't one of the ECommentPolicy values.");
 
     return TASWTomlResult();
 }

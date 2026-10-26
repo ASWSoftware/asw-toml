@@ -17,7 +17,9 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "ASWToml_Base.h"
 //---------------------------------------------------------------------------
+#include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -26,6 +28,7 @@ SPDX-License-Identifier: MIT
 #include <utility>
 //---------------------------------------------------------------------------
 #include "ASWToml_File.h"
+#include "ASWToml_Settings.h"
 #include "ASWToml_Version.h"
 //---------------------------------------------------------------------------
 
@@ -207,6 +210,36 @@ void TSharedMutex::unlock_shared() noexcept
 /////////////////////////////////////////////////////////////////////////////
 
 //---------------------------------------------------------------------------
+void TASWBaseToml::ApplySettings(TASWTomlDocument& document, std::string_view filePath, TMessageVector& messages) const
+{
+    // An object without settings loads as one that has none
+    if (m_Settings.empty() && m_Tables.empty())
+        return;
+
+    // The settings first, so a table a setting added gets its comment too
+    Detail::TSettingsApply apply(document);
+    for (Detail::TSettingBase const* setting : m_Settings)
+        setting->Apply(apply);
+
+    for (TASWTomlTable const* table : m_Tables)
+    {
+        if (Detail::IsSettingsTablePath(table->GetPath()))
+            apply.AddComment(table->GetPath(), table->GetComment(), true);
+    }
+
+    TMessageVector applied;
+    apply.Write(applied);
+    for (TASWTomlMessage& message : applied)
+    {
+        if (message.FilePath.empty())
+            message.FilePath = filePath;
+    }
+
+    // Room is made first, so the messages are then moved in without throwing
+    messages.reserve(messages.size() + applied.size());
+    std::move(applied.begin(), applied.end(), std::back_inserter(messages));
+}
+//---------------------------------------------------------------------------
 bool TASWBaseToml::Contains(TASWTomlPath const& path) const
 {
     std::shared_lock<Detail::TSharedMutex> lock(m_Mutex);
@@ -387,6 +420,9 @@ TASWTomlResult TASWBaseToml::LoadFile(std::string_view filePath, TMessageVector&
     if (notFound)
         messages.push_back(MissingFileWarning(result));
 
+    // The settings are applied to the document read (or emptied), and their messages are about the file too
+    ApplySettings(document, path, messages);
+
     {
         std::lock_guard<Detail::TSharedMutex> lock(m_Mutex);
         m_Document = std::move(document);
@@ -400,6 +436,7 @@ TASWTomlResult TASWBaseToml::LoadFile(std::string_view filePath, TMessageVector&
 //---------------------------------------------------------------------------
 TASWTomlResult TASWBaseToml::LoadText(std::string_view text)
 {
+    TMessageVector messages;
     TASWTomlResult result;
 
     try
@@ -417,6 +454,9 @@ TASWTomlResult TASWBaseToml::LoadText(std::string_view text)
         result = document.Parse(text, options);
         if (result.IsOk())
         {
+            // The settings are applied to the document read, before anyone sees it
+            ApplySettings(document, std::string_view(), messages);
+
             std::lock_guard<Detail::TSharedMutex> lock(m_Mutex);
             m_Document = std::move(document);
         }
@@ -425,6 +465,8 @@ TASWTomlResult TASWBaseToml::LoadText(std::string_view text)
     {
         result = CaughtException();
     }
+
+    ReportAll(messages);
 
     if (!result.IsOk())
         ReportFailure(result);
@@ -435,6 +477,18 @@ TASWTomlResult TASWBaseToml::LoadText(std::string_view text)
 TASWTomlResult TASWBaseToml::ReadFile(std::string const& filePath, std::size_t maxSize, std::string& contents)
 {
     return Detail::ReadWholeFile(Utf8ToPath(filePath), maxSize, contents);
+}
+//---------------------------------------------------------------------------
+void TASWBaseToml::Register(Detail::TSettingBase const& setting)
+{
+    std::lock_guard<Detail::TMutex> fileLock(m_FileMutex);
+    m_Settings.push_back(&setting);
+}
+//---------------------------------------------------------------------------
+void TASWBaseToml::Register(TASWTomlTable const& table)
+{
+    std::lock_guard<Detail::TMutex> fileLock(m_FileMutex);
+    m_Tables.push_back(&table);
 }
 //---------------------------------------------------------------------------
 bool TASWBaseToml::Remove(TASWTomlPath const& path)
@@ -659,6 +713,18 @@ std::string TASWBaseToml::ToText() const
     std::shared_lock<Detail::TSharedMutex> lock(m_Mutex);
 
     return m_Document.ToText();
+}
+//---------------------------------------------------------------------------
+void TASWBaseToml::Unregister(Detail::TSettingBase const& setting)
+{
+    std::lock_guard<Detail::TMutex> fileLock(m_FileMutex);
+    m_Settings.erase(std::remove(m_Settings.begin(), m_Settings.end(), &setting), m_Settings.end());
+}
+//---------------------------------------------------------------------------
+void TASWBaseToml::Unregister(TASWTomlTable const& table)
+{
+    std::lock_guard<Detail::TMutex> fileLock(m_FileMutex);
+    m_Tables.erase(std::remove(m_Tables.begin(), m_Tables.end(), &table), m_Tables.end());
 }
 //---------------------------------------------------------------------------
 TASWTomlResult TASWBaseToml::WriteFile(std::string const& filePath, std::string_view contents,
