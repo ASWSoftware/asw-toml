@@ -335,6 +335,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   user's own keys and tables kept), a setting used from two threads, values the class doesn't
   declare, by path, and a `TASWTomlDocument` on its own. It prints each step, the messages the
   library reports and the file, and returns 0 when every step did what it shows. Build it with
-  `example/cmake`, or with the root project and `-DASWTOML_BUILD_EXAMPLE=ON`.
+  `example/cmake`, with the root project and `-DASWTOML_BUILD_EXAMPLE=ON`, or with RAD Studio's
+  `example/rad370/ASWTomlExample.cbproj` (Win64x).
 
 [Unreleased]: https://github.com/ASWSoftware/asw-toml/commits/develop

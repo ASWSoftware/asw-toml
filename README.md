@@ -111,7 +111,8 @@ the docs to a folder, e.g. for a release package or to copy into another project
 Add the `ASWToml/*.cpp` files to the project (Project > Add to Project) and the `ASWToml` folder to
 the include path (Project > Options > Building > C++ Shared Options > Include path). RAD Studio 13.1
 or later, with the modern Clang toolchain (Win64x), which compiles at C++23 by default.
-`tests/rad370/ASWTomlTests.cbproj` is a working project to copy settings from.
+`example/rad370/ASWTomlExample.cbproj` (with `Build_*.bat` scripts) is a working project to copy
+settings from.
 
 ### CMake
 

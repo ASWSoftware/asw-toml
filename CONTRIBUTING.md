@@ -28,7 +28,8 @@ code (`third_party/`) is only used by the unit tests.
    and declare its `Test_TestName()` method public in the group's header; it registers itself. A new
    test file goes into `tests/cmake/CMakeLists.txt`, `tests/rad370/ASWTomlTests.cbproj`, and
    `tests/vcl/gui/rad370/ASWTomlTests_VCL_GUI.cbproj`. A new library source file goes into the root
-   `CMakeLists.txt`, the RAD Studio test projects, and `Deploy.bat`.
+   `CMakeLists.txt`, the RAD Studio test projects, the RAD Studio example project
+   (`example/rad370/ASWTomlExample.cbproj`), and `Deploy.bat`.
 4. Build the affected configuration and run the unit-test executable. See
    [README.md](README.md#unit-tests) for the CMake build commands, and the `Build_Win64x_*.bat`
    scripts in `tests/rad370/` for the RAD Studio builds.
