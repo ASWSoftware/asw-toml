@@ -95,8 +95,8 @@ struct TASWTomlReadingOptions
     // The default MaxNestingDepth: far deeper than a settings file needs
     static constexpr std::size_t DefaultMaxNestingDepth = 100;
 
-    // The largest MaxNestingDepth: values this deep take well under a quarter of a 1 MB thread stack to read, copy,
-    // compare or destroy, also in an unoptimized build
+    // The largest MaxNestingDepth: values this deep take well under a quarter of a 1 MB thread stack to read, edit,
+    // copy, compare or destroy, also in an unoptimized build
     static constexpr std::size_t MaxNestingDepthLimit = 128;
 
     // The largest file a load reads, in bytes; a larger one fails with ETomlCode::FileTooLarge
