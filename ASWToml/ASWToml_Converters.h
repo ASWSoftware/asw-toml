@@ -97,6 +97,10 @@ struct TASWTomlConverter;
 // that gives TASWTomlEnumName<T>s: a reference to an array or a std::array, or a std::vector. A value may have several
 // names: the first one listed is written, and the others are read too (e.g. an old name). A name is compared with the
 // ASCII letters' case ignored; an empty one is skipped.
+// Define ASWTomlEnumNames() before the enum's first use (a TASWTomlSetting of the enum, a GetValue() of it, or
+// TomlConvertible), and spell it exactly: the converter needs its return type there, so one defined later, one only
+// declared there with an auto return type, or a misspelled one isn't found, and the enum converts as its number,
+// without an error (see docs/Types.md).
 //
 //     enum class EColor { Red, Green, Blue };
 //
