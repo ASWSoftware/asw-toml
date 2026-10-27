@@ -53,6 +53,7 @@ SPDX-License-Identifier: MIT
 #include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Options.h"
+#include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
 #include "ASWToml_Value.h"
 //---------------------------------------------------------------------------
@@ -332,6 +333,12 @@ TASWTomlResult LengthMismatch(TASWTomlValue const& value, std::size_t length);
 // The NotFound result of a struct reading a table that lacks 'key', the key of a field that isn't optional: "The
 // table has no key port."
 TASWTomlResult MissingKey(std::string_view key);
+
+// 'result' (a converter's failure for the value at 'path', with a Path relative to that value, see TASWTomlConverter)
+// with 'path' put in front of its Path, so it is the place in the document: servers and [1].port make
+// servers[1].port, server and port make server.port; the root path leaves it as it was, and an empty Path becomes
+// 'path'
+TASWTomlResult PathFailure(TASWTomlResult result, TASWTomlPath const& path);
 
 // The InvalidValue result of a set reading 'element', an element of an array that reads as an element the set already
 // has (e.g. 1 twice, or "red" after "Red" for an enum with names): "The value 1 reads as an element the set already

@@ -116,6 +116,8 @@ constexpr TDurationUnit DurationUnit() noexcept
     return unit;
 }
 
+//---------------------------------------------------------------------------
+
 // Sets 'dateTime' to the date and time 'count' units of 'unit' after 1970-01-01T00:00:00; false (and 'dateTime'
 // unchanged) when that is outside the years 0 to 9999
 bool LocalDateTimeFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalDateTime& dateTime) noexcept;
@@ -146,6 +148,7 @@ bool OffsetDateTimeToCount(TASWTomlOffsetDateTime const& dateTime, TDurationUnit
 
 } // namespace Detail
 
+//---------------------------------------------------------------------------
 
 /////////////////////////////////////////////////////////////////////////////
 // TASWTomlLocalTime
@@ -388,7 +391,9 @@ public:
     TKeyValueVector* AsTable() noexcept;
     TKeyValueVector const* AsTable() const noexcept;
 
-    // The value of 'key' in a table; nullptr if there is no such key or this value isn't a table
+    // The value of 'key' in a table; nullptr if there is no such key or this value isn't a table. It compares the
+    // table's keys one by one, so in a large table, find through a document instead (TASWTomlDocument::Find(), whose
+    // index finds a key in O(log n))
     TASWTomlValue* Find(std::string_view key) noexcept;
     TASWTomlValue const* Find(std::string_view key) const noexcept;
 

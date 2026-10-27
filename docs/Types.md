@@ -2,8 +2,8 @@
 
 How an application's C++ values become TOML values and back: the converters the library has, what
 each reads and writes and how it fails, dates and times, enums, containers, maps, structs,
-`TASWTomlValue` itself, and a converter of your own. The TOML text each value is written as is in
-[Format.md](Format.md).
+`TASWTomlValue` itself, a converter of your own, and the JSON a value is exported as. The TOML text
+each value is written as is in [Format.md](Format.md).
 
 ## Converters
 
@@ -276,7 +276,11 @@ ASWToml::TASWTomlValue const* enabled = spell != nullptr ? spell->Find("enabled"
 bool const spellChecking = enabled != nullptr && enabled->AsBoolean() != nullptr && *enabled->AsBoolean();
 ```
 
-`Find()` of a value that isn't a table is `nullptr`, so `spell` needs no other check.
+`Find()` of a value that isn't a table is `nullptr`, so `spell` needs no other check. It compares
+the table's keys one by one, so in a large table, find through the document instead:
+`TASWTomlDocument::Find()`, and every lookup of a TOML object (`GetValue()`, `TryGetValue()`,
+`Contains()`, a setting's `Get()`), finds a key of a large table through the document's index, in
+O(log n).
 
 ## A converter of your own
 
@@ -372,3 +376,100 @@ The value options passed in are those of the operation or setting (see [Options.
 pass them on to the converters of a value's parts. A setting's converter is called with its TOML
 object's file lock held, so it mustn't call that object's `Load()`, `LoadText()`, `Save()`,
 `SaveAs()` or `SetOptions()` (see [Guarantees.md](Guarantees.md)).
+
+## JSON
+
+`ToJson()` (`ASWToml_Json.h`) writes a `TASWTomlValue` as JSON text, for logs, diagnostics and
+tools that read JSON: a document's root table, a value found in it, or a value of its own. There is
+no JSON import. A TOML object's file
+
+```toml
+[server]  # The main server
+host = "example.com"
+port = 0x1F90
+started = 2026-10-27 08:00Z
+ratio = 0.75
+tags = ["main", "eu"]
+```
+
+written with
+
+```cpp
+std::string json;
+ASWToml::TASWTomlResult const written = ASWToml::ToJson(toml.GetDocument().GetRoot(), json);
+if (!written.IsOk())
+    std::cerr << written.Message << "\n"; // e.g. for a float inf, which JSON has no number for
+
+std::string port;
+ASWToml::TASWTomlResult const tagged = ASWToml::ToJson(toml.GetValue("server.port", ASWToml::TASWTomlValue()), port,
+    { .Style = ASWToml::EJsonStyle::Tagged });
+```
+
+is, in the default style, `Plain`, indented by 2 spaces:
+
+```json
+{
+  "server": {
+    "host": "example.com",
+    "port": 8080,
+    "started": "2026-10-27T08:00:00Z",
+    "ratio": 0.75,
+    "tags": [
+      "main",
+      "eu"
+    ]
+  }
+}
+```
+
+and `port` is `{"type": "integer", "value": "8080"}`. The JSON holds the values, not how the file
+writes them (`0x1F90` is 8080) or its comments. `TASWTomlJsonOptions` (see
+[Options.md](Options.md#taswtomljsonoptions-how-tojson-writes-json)) chooses the style, how `Plain`
+writes the floats JSON has no number for, and the indentation (`{ .Indent = 0 }` writes it all on
+one line).
+
+What each value becomes:
+
+| TOML value | `Plain` | `Tagged` |
+|---|---|---|
+| String `"Tab\there"` | `"Tab\there"` | `{"type": "string", "value": "Tab\there"}` |
+| Integer `0xFF` | `255` | `{"type": "integer", "value": "255"}` |
+| Float `0.1`, `1e300`, `-0.0` | `0.1`, `1e+300`, `-0.0` | `{"type": "float", "value": "1e+300"}` |
+| Float `inf`, `-inf`, `nan`, `-nan` | As `NonFinite` says: a failure (the default), `null`, or a string (`"-inf"`) | `{"type": "float", "value": "-inf"}` |
+| Boolean `true` | `true` | `{"type": "bool", "value": "true"}` |
+| Offset date-time `1979-05-27 07:32Z` | `"1979-05-27T07:32:00Z"` | `{"type": "datetime", "value": "1979-05-27T07:32:00Z"}` |
+| Local date-time `1979-05-27T07:32:00` | `"1979-05-27T07:32:00"` | `{"type": "datetime-local", "value": "1979-05-27T07:32:00"}` |
+| Local date `1979-05-27` | `"1979-05-27"` | `{"type": "date-local", "value": "1979-05-27"}` |
+| Local time `07:32:00` | `"07:32:00"` | `{"type": "time-local", "value": "07:32:00"}` |
+| Array, table | An array, an object | An array, an object |
+
+- A table is an object with its keys in the table's order, and an array an array, in both styles;
+  an empty one is `{}` or `[]`. `Plain` writes the other values as JSON's, so which of the four
+  date and time types a value was is lost. `Tagged` is the form of
+  [toml-test](https://github.com/toml-lang/toml-test), the test suite of TOML parsers: every other
+  value is its TOML type and its value as a string, so a reader can rebuild the value exactly.
+- An integer is a number in decimal. A reader that holds JSON's numbers as doubles, as
+  JavaScript's does, loses precision beyond 2^53 (9007199254740993 reads as 9007199254740992);
+  `Tagged` keeps it, as a string.
+- A float is the shortest text that reads back as the same number, as in TOML, which is always a
+  JSON number. JSON has none for `inf`, `-inf` and `nan`, so `Plain` fails with `InvalidValue` for
+  them by default; with `NonFinite` `Null` it writes `null`, and with `String` the float as TOML
+  writes it, as a string (`"inf"`, `"-inf"`, `"nan"`, or `"-nan"` for a NaN with its sign set).
+  `Tagged` always writes them.
+- A date or time is a string in RFC 3339, as the library writes it in TOML: a `T` between the date
+  and the time, the seconds always, a fraction of a second only when it isn't 0, and the offset
+  (`Z`, `-07:00`). A leap second stays second 60 (`"23:59:60"`).
+- Strings and keys are UTF-8, as they are, with JSON's escapes for `"`, `\` and the control
+  characters U+0000 to U+001F (`\t`, `\n`, `\u001B`, ...). Line breaks are LF, and the text doesn't
+  end with one.
+
+On failure, `json` is left as it was, and the result's `Path` is the place of the value that failed
+inside the value written (e.g. `servers[1].ratio`, or `[0]` for the first element of an array):
+
+| Code | When |
+|---|---|
+| `InvalidValue` | `inf`, `-inf` or `nan` in `Plain` with `NonFinite` `Fail`; a string or a key that isn't valid UTF-8, or a date or time that isn't valid, which only a value of the application's own can hold |
+| `NestingTooDeep` | A value inside more than `MaxNestingDepthLimit` (128) tables and arrays of the value written, which isn't counted, as the root table isn't, so a document's values never fail (see [Guarantees.md](Guarantees.md#nesting-and-stack)) |
+| `InvalidOptions` | Options that `TASWTomlJsonOptions::Validate()` refuses |
+
+Like the other operations, it throws only `std::bad_alloc`.

@@ -5,8 +5,8 @@ Author: Anthony S. West - ASW Software
 Check of the installed CMake package: tests/package/CMakeLists.txt builds this file against an ASWToml installed with
 `cmake --install` and found with find_package(), and running it returns 0 when the installed library works: every
 installed header compiles, a settings class (with a struct and an array of tables) reads and writes a text and a
-file, and a document is parsed, edited and written back (so the library, its file layer and the threading library it
-links to are all there).
+file, and a document is parsed, edited, edited again with a batch, written back and exported as JSON (so the
+library, its file layer and the threading library it links to are all there).
 
 Copyright 2026 ASW Software
 
@@ -27,9 +27,11 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_File.h"
 #include "ASWToml_Index.h"
 #include "ASWToml_Interface.h"
+#include "ASWToml_Json.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Parser.h"
 #include "ASWToml_Path.h"
@@ -181,10 +183,23 @@ int main()
     Check(document.ToText() == "# Colors\n[colors]\nback = \"navy\"  # The background\nfore = 0x000000\n",
         "only the value's text should change");
 
+    // Several edits as one: a batch, all of it or none
+    ASWToml::TASWTomlEdits edits;
+    edits.SetValue("colors.fore", 0x112233).SetValue("colors.border", "gray");
+    Check(document.Apply(edits).IsOk(), "the batch should be made");
+    Check(document.ToText() == "# Colors\n[colors]\nback = \"navy\"  # The background\nfore = 0x112233\n"
+        "border = \"gray\"\n", "the batch should change the text as its edits one after the other do");
+
+    // The document's values as JSON
+    std::string json;
+    Check(ASWToml::ToJson(document.GetRoot(), json, { .Indent = 0 }).IsOk(), "the values should be written as JSON");
+    Check(json == "{\"colors\":{\"back\":\"navy\",\"fore\":1122867,\"border\":\"gray\"}}",
+        "the JSON should hold the document's values");
+
     if (ProblemCount != 0)
         return 1;
 
-    std::cout << "ASWToml " << ASWToml::Version << ": settings, texts, files and documents work\n";
+    std::cout << "ASWToml " << ASWToml::Version << ": settings, texts, files, documents, batches and JSON work\n";
 
     return 0;
 }

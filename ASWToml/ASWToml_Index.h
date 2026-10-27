@@ -110,6 +110,11 @@ struct TIndexNode
     ENodeKind Kind = ENodeKind::HeaderTable;
     std::string Key; // Its key in the table holding it; empty for an element of an array and for the root
     std::size_t Parent = 0; // The index of the table or array holding it (the root's is its own)
+
+    // Its index in its parent's Children, which is its place in the value of its parent (see FindValue()); 0 for the
+    // root
+    std::size_t Position = 0;
+
     std::size_t Depth = 0; // How many tables and arrays it is inside, itself included (the root not counted)
 
     // Where its first definition is, for messages: the key part that made it, in a key or a header
@@ -196,6 +201,12 @@ TASWTomlResult BuildIndex(TDocModel const& model, std::string_view text, std::si
 // The node of 'index' at 'path', as TASWTomlDocument::Find() finds a value; NoIndex when there is none or 'path' isn't
 // valid
 std::size_t FindNode(TDocIndex const& index, TASWTomlPath const& path) noexcept;
+
+// The value at 'path' in 'root', the decoded document that BuildIndex() built with 'index', as
+// TASWTomlDocument::Find() describes it; nullptr when there is none or 'path' isn't valid. A key of a table of more
+// than 16 keys is found through the index (its node's map of keys and the key's node's Position), in O(log n); a
+// smaller table's keys are compared one by one, which is faster there.
+TASWTomlValue const* FindValue(TDocIndex const& index, TASWTomlValue const& root, TASWTomlPath const& path) noexcept;
 
 } // namespace Detail
 

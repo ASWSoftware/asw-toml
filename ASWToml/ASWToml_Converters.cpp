@@ -57,6 +57,8 @@ using TFoldedKeyVector = std::vector<std::pair<std::string, std::string> >;
 // The TOML texts of the elements of an array, each with its element's index (see SortByText())
 using TTextVector = std::vector<std::pair<std::string, std::size_t> >;
 
+//---------------------------------------------------------------------------
+
 char AsciiLower(char c) noexcept;
 std::int64_t CountOfSeconds(std::int64_t seconds, Detail::TDurationUnit const& unit) noexcept;
 std::string DateText(std::chrono::year_month_day const& date);
@@ -610,6 +612,25 @@ TASWTomlResult Detail::LengthMismatch(TASWTomlValue const& value, std::size_t le
 TASWTomlResult Detail::MissingKey(std::string_view key)
 {
     return Failure(ETomlCode::NotFound, "The table has no key " + Shortened(KeyPart(key)) + ".");
+}
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::PathFailure(TASWTomlResult result, TASWTomlPath const& path)
+{
+    std::string place = path.ToString();
+    if (place.empty())
+        return result;
+
+    if (!result.Path.empty())
+    {
+        if (result.Path.front() != '[')
+            place += '.';
+
+        place += result.Path;
+    }
+
+    result.Path = std::move(place);
+
+    return result;
 }
 //---------------------------------------------------------------------------
 TASWTomlResult Detail::RepeatedElement(TASWTomlValue const& element)

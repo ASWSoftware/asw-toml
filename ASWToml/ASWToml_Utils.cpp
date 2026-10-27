@@ -37,6 +37,8 @@ constexpr std::size_t MaxMessageTextSize = 40;
 } // namespace
 
 //---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
 std::size_t BomSize(EBom bom) noexcept
 {
     switch (bom)

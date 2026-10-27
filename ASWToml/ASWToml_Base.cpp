@@ -56,6 +56,8 @@ namespace
 // The message of Load()'s and SaveAs()'s InvalidArgument for an empty file path
 constexpr char const* EmptyFilePathText = "The file path is empty.";
 
+//---------------------------------------------------------------------------
+
 TASWTomlResult Failure(ETomlCode code, char const* message);
 TASWTomlMessage MissingFileWarning(TASWTomlResult const& result);
 void SetFailureFilePath(std::string_view filePath, TASWTomlResult& result) noexcept;
@@ -209,6 +211,32 @@ void TSharedMutex::unlock_shared() noexcept
 // TASWBaseToml
 /////////////////////////////////////////////////////////////////////////////
 
+//---------------------------------------------------------------------------
+TASWTomlResult TASWBaseToml::Apply(TASWTomlEdits const& edits)
+{
+    TASWTomlResult result;
+
+    try
+    {
+        // The document makes the edits of this object's settings too
+        Detail::TBatchStats stats;
+        std::lock_guard<Detail::TSharedMutex> lock(m_Mutex);
+        result = m_Document.Apply(edits, this, stats);
+        if (result.IsOk())
+            ++m_EditCount;
+    }
+    catch (...)
+    {
+        // Out of memory (the document's Apply() throws nothing else), planning an edit or reading a group's text: no
+        // one edit to name
+        result = CaughtException();
+    }
+
+    if (!result.IsOk())
+        ReportFailure(result);
+
+    return result;
+}
 //---------------------------------------------------------------------------
 void TASWBaseToml::ApplySettings(TASWTomlDocument& document, std::string_view filePath, TMessageVector& messages) const
 {

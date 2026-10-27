@@ -110,6 +110,10 @@
             <DependentOn>..\..\ASWToml\ASWToml_Document.h</DependentOn>
             <BuildOrder>30</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Edits.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Edits.h</DependentOn>
+            <BuildOrder>51</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_File.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_File.h</DependentOn>
             <BuildOrder>21</BuildOrder>
@@ -121,6 +125,10 @@
         <CppCompile Include="..\..\ASWToml\ASWToml_Interface.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Interface.h</DependentOn>
             <BuildOrder>43</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Json.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Json.h</DependentOn>
+            <BuildOrder>53</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_Options.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Options.h</DependentOn>
@@ -190,6 +198,10 @@
             <DependentOn>..\tests\Test_ASWToml_Document.h</DependentOn>
             <BuildOrder>32</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_Edits.cpp">
+            <DependentOn>..\tests\Test_ASWToml_Edits.h</DependentOn>
+            <BuildOrder>52</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\tests\Test_ASWToml_File.cpp">
             <DependentOn>..\tests\Test_ASWToml_File.h</DependentOn>
             <BuildOrder>22</BuildOrder>
@@ -197,6 +209,10 @@
         <CppCompile Include="..\tests\Test_ASWToml_Interface.cpp">
             <DependentOn>..\tests\Test_ASWToml_Interface.h</DependentOn>
             <BuildOrder>44</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\tests\Test_ASWToml_Json.cpp">
+            <DependentOn>..\tests\Test_ASWToml_Json.h</DependentOn>
+            <BuildOrder>54</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\tests\Test_ASWToml_Options.cpp">
             <DependentOn>..\tests\Test_ASWToml_Options.h</DependentOn>
@@ -242,6 +258,10 @@
             <DependentOn>..\tests\UT_Helper_FailingAlloc.h</DependentOn>
             <BuildOrder>47</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\tests\UT_Helper_Json.cpp">
+            <DependentOn>..\tests\UT_Helper_Json.h</DependentOn>
+            <BuildOrder>55</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\tests\UT_Helper_TempDir.cpp">
             <DependentOn>..\tests\UT_Helper_TempDir.h</DependentOn>
             <BuildOrder>23</BuildOrder>
@@ -249,6 +269,10 @@
         <CppCompile Include="..\tests\UT_Helper_Threads.cpp">
             <DependentOn>..\tests\UT_Helper_Threads.h</DependentOn>
             <BuildOrder>48</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\tests\UT_Helper_TomlTest.cpp">
+            <DependentOn>..\tests\UT_Helper_TomlTest.h</DependentOn>
+            <BuildOrder>56</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\toml-test\TomlTest_Corpus.cpp">
             <DependentOn>..\toml-test\TomlTest_Corpus.h</DependentOn>

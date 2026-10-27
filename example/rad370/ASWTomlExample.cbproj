@@ -108,6 +108,10 @@
             <DependentOn>..\..\ASWToml\ASWToml_Document.h</DependentOn>
             <BuildOrder>2</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Edits.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Edits.h</DependentOn>
+            <BuildOrder>17</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_File.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_File.h</DependentOn>
             <BuildOrder>3</BuildOrder>
@@ -119,6 +123,10 @@
         <CppCompile Include="..\..\ASWToml\ASWToml_Interface.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Interface.h</DependentOn>
             <BuildOrder>5</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Json.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Json.h</DependentOn>
+            <BuildOrder>18</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_Options.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Options.h</DependentOn>

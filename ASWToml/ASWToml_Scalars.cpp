@@ -49,6 +49,8 @@ constexpr long long MaxExponent = 1000000;
 // The reason a number with an underscore that isn't between two digits isn't valid
 constexpr char const* UnderscoreReason = "an underscore must be between two digits";
 
+//---------------------------------------------------------------------------
+
 void AppendBasicString(std::string_view value, std::string& text);
 void AppendCodePoint(std::uint32_t codePoint, std::string& text);
 void AppendDate(std::chrono::year_month_day const& date, std::string& text);

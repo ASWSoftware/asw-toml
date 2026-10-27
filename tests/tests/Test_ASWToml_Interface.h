@@ -24,8 +24,8 @@ namespace ASWUnitTests
 /////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_Interface
 //
-// The typed GetValue(), TryGetValue(), SetValue() and Append() of IASWToml, over a fake IASWToml that holds a
-// TASWTomlDocument without locks
+// The typed GetValue(), TryGetValue(), SetValue() and Append() of IASWToml, and the default Apply(), over a fake
+// IASWToml that holds a TASWTomlDocument without locks
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_Interface : public TAutoTestGroup<TTest_ASWToml_Interface>
 {
@@ -37,6 +37,13 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Append_ConverterExceptionIsReported();
     void Test_Append_ConvertsTheValue();
     void Test_Append_UsesTheValueOptions();
+    void Test_Apply_ConversionFailureChangesNothing();
+    void Test_Apply_ExceptionIsReported();
+    void Test_Apply_MakesTheEditsByTheOperations();
+    void Test_Apply_RemovesAsABatchDoes();
+    void Test_Apply_SettingsEditIsRefused();
+    void Test_Apply_StopsAtTheFirstFailure();
+    void Test_Apply_UsesTheValueOptions();
     void Test_GetValue_ConverterExceptionIsThrown();
     void Test_GetValue_ConvertsTheValue();
     void Test_GetValue_InvalidPathGivesTheDefaultAndAnError();
