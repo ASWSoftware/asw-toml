@@ -7,6 +7,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Batches: `TASWTomlEdits` (`ASWToml_Edits.h`) lists edits of a document (`SetValue()`, `Append()`,
+  `Remove()`, `Rename()`, `SetComment()` and `SetTrailingComment()`, chained), and
+  `TASWTomlDocument::Apply()` makes them as one: all of them, giving exactly the text the edits one
+  after the other give, or none, failing with the result of the first edit that fails. Edits of
+  different places are written together and the text is read once, so a batch costs about as much as
+  one edit. A typed value is converted when it is added; one that doesn't convert fails the batch.
+  In a batch, a `Remove()` of nothing changes nothing, and one of a path that isn't valid or of the
+  root fails. A TOML object makes a batch with `IASWToml::Apply()`: `TASWBaseToml` makes it under
+  one lock, so other threads see all of it or none, and reports a failure once. `IASWToml::Apply()`
+  isn't pure virtual, so an application's own implementation of `IASWToml` still compiles; it gets a
+  default that makes the edits one after the other through its operations and stops at the first
+  that fails, keeping the edits before it. Settings join a batch with
+  `TASWTomlSetting<T>::Set(edits, value)`, which checks and converts the value as `Set()` does (a
+  value it refuses adds no edit, and is reported); the owner's `Apply()` then makes the edit as
+  `Set()` would at its place in the batch (a value taken by parts set over the value there, a key it
+  adds given the setting's comment), and any other `Apply()` refuses it with `InvalidArgument`.
+  See [docs/Settings.md](docs/Settings.md#several-settings-as-one).
+- JSON export: `ToJson()` (`ASWToml_Json.h`) writes any `TASWTomlValue` (a document's root table, a
+  value found in it, or a value of its own) as JSON text, with `TASWTomlJsonOptions`: the `Plain`
+  style writes TOML's values as JSON's (a date or time as a string in RFC 3339, an integer as a
+  number in decimal), and the `Tagged` style writes toml-test's form, each value with its TOML type,
+  which loses nothing. `NonFinite` says how `Plain` writes `inf` and `nan`, which JSON lacks (fail,
+  the default, `null` or a string), and `Indent` how the text is laid out (0 for one line). A string
+  or key that isn't valid UTF-8, or a date or time that isn't valid, fails with `InvalidValue` and
+  the path of the value. There is no JSON import. See [docs/Types.md](docs/Types.md#json) and
+  [docs/Options.md](docs/Options.md#taswtomljsonoptions-how-tojson-writes-json).
+- The example has a seventh step, which makes several changes as one batch and writes values as
+  JSON. The docs describe batches and JSON export, and `docs/Guarantees.md` says what each
+  operation costs (without figures, which depend on the machine and the file).
+
+### Changed
+
+- `TASWTomlDocument::Find()`, and so every lookup through a TOML object (`GetValue()`,
+  `TryGetValue()`, `Contains()`) and a setting's `Get()`, finds a key of a large table (more than 16
+  keys) through the document's index, in O(log n) instead of comparing the table's keys one by one,
+  so lookups in large tables are much faster; in a small table they are as fast as before. What a
+  lookup finds is unchanged. `TASWTomlValue::Find()`, on a value of its own, still compares the keys
+  one by one.
+
+### Fixed
+
+- `docs/Guarantees.md` said that every operation that returns a `TASWTomlResult` never throws. That
+  holds for a TOML object's operations; a `TASWTomlDocument`'s throw `std::bad_alloc` (and then
+  change nothing), as their header comments say, and so does `ToJson()`. The library didn't change.
+
 ## [1.0.0] - 2026-10-26
 
 The first release.

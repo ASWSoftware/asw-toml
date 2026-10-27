@@ -4,8 +4,9 @@ Author: Anthony S. West - ASW Software
 
 Test helpers of the converter tests (Test_ASWToml_Converters and its parts):
 the test types and enums they share, with the converters and the field and
-name lists an application would declare, and functions that check a
-converter's results.
+name lists an application would declare, functions that check a
+converter's results, and the random values of the fuzz tests, which the
+JSON tests use too.
 
 Copyright 2026 ASW Software
 
@@ -26,6 +27,7 @@ SPDX-License-Identifier: MIT
 #include <initializer_list>
 #include <map>
 #include <optional>
+#include <random>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -261,6 +263,13 @@ struct TASWTomlConverter<ASWUnitTests::TTestWord>
 namespace ASWUnitTests
 {
 
+// The keys of the random tables (see RandomTomlValue()): the test structs' keys, map keys of each kind, and a few
+// others
+inline constexpr char const* FuzzKeys[] = {
+    "host", "port", "enabled", "comment", "name", "screen", "spare", "limits", "servers", "width", "height", "1", "-1",
+    "80", "01", "Red", "red", "Lime", "Blue", "a", "a b", "",
+};
+
 //---------------------------------------------------------------------------
 
 // The date 'year'-'month'-'day', real or not
@@ -278,6 +287,29 @@ std::string LfText(std::string const& text);
 
 // A value of each TOML type, in the order of ETomlType
 ASWToml::TASWTomlValue::TValueVector OneOfEachType();
+
+// A random real date of the years 0 to 9999, which TOML writes
+std::chrono::year_month_day RandomDate(std::mt19937& generator);
+
+// A random double: one time in four any bits (NaNs with payloads among them), else one of a few that matter to the
+// converters (beyond float's range, the float pair whose shortest text reads back as another float, integers a float
+// or double can't hold exactly, -0.0, the infinities, NaN), or a small number with a fraction
+double RandomDouble(std::mt19937& generator);
+
+// A random integer: one time in four any 64 bits, one time in four one at the end of a type's range (or just past it),
+// or a number a float or double can't hold exactly, else a small one
+std::int64_t RandomInteger(std::mt19937& generator);
+
+// A random text of up to six pieces: letters, names the test enums have, blanks, a line break, a control character,
+// quotes, a backslash, two- and four-byte UTF-8 sequences, and, unless 'validUtf8', at times a byte that isn't UTF-8
+std::string RandomText(std::mt19937& generator, bool validUtf8);
+
+// A random valid time of day: any hour, minute and second (60 too), and one time in two a fraction
+ASWToml::TASWTomlLocalTime RandomTime(std::mt19937& generator);
+
+// A random value a document can hold: a string, an integer, a float, a boolean, each of the date and time types, or
+// below a 'depth' of 3, an array of up to three values or a table of up to three keys of FuzzKeys
+ASWToml::TASWTomlValue RandomTomlValue(std::mt19937& generator, std::size_t depth);
 
 // What is wrong with how TASWTomlConverter<T>::FromValue() fails to read 'value': it must fail with 'code', the message
 // 'message' and the Path 'path', and leave 'out' (set to 'initial' first) unchanged; empty when nothing is wrong

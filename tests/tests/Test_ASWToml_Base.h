@@ -32,6 +32,8 @@ private:
     typedef TAutoTestGroup<TTest_ASWToml_BaseAccess> inherited;
 
 public: // Test methods, each defined with ASW_TEST
+    void Test_Apply_FailureChangesNothing();
+    void Test_Apply_MatchesTheDocument();
     void Test_Edits_FailureChangesNothing();
     void Test_Edits_MatchTheDocument();
     void Test_GetDocument_IsACopy();
@@ -41,6 +43,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Locks_WorkLikeStandardMutexes();
     void Test_Lookups_MatchTheDocument();
     void Test_New_IsEmptyWithTheDefaultOptions();
+    void Test_OutOfMemory_ApplyChangesNothing();
     void Test_OutOfMemory_EditChangesNothing();
     void Test_OutOfMemory_LoadTextChangesNothing();
     void Test_OutOfMemory_SetOptionsChangesNothing();
@@ -75,6 +78,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Callback_MayCallTheObject();
     void Test_Callback_MayLoadAndSave();
     void Test_Callback_MayReplaceItself();
+    void Test_FailedBatch_IsReportedOnce();
     void Test_FailedEdit_IsReportedAsAnError();
     void Test_GetValue_WarningIsReported();
     void Test_LoadText_FailureIsReportedAsAnError();
@@ -145,8 +149,8 @@ public:
 /////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_BaseThreads
 //
-// TASWBaseToml used by many threads at once: edits, lookups, loads, saves, SetLogCallback() and SetOptions(), each
-// seeing the document before or after another thread's operation, never during it
+// TASWBaseToml used by many threads at once: edits, batches, lookups, loads, saves, SetLogCallback() and SetOptions(),
+// each seeing the document before or after another thread's operation, never during it
 /////////////////////////////////////////////////////////////////////////////
 class TTest_ASWToml_BaseThreads : public TAutoTestGroup<TTest_ASWToml_BaseThreads>
 {
@@ -154,6 +158,7 @@ private:
     typedef TAutoTestGroup<TTest_ASWToml_BaseThreads> inherited;
 
 public: // Test methods, each defined with ASW_TEST
+    void Test_Apply_LookupsSeeAllOrNone();
     void Test_Edits_LookupsNeverSeeAValueGoBack();
     void Test_LoadsAndSaves_EverySavedFileIsWhole();
     void Test_SetLogCallback_EachFailureIsReportedOnce();

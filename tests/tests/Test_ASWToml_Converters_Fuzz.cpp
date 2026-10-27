@@ -71,16 +71,9 @@ using TTable = TASWTomlValue::TKeyValueVector;
 constexpr std::uint32_t FuzzFirstSeed = 20261025;
 constexpr std::size_t FuzzCount = 300;
 
-// The keys of the random tables: the test structs' keys, map keys of each kind, and a few others
-char const* const FuzzKeys[] = {
-    "host", "port", "enabled", "comment", "name", "screen", "spare", "limits", "servers", "width", "height", "1", "-1",
-    "80", "01", "Red", "red", "Lime", "Blue", "a", "a b", "",
-};
-
+//---------------------------------------------------------------------------
 std::string FailurePathProblem(TASWTomlValue const& value, TASWTomlResult const& failure);
 void RandomChange(std::mt19937& generator, TASWTomlValue& value);
-std::chrono::year_month_day RandomDate(std::mt19937& generator);
-double RandomDouble(std::mt19937& generator);
 void RandomFill(std::mt19937& generator, bool& out);
 void RandomFill(std::mt19937& generator, double& out);
 void RandomFill(std::mt19937& generator, float& out);
@@ -118,12 +111,8 @@ template <typename T, typename THash, typename TEqual, typename TAllocator>
 void RandomFill(std::mt19937& generator, std::unordered_set<T, THash, TEqual, TAllocator>& out);
 template <typename T, typename TAllocator>
 void RandomFill(std::mt19937& generator, std::vector<T, TAllocator>& out);
-std::int64_t RandomInteger(std::mt19937& generator);
 template <TomlConvertible T>
 std::string RandomReadProblem();
-std::string RandomText(std::mt19937& generator, bool validUtf8);
-ASWToml::TASWTomlLocalTime RandomTime(std::mt19937& generator);
-TASWTomlValue RandomTomlValue(std::mt19937& generator, std::size_t depth);
 template <TomlConvertible T>
 std::string RandomValueProblem();
 template <TomlConvertible T>
@@ -198,55 +187,6 @@ void RandomChange(std::mt19937& generator, TASWTomlValue& value)
     {
         value = RandomTomlValue(generator, 1);
     }
-}
-//---------------------------------------------------------------------------
-/*
-    RandomDate
-
-    A random real date of the years 0 to 9999, which TOML writes
-*/
-std::chrono::year_month_day RandomDate(std::mt19937& generator)
-{
-    int const year = static_cast<int>(generator() % 10000);
-    unsigned const month = 1 + generator() % 12;
-    std::chrono::year_month_day_last const last{ std::chrono::year{ year },
-        std::chrono::month_day_last{ std::chrono::month{ month } } };
-    unsigned const day = 1 + generator() % static_cast<unsigned>(last.day());
-
-    return Date(year, month, day);
-}
-//---------------------------------------------------------------------------
-/*
-    RandomDouble
-
-    A random double: one time in four any bits (NaNs with payloads among them), else one of a few that matter to the
-    converters (beyond float's range, the float pair whose shortest text reads back as another float, integers a float
-    or double can't hold exactly, -0.0, the infinities, NaN), or a small number with a fraction
-*/
-double RandomDouble(std::mt19937& generator)
-{
-    double const special[] = {
-        0.0, -0.0, 0.5, 0.1, 1e300, -1e300, 3.4028234663852886e38, 3.4028235677973366e38, 1e-46, 7.038531e-26,
-        16777217.0, 9007199254740993.0, std::numeric_limits<double>::max(), std::numeric_limits<double>::infinity(),
-        -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(),
-        -std::numeric_limits<double>::quiet_NaN(),
-    };
-
-    std::uint32_t const kind = generator() % 4;
-    if (kind == 0)
-    {
-        std::uint64_t const high = generator();
-        std::uint64_t const low = generator();
-
-        return std::bit_cast<double>(high << 32 | low);
-    }
-
-    if (kind == 1)
-        return special[generator() % std::size(special)];
-
-    std::int64_t const number = static_cast<std::int64_t>(generator() % 20001) - 10000;
-
-    return static_cast<double>(number) / 64.0;
 }
 //---------------------------------------------------------------------------
 /*
@@ -523,35 +463,6 @@ void RandomFill(std::mt19937& generator, std::vector<T, TAllocator>& out)
 }
 //---------------------------------------------------------------------------
 /*
-    RandomInteger
-
-    A random integer: one time in four any 64 bits, one time in four one at the end of a type's range (or just past
-    it), or a number a float or double can't hold exactly, else a small one
-*/
-std::int64_t RandomInteger(std::mt19937& generator)
-{
-    std::int64_t const special[] = {
-        std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max(), -2147483649, -2147483648,
-        2147483647, 2147483648, 4294967295, 4294967296, -32769, -32768, 32767, 32768, 65535, 65536, -129, -128, 127,
-        128, 255, 256, 16777217, 9007199254740993, -1, 0, 1, 2, 7, 40,
-    };
-
-    std::uint32_t const kind = generator() % 4;
-    if (kind == 0)
-    {
-        std::uint64_t const high = generator();
-        std::uint64_t const low = generator();
-
-        return static_cast<std::int64_t>(high << 32 | low);
-    }
-
-    if (kind == 1)
-        return special[generator() % std::size(special)];
-
-    return static_cast<std::int64_t>(generator() % 601) - 300;
-}
-//---------------------------------------------------------------------------
-/*
     RandomReadProblem
 
     What is wrong with how TASWTomlConverter<T>::FromValue() reads FuzzCount random values, each from a generator
@@ -637,119 +548,6 @@ std::string RandomReadProblem()
         return "no random value read";
 
     return std::string();
-}
-//---------------------------------------------------------------------------
-/*
-    RandomText
-
-    A random text of up to six pieces: letters, names the test enums have, blanks, a line break, a control character,
-    quotes, a backslash, two- and four-byte UTF-8 sequences, and, unless 'validUtf8', at times a byte that isn't UTF-8
-*/
-std::string RandomText(std::mt19937& generator, bool validUtf8)
-{
-    char const* const pieces[] = {
-        "a", "b", "Red", "red", "Lime", "host", " ", "\t", "\n", "\x01", "\"", "'", "\\", "#", "C:\\Users",
-        "\xC3\xA9", "\xF0\x9F\x98\x80", "\xFF",
-    };
-
-    std::size_t const available = validUtf8 ? std::size(pieces) - 1 : std::size(pieces);
-    std::size_t const count = generator() % 7;
-    std::string text;
-    for (std::size_t i = 0; i < count; ++i)
-    {
-        // The byte that isn't UTF-8 seldom, so most texts can be written
-        std::size_t piece = generator() % available;
-        if (piece == std::size(pieces) - 1 && generator() % 4 != 0)
-            piece = 0;
-
-        text += pieces[piece];
-    }
-
-    return text;
-}
-//---------------------------------------------------------------------------
-/*
-    RandomTime
-
-    A random valid time of day: any hour, minute and second (60 too), and one time in two a fraction
-*/
-ASWToml::TASWTomlLocalTime RandomTime(std::mt19937& generator)
-{
-    int const hour = static_cast<int>(generator() % 24);
-    int const minute = static_cast<int>(generator() % 60);
-    int const second = static_cast<int>(generator() % 61);
-    std::int64_t fraction = 0;
-    if (generator() % 2 == 0)
-        fraction = generator() % 1000000000;
-
-    return TimeOfDay(hour, minute, second, fraction);
-}
-//---------------------------------------------------------------------------
-/*
-    RandomTomlValue
-
-    A random value a document can hold: a string, an integer, a float, a boolean, each of the date and time types,
-    or below a 'depth' of 3, an array of up to three values or a table of up to three keys of FuzzKeys
-*/
-TASWTomlValue RandomTomlValue(std::mt19937& generator, std::size_t depth)
-{
-    std::uint32_t const kind = generator() % (depth < 3 ? 11 : 8);
-    if (kind == 0)
-        return RandomText(generator, true);
-
-    if (kind == 1)
-        return RandomInteger(generator);
-
-    if (kind == 2)
-        return RandomDouble(generator);
-
-    if (kind == 3)
-        return generator() % 2 == 0;
-
-    if (kind == 4)
-    {
-        ASWToml::TASWTomlOffsetDateTime dateTime;
-        dateTime.Date = RandomDate(generator);
-        dateTime.Time = RandomTime(generator);
-        std::int64_t const offset = static_cast<std::int64_t>(generator() % 2879) - 1439;
-        dateTime.Offset = std::chrono::minutes(offset);
-
-        return dateTime;
-    }
-
-    if (kind == 5)
-    {
-        std::chrono::year_month_day const date = RandomDate(generator);
-
-        return ASWToml::TASWTomlLocalDateTime{ date, RandomTime(generator) };
-    }
-
-    if (kind == 6)
-        return RandomDate(generator);
-
-    if (kind == 7)
-        return RandomTime(generator);
-
-    if (kind < 10)
-    {
-        TArray elements;
-        std::size_t const count = generator() % 4;
-        for (std::size_t i = 0; i < count; ++i)
-            elements.push_back(RandomTomlValue(generator, depth + 1));
-
-        return elements;
-    }
-
-    TASWTomlValue table;
-    std::size_t const count = generator() % 4;
-    for (std::size_t i = 0; i < count; ++i)
-    {
-        // The key first, so every compiler draws the numbers in the same order
-        std::string const key = FuzzKeys[generator() % std::size(FuzzKeys)];
-        table.Set(key, RandomTomlValue(generator, depth + 1));
-    }
-
-    return table;
 }
 //---------------------------------------------------------------------------
 /*

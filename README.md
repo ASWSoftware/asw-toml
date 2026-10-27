@@ -41,17 +41,22 @@ whose design it follows. Its goals:
   so `IsModified()` says whether the file needs saving.
 - TOML 1.1.0 read, and so every TOML 1.0 file; the text the library writes uses only syntax that
   TOML 1.0 also reads. Checked against every file of the official
-  [toml-test](https://github.com/toml-lang/toml-test) suite's TOML 1.1 list. A text that isn't
-  valid TOML fails to load at its first error, with its line and column, and nothing changes.
+  [toml-test](https://github.com/toml-lang/toml-test) suite's TOML 1.1 list, by the unit tests and
+  by toml-test's own runner. A text that isn't valid TOML fails to load at its first error, with
+  its line and column, and nothing changes.
 - A file that is loaded and saved without changes is written back byte for byte. An edit changes
   only the text it needs, in the form the file already uses: a value in place, in its own form
   (`0xFF` stays hexadecimal); a new key after the last key of its table, as a dotted key, or inside
   the braces of an inline table; a new table as a `[header]`; a whole table or array merged, so
   only what differs changes.
+- Several changes as one: a batch (`TASWTomlEdits`) of settings and edits by path, which `Apply()`
+  makes all at once or not at all, under one lock, at about the cost of one edit, writing exactly
+  the text its edits one after the other write.
 - Tables however they are written (`[header]`, dotted keys, inline tables) and arrays of tables,
   addressed by a path in TOML's dotted-key syntax (`server."host name".port`, `products[0].name`)
-  or as a list of parts. Keys compare byte for byte, as TOML says. The file's, a table's and a key's
-  comments, and end-of-line comments.
+  or as a list of parts. Keys compare byte for byte, as TOML says, and a key of a large table is
+  found through the document's index. The file's, a table's and a key's comments, and end-of-line
+  comments.
 - UTF-8, with or without a byte order mark (kept as the file had it). LF and CRLF line endings,
   kept even when mixed; a new line gets the file's own (the platform's for a new file), or one
   chosen. A size limit on loads and a nesting limit that keeps a file from overflowing the stack.
@@ -63,6 +68,8 @@ whose design it follows. Its goals:
 - Values by path too (`GetValue()`, `TryGetValue()`, `SetValue()` and `Append()`), e.g. for tables
   a settings class doesn't declare, and `ASWToml::TASWTomlDocument`, the document on its own, for
   TOML text without a file or a lock.
+- JSON export (`ToJson()`) of a document or any value, for logs, diagnostics and other tools: plain
+  JSON, or toml-test's tagged form, which keeps each value's TOML type.
 - Safe to use from any number of threads with no locking by the application. Loading and saving
   read and write the file without holding the lock that lookups and edits use.
 - Atomic saves (a crash while saving leaves the previous file whole), an optional backup, missing
@@ -273,6 +280,7 @@ project that builds against an installed copy; CI runs it.
 | `IASWToml` | `ASWToml_Interface.h` | The interface `TASWBaseToml` implements, for code that only reads and writes values. |
 | `TASWTomlTable`, `TASWTomlSetting<T>` | `ASWToml_Settings.h` | A table and a setting, declared as members of a settings class. `TASWTomlSettingOptions<T>` gives a setting its range, validator and other options. |
 | `TASWTomlDocument` | `ASWToml_Document.h` | The lossless model of a TOML text, with its lookups, edits and comments. A copyable value, with no file and no lock. |
+| `TASWTomlEdits` | `ASWToml_Edits.h` | A batch: edits of a document, in order, which `Apply()` makes as one, all of them or none. |
 | `TASWTomlValue` | `ASWToml_Value.h` | A TOML value of any type (`ETomlType`), e.g. the value at a key or a whole table; `TASWTomlOffsetDateTime`, `TASWTomlLocalDateTime` and `TASWTomlLocalTime` are TOML's date and time types. |
 | `TASWTomlPath` | `ASWToml_Path.h` | The path of a table, a key or an element of an array, made from a string (`server."host name".port`) or a list of parts. |
 | `TASWTomlOptions` | `ASWToml_Options.h` | How text is read, written and saved, and how values are written. |
@@ -280,25 +288,28 @@ project that builds against an installed copy; CI runs it.
 | `TASWTomlResult`, `TASWTomlMessage` | `ASWToml_Types.h` | The outcome of an operation, and a warning, error or note reported to the log callback, each with its `ETomlCode`. |
 
 `PathToUtf8()` and `Utf8ToPath()` (`ASWToml_File.h`) convert a `std::filesystem::path` to and from
-the UTF-8 path text the library takes, and `ASWToml_Version.h` has the version.
+the UTF-8 path text the library takes, `ToJson()` (`ASWToml_Json.h`) writes a value as JSON with
+`TASWTomlJsonOptions`, and `ASWToml_Version.h` has the version.
 
 **Files.** On a `TASWBaseToml`: `Load(path)`, `Save()`, `SaveAs(path)`, `IsModified()` and
 `GetFilePath()`; `LoadText(text)` and `ToText()` for a text; `SetOptions()` (before `Load()`) and
 `GetOptions()`; `SetLogCallback()`.
 
 **Settings.** On a `TASWTomlSetting<T>`: `Get()`, `Set(value)` (which fails for a value out of the
-range or one the validator refuses), `Reset()` and `IsPresent()`. Its options, with designated
-initializers: `{ .Min = 0, .Max = 4 }`, and `.Validator`, `.Optional`, `.OldKeys` and `.Values`.
+range or one the validator refuses), `Reset()` and `IsPresent()`, and `Set(edits, value)`, which
+adds the change to a batch. Its options, with designated initializers: `{ .Min = 0, .Max = 4 }`,
+and `.Validator`, `.Optional`, `.OldKeys` and `.Values`.
 
 **Values by path**, e.g. of tables a settings class doesn't declare: `GetValue(path, default)`,
 `TryGetValue(path, value)` (which returns why it couldn't), `SetValue(path, value)` and
 `Append(path, value)`. `Contains()`, `GetKeyNames()`, `Remove()` and `Rename()`. The comments:
 `GetComment()` and `GetTrailingComment()` (the root path's comment is the file comment), and their
-`Set` methods.
+`Set` methods. `Apply(edits)` makes a batch of them and of settings' changes, all or nothing.
 
 **The document.** `GetDocument()` gives a copy of a TOML object's document. A `TASWTomlDocument` of
 its own has `Parse()` and `ToText()`, `Find()` and `GetRoot()`, and the same edits and comments
-(with `SetComments()` for several at once).
+(with `SetComments()` for several at once) and `Apply()`. `ToJson(document.GetRoot(), json)`
+writes its values as JSON.
 
 **Results.** Each operation that can fail returns a `TASWTomlResult` (`IsOk()` when it succeeded,
 else with its `Code` and `Message`) and reports the failure to the log callback, without throwing.
@@ -308,19 +319,19 @@ class and operation.
 ## Documentation
 
 - [docs/Format.md](docs/Format.md): the TOML ASWToml reads and writes: what a text with an error
-  does, tables and paths, comments, encoding and line endings, limits, what an edit changes, and
-  how each new value is written.
+  does, tables and paths, comments, encoding and line endings, limits, what an edit and a batch
+  change, and how each new value is written.
 - [docs/Types.md](docs/Types.md): the C++ types ASWToml converts and their TOML values: numbers,
-  strings, dates and times, enums, containers, maps, structs, `TASWTomlValue`, and a converter of
-  your own.
-- [docs/Options.md](docs/Options.md): every option, its default and what it does, and when options
-  apply.
+  strings, dates and times, enums, containers, maps, structs, `TASWTomlValue`, a converter of your
+  own, and the JSON `ToJson()` writes.
+- [docs/Options.md](docs/Options.md): every option, its default and what it does, when options
+  apply, and `ToJson()`'s options.
 - [docs/Settings.md](docs/Settings.md): settings classes: declaring and using settings, what
-  `Load()` does, structs and arrays of tables, comments, threads, the raw API alongside, the
-  messages, and sending them to ASWLog.
+  `Load()` does, structs and arrays of tables, comments, threads, the raw API alongside, several
+  settings as one, the messages, and sending them to ASWLog.
 - [docs/Guarantees.md](docs/Guarantees.md): what is returned and reported instead of thrown, thread
-  safety, what callbacks may do, object lifetimes, nesting and stack, saving and crashes, and every
-  `ETomlCode`.
+  safety, what callbacks may do, object lifetimes, nesting and stack, saving and crashes, what
+  costs what, and every `ETomlCode`.
 - [CHANGELOG.md](CHANGELOG.md): the changes in each release.
 
 ## Versions
@@ -370,7 +381,9 @@ later standard.
 The tests include every file of [toml-test](https://github.com/toml-lang/toml-test)'s TOML 1.1 list,
 compiled in from `tests/toml-test` (its README says which version and how to update it): each valid
 file must read as toml-test's expected values and be written back byte for byte, and each invalid
-one must fail.
+one must fail. CI also runs toml-test's own program on that list, with the decoder the tests' CMake
+project builds (`ASWTomlTestDecoder`, from `tests/toml-test/decoder`): the "Linux (GCC, toml-test)"
+job. `tests/toml-test/README.md` says how to run it by hand.
 
 For RAD Studio, use `tests/rad370/ASWTomlTests.cbproj` or its scripts, `Build_Win64x_Debug.bat` and
 `Build_Win64x_Release.bat` (bcc64x). Output is written to `tests/build/bin/Win64x/<Config>`. GitHub

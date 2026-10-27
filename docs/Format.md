@@ -323,6 +323,13 @@ A value of another type replaces the one there: a table or an array of tables se
 can't hold is removed and the value written as a key (`t = 5` for `[t]`), and a key set to a table
 gets an inline table (`t = { x = 1 }`).
 
+### Several edits as one
+
+A batch of edits (`TASWTomlEdits`, made by `Apply()`; see
+[Settings.md](Settings.md#several-settings-as-one)) writes exactly the text its edits write when
+they are made one after the other, byte for byte, or, when one of them fails, nothing. It only costs
+less (see [Guarantees.md](Guarantees.md#what-costs-what)).
+
 ## How a new value is written
 
 A value that replaces one keeps the form of that one where it can (see above); a new value is

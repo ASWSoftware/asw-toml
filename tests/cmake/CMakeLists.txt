@@ -47,8 +47,10 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters_Fuzz.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters_Structs.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Document.cpp"
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Edits.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_File.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Interface.cpp"
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Json.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Options.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Path.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Scalars.cpp"
@@ -60,8 +62,10 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Writer.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_Converters.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_FailingAlloc.cpp"
+    "${ASWTOML_TESTS_DIR}/UT_Helper_Json.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_TempDir.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_Threads.cpp"
+    "${ASWTOML_TESTS_DIR}/UT_Helper_TomlTest.cpp"
     "${ASWTOML_TOML_TEST_DIR}/TomlTest_Corpus.cpp"
 )
 
@@ -98,5 +102,27 @@ if(MINGW)
 endif()
 
 set_target_properties(ASWTomlTests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# The decoder that toml-test's own runner starts for each test file (see tests/toml-test/README.md), built with the
+# same options, next to the tests.
+add_executable(ASWTomlTestDecoder
+    "${ASWTOML_TOML_TEST_DIR}/decoder/main.cpp"
+)
+
+target_link_libraries(ASWTomlTestDecoder PRIVATE ASWToml::ASWToml)
+
+if(MSVC)
+    target_compile_options(ASWTomlTestDecoder PRIVATE /W4 /Zc:__cplusplus)
+else()
+    target_compile_options(ASWTomlTestDecoder PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(MINGW)
+    target_link_options(ASWTomlTestDecoder PRIVATE -static-libgcc -static-libstdc++ -static)
+endif()
+
+set_target_properties(ASWTomlTestDecoder PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )

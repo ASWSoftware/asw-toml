@@ -40,6 +40,10 @@ SPDX-License-Identifier: MIT
 namespace ASWToml
 {
 
+class IASWToml;
+struct TASWTomlEdit;
+class TASWTomlEdits;
+
 //---------------------------------------------------------------------------
 // Internals of the library: the document's model. Not part of the public interface.
 //
@@ -264,6 +268,24 @@ TIndexVector Partners(std::size_t oldSize, std::size_t size, TElementMatch const
 // array set in its place become, as Partners() gives them (see TASWTomlDocument::SetValue())
 using TPartnersMap = std::map<TASWTomlValue const*, TIndexVector>;
 
+// The edits TASWTomlDocument::Apply() makes, in order: the batch's, and after a setting's edit that adds its key, the
+// key's comment
+using TEditPointerVector = std::vector<TASWTomlEdit const*>;
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TBatchStats
+//
+// How TASWTomlDocument::Apply() made a batch of edits, for tests: how many groups of edits it wrote together, and how
+// many of those it made again one by one because their text didn't read as they should make it (which no edit should
+// do)
+/////////////////////////////////////////////////////////////////////////////
+struct TBatchStats
+{
+    std::size_t Groups = 0;
+    std::size_t Replays = 0;
+};
+
 } // namespace Detail
 
 
@@ -302,6 +324,15 @@ private:
     TASWTomlValue m_Root; // The values of m_Model, as GetRoot() describes
     bool m_Modified = false; // See IsModified()
 
+    // Makes 'edit', an edit of a batch made by the Apply() of 'owner' (see Apply()), with the edit of its kind, and a
+    // setting's as its Set() would
+    TASWTomlResult ApplyEdit(TASWTomlEdit const& edit, IASWToml const* owner);
+
+    // Makes the edits 'steps' from 'first' to before 'next' one after another (ApplyEdit(), with 'owner'), up to the
+    // first that fails, and gives its result
+    TASWTomlResult ApplyOneByOne(Detail::TEditPointerVector const& steps, std::size_t first, std::size_t next,
+        IASWToml const* owner);
+
     // The model's text without a byte order mark, each line break as it is (what ToText() writes with the default
     // writing options, but for the byte order mark)
     std::string BodyText() const;
@@ -328,6 +359,29 @@ public:
     // An empty document with the default options: no keys, tables or byte order mark, so ToText() is empty
     TASWTomlDocument();
 
+    // Makes the edits of 'edits' (see ASWToml_Edits.h) as one: each as the edit of its name makes it (Append(),
+    // Remove(), Rename(), SetComment(), SetTrailingComment() or SetValue(), the value written with the edit's value
+    // options, else the document's Values), in order, each on the text the ones before it made, so the text, the
+    // values and the comments are what those edits made one after the other give, byte for byte. When one of them
+    // fails, it fails with that edit's result (its code, message and Path), and nothing changes. A Remove() fails with
+    // InvalidArgument when its path isn't valid or is the root, and changes nothing when nothing is at its path. When
+    // 'edits' holds a value that didn't convert (see TASWTomlEdits::GetResult()), it fails with that result before any
+    // edit, and nothing changes. The modified flag is set when the text changed, and left as it was otherwise (with no
+    // edits too). The edits are planned one at a time, and those that don't depend on one another (at paths that
+    // don't lead to one another, changing text away from each other's) are written together and the text read once,
+    // so a batch of edits of different places costs about as much as one edit; however they are grouped, the result
+    // is the one the edits one after the other give. A setting's edit (see TASWTomlSetting::Set() given edits) fails
+    // with InvalidArgument: only its owner's Apply() makes it. Throws only std::bad_alloc, and then nothing changes
+    // either.
+    TASWTomlResult Apply(TASWTomlEdits const& edits);
+
+    // Apply() for the TOML object 'owner' (nullptr for none), which sets 'stats' to how it made the edits (see
+    // Detail::TBatchStats, for tests): the edits of the settings of 'owner' are made too, each as its Set() would make
+    // it at its place (a value taken by parts set over the value there, and a key it adds given the setting's comment
+    // in an edit after it, which a key without a line of its own goes without); the settings of other objects fail.
+    // TASWBaseToml::Apply() calls it.
+    TASWTomlResult Apply(TASWTomlEdits const& edits, IASWToml const* owner, Detail::TBatchStats& stats);
+
     // Adds 'value' at the end of the array at 'path', written with the document's Values options (the second form:
     // with 'values'), as SetValue() writes a value:
     // - An array value gets a new element after its last one, in the layout of the elements before it: on the same
@@ -350,7 +404,8 @@ public:
     // The value at 'path': a table, an array, an element of an array (of an array of tables, e.g. products[1], or of
     // an array value, e.g. ports[0]) or the value of a key; the root table for the root path. nullptr when there is no
     // such value or the path isn't valid. An index needs an array: products.name is nullptr when products is an array
-    // of tables. The pointer is valid until the document is parsed again, changed or destroyed.
+    // of tables. The pointer is valid until the document is parsed again, changed or destroyed. Found through the
+    // document's index, in O(log n) per key part, however large the tables are.
     TASWTomlValue const* Find(TASWTomlPath const& path) const noexcept;
 
     // The comment of the key, table or array of tables at 'path': the comment lines directly above the line that

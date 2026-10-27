@@ -166,8 +166,8 @@ ASWToml::TASWTomlResult const added = settings.Servers.Set(servers); // A second
   e.g. for an optional setting. `GetDefault()`, `GetKey()`, `GetPath()`, `GetComment()` and
   `GetOptions()` give the declaration.
 - A setting holds no value of its own: it always agrees with the document, also after a `Load()`
-  or a raw `SetValue()` of its key. A `Get()` of a number costs a lookup and a conversion (well
-  under a microsecond); code that reads a setting in a tight loop keeps a copy.
+  or a raw `SetValue()` of its key. A `Get()` of a number costs a lookup and a conversion, a small
+  fraction of a `Set()`; code that reads a setting in a tight loop keeps a copy.
 - `Save()` writes the document; it doesn't need to write the settings, which are in the document
   already.
 
@@ -323,7 +323,8 @@ policy. A key that `Set()` adds gets the setting's comment. A key or table witho
   owner's own operations: each one is a single lookup or edit under the owner's lock, so it sees the
   document before or after another thread's edit or load, never during one.
 - Several `Set()`s are separate edits: another thread may see some of them done and not the others,
-  which is harmless for settings. There is no batch edit in 1.0.
+  which is harmless for most settings. A batch ([Several settings as one](#several-settings-as-one))
+  is one edit, which other threads see all of or none of.
 - The converters and validators run while `Load()` holds the owner's file lock, so they must not
   call its `Load()`, `LoadText()`, `Save()`, `SaveAs()` or `SetOptions()`. A validator should only
   look at the value it gets.
@@ -333,11 +334,12 @@ policy. A key that `Set()` adds gets the setting's comment. A key or table witho
 ### Not a store for fast-changing state
 
 Settings are read often and written now and then. Each `Set()` is an edit of the document: it
-writes the changed text and parses the whole document again (5 to 15 microseconds for the file
-above on a current PC, more for a larger file), under the owner's exclusive lock, which every
-`Get()` and edit on other threads waits for. So don't use a setting as a counter, a progress value
-or anything that changes many times a second: keep such state in your own variables (e.g. a
-`std::atomic`), and `Set()` it now and then, e.g. when the application exits. Also, the
+writes the changed text and parses the whole document again, about the cost of loading it, under
+the owner's exclusive lock, which every `Get()` and edit on other threads waits for (see
+[Guarantees.md](Guarantees.md#what-costs-what)). So don't use a setting as a counter, a progress
+value or anything that changes many times a second: keep such state in your own variables (e.g. a
+`std::atomic`), and `Set()` it now and then, e.g. when the application exits; several changes made
+together go in one batch, which costs about one `Set()`. Also, the
 `std::shared_mutex` of libstdc++ (GCC's standard library, on Linux and with MinGW) lets a thread
 waiting to write lose to other threads that write back to back: with several threads calling
 `Set()` in a loop, one `Set()` can wait hundreds of milliseconds, even seconds.
@@ -384,6 +386,36 @@ if (toml.GetComment("logging.level") != "From 0 (errors only) to 4 (everything).
 
 and the same again wherever it is written, while the setting is one declaration. For a vector of
 structs, the hand-written repair of each element and field is longer still.
+
+## Several settings as one
+
+A batch (`ASWToml::TASWTomlEdits`, `ASWToml_Edits.h`) makes several changes as one edit. A
+setting's `Set(edits, value)` adds its change to the batch, the batch's own `SetValue()`,
+`Append()`, `Remove()`, `Rename()`, `SetComment()` and `SetTrailingComment()` add raw edits (they
+chain), and the settings class's `Apply()` makes them all, or none:
+
+```cpp
+ASWToml::TASWTomlEdits edits;
+static_cast<void>(settings.UserName.Set(edits, "Ada"));
+static_cast<void>(settings.Level.Set(edits, 4));
+edits.SetValue("windows.main.width", 1280).SetComment("windows.main.width", "In pixels");
+ASWToml::TASWTomlResult const applied = settings.Apply(edits); // All four edits, or none
+```
+
+- `Set(edits, value)` checks and converts the value at once, as `Set()` does. A value it refuses
+  (out of the range, refused by the validator) fails and is reported, and adds no edit, so the rest
+  of the batch is still made.
+- `Apply()` makes the edits in order, each as its own call would make it at that point: the text is
+  exactly what the calls one after the other write, and a key a setting adds gets the setting's
+  comment. When one of them fails (e.g. a `Rename()` to a key that exists), or a raw `SetValue()`
+  was given a value that doesn't convert, `Apply()` returns that failure, reported once, and
+  nothing changes.
+- The batch is one edit under the owner's lock: other threads see all of it or none, and
+  `IsModified()` is set once when the text changed. Edits of different places are written together
+  and the text is parsed once, so a batch costs about as much as one edit.
+- A setting's edit is made only by its own settings class's `Apply()`: another object's, or a
+  `TASWTomlDocument`'s, fails with `InvalidArgument`. A document's `Apply()` makes a batch of raw
+  edits the same way.
 
 ## Your own types
 

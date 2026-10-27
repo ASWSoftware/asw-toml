@@ -28,11 +28,14 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
+#include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_Interface.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
+#include "ASWToml_Settings.h"
 #include "ASWToml_Types.h"
 #include "ASWToml_Value.h"
 #include "ASWToml_Version.h"
@@ -145,6 +148,8 @@ struct TASWTomlConverter<ASWUnitTests::TTestThrows>
 
 } // namespace ASWToml
 
+//---------------------------------------------------------------------------
+
 namespace ASWUnitTests
 {
 
@@ -157,6 +162,7 @@ using ASWToml::EStringStyle;
 using ASWToml::ETomlCode;
 using ASWToml::TASWTomlConverter;
 using ASWToml::TASWTomlDocument;
+using ASWToml::TASWTomlEdits;
 using ASWToml::TASWTomlLogCallback;
 using ASWToml::TASWTomlMessage;
 using ASWToml::TASWTomlOptions;
@@ -253,6 +259,23 @@ public:
     TASWTomlResult SetTrailingComment(TASWTomlPath const& path, std::string_view text) override;
     std::string ToText() const override;
 };
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TThrowingRemoveToml
+//
+// A TTestToml whose Remove() throws a std::runtime_error ("remove failed")
+/////////////////////////////////////////////////////////////////////////////
+class TThrowingRemoveToml : public TTestToml
+{
+public:
+    // A document parsed from 'text'
+    explicit TThrowingRemoveToml(std::string_view text);
+
+    bool Remove(TASWTomlPath const& path) override;
+};
+
+//---------------------------------------------------------------------------
 
 std::string MessageProblem(TASWTomlMessage const& message, ESeverity severity, ETomlCode code, std::string const& text,
     std::string const& path);
@@ -509,6 +532,23 @@ TASWTomlResult TTestToml::Unsupported()
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TThrowingRemoveToml
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TThrowingRemoveToml::TThrowingRemoveToml(std::string_view text)
+    : TTestToml(text)
+{
+}
+//---------------------------------------------------------------------------
+bool TThrowingRemoveToml::Remove(TASWTomlPath const& /*path*/)
+{
+    throw std::runtime_error("remove failed");
+}
+//---------------------------------------------------------------------------
+
 } // namespace
 
 //---------------------------------------------------------------------------
@@ -666,6 +706,196 @@ ASW_TEST(TTest_ASWToml_Interface, Append_UsesTheValueOptions)
         "paths = ['C:\\x', \"C:\\\\y\", \"C:\\\\z\"]\n"), toml.ToText(),
         "the converter and the document should get the object's value options, or the ones given");
     CheckEquals(3, toml.GetValueOptionsAsked(), "the object's should be asked for once for each Append() without");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Interface, Apply_ConversionFailureChangesNothing)
+{
+    // Arrange
+    TTestToml toml(SettingsText);
+    std::string const before = toml.ToText();
+    TASWTomlEdits edits;
+    edits.SetValue("port", 8080).SetValue("mode", ETestMode::Unnamed).SetValue("name", "other");
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+
+    // Assert
+    CheckEmpty(ResultProblem(result, edits.GetResult().Code, edits.GetResult().Message, "mode"),
+        "the edits' conversion failure should be returned");
+    CheckEquals(before, toml.ToText(), "no edit should be made, not even the one before it");
+    CheckEquals(1U, toml.GetReported().size(), "it should be reported once");
+    if (toml.GetReported().size() == 1)
+    {
+        CheckEmpty(MessageProblem(toml.GetReported()[0], ESeverity::Error, result.Code, result.Message, "mode"),
+            "as an Error with the path");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Interface, Apply_ExceptionIsReported)
+{
+    // Arrange
+    TThrowingRemoveToml toml(SettingsText);
+    TASWTomlEdits edits;
+    edits.SetValue("port", 8080).Remove("name").SetValue("mode", "fast");
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+
+    // Assert
+    CheckEmpty(ResultProblem(result, ETomlCode::UnexpectedException,
+        "An unexpected exception was thrown: remove failed", "name"),
+        "the exception should be UnexpectedException with the path of the edit it came from");
+    CheckEquals(8080, toml.GetValue("port", 0), "the edit before it should be kept");
+    CheckEquals(std::string("app"), toml.GetValue("name", ""), "the removal should change nothing");
+    CheckEquals(std::string("slow"), toml.GetValue("mode", ""), "and the edit after it shouldn't be made");
+    CheckEquals(1U, toml.GetReported().size(), "it should be reported once");
+    if (toml.GetReported().size() == 1)
+    {
+        CheckEmpty(MessageProblem(toml.GetReported()[0], ESeverity::Error, result.Code, result.Message, "name"),
+            "as an Error with the path");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Interface, Apply_MakesTheEditsByTheOperations)
+{
+    // Arrange
+    // A fake written before Apply() existed (it doesn't override it) gets the default
+    TTestToml toml(SettingsText);
+    TASWTomlDocument document;
+    TASWTomlResult const parsed = document.Parse(SettingsText);
+    TASWTomlEdits edits;
+    edits.SetValue("port", 8080).Append("ports", 81).Rename("server.host", "address");
+    edits.SetComment("server", "The server").SetTrailingComment("name", "The app").Remove("points[0]");
+    edits.Remove("missing").SetValue("limits.min", 2);
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+    TASWTomlResult const expected = document.Apply(edits);
+
+    // Assert
+    CheckTrue(parsed.IsOk() && expected.IsOk(), "the document should make the edits");
+    CheckTrue(result.IsOk(), "the edits should succeed: " + result.Message);
+    CheckEquals(document.ToText(), toml.ToText(), "the text should be what the document's Apply() makes");
+    CheckTrue(toml.IsModified(), "the document should be modified");
+    CheckEquals(0U, toml.GetReported().size(), "nothing should be reported");
+    CheckEquals(3, toml.GetValueOptionsAsked(), "the value options should be asked for once for each value edit");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Interface, Apply_RemovesAsABatchDoes)
+{
+    // Arrange
+    TTestToml toml(SettingsText);
+    TASWTomlDocument document;
+    TASWTomlResult const parsed = document.Parse(SettingsText);
+    std::string const before = toml.ToText();
+    TASWTomlEdits invalid;
+    invalid.Remove("a..b");
+    TASWTomlEdits root;
+    root.Remove("");
+    TASWTomlEdits missing;
+    missing.Remove("missing.key").Remove("ports[3]");
+
+    // Act
+    TASWTomlResult const invalidResult = toml.Apply(invalid);
+    TASWTomlResult const rootResult = toml.Apply(root);
+    TASWTomlResult const missingResult = toml.Apply(missing);
+    TASWTomlResult const invalidExpected = document.Apply(invalid);
+    TASWTomlResult const rootExpected = document.Apply(root);
+
+    // Assert
+    CheckTrue(parsed.IsOk(), "the document should be parsed");
+    CheckEmpty(ResultProblem(invalidResult, ETomlCode::InvalidArgument, TASWTomlPath("a..b").GetError(),
+        invalidExpected.Path), "a path that isn't valid should fail with its error");
+    CheckEmpty(ResultProblem(invalidResult, invalidExpected.Code, invalidExpected.Message, invalidExpected.Path),
+        "as the document's Apply() fails");
+    CheckEmpty(ResultProblem(rootResult, ETomlCode::InvalidArgument, "Can't remove the root table.", ""),
+        "the root should fail");
+    CheckEmpty(ResultProblem(rootResult, rootExpected.Code, rootExpected.Message, rootExpected.Path),
+        "as the document's Apply() fails");
+    CheckTrue(missingResult.IsOk(), "a removal of nothing should succeed");
+    CheckEquals(before, toml.ToText(), "nothing should change");
+    CheckFalse(toml.IsModified(), "the document shouldn't be modified");
+    CheckEquals(2U, toml.GetReported().size(), "each failure should be reported once");
+    if (toml.GetReported().size() == 2)
+    {
+        CheckEmpty(MessageProblem(toml.GetReported()[1], ESeverity::Error, rootResult.Code, rootResult.Message, ""),
+            "as an Error");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Interface, Apply_SettingsEditIsRefused)
+{
+    // Arrange
+    // Only a setting's owner (a TASWBaseToml) makes its edit; the default makes the edits before it
+    ASWToml::TASWBaseToml owner;
+    ASWToml::TASWTomlTable table{ owner, "general" };
+    ASWToml::TASWTomlSetting<int> level{ table, "level", 1 };
+    TTestToml toml(SettingsText);
+    TASWTomlEdits edits;
+    edits.SetValue("port", 8080);
+    TASWTomlResult const added = level.Set(edits, 3);
+    edits.SetValue("name", "other");
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+
+    // Assert
+    TASWTomlResult const refused = ASWToml::Detail::SettingEditFailure("general.level");
+    CheckTrue(added.IsOk(), "the setting's edit should be added");
+    CheckEmpty(ResultProblem(result, ETomlCode::InvalidArgument, refused.Message, "general.level"),
+        "the setting's edit should be refused");
+    CheckEquals(8080, toml.GetValue("port", 0), "the edit before it should be kept");
+    CheckEquals(std::string("app"), toml.GetValue("name", ""), "and the one after it not made");
+    CheckEquals(1U, toml.GetReported().size(), "the failure should be reported once");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Interface, Apply_StopsAtTheFirstFailure)
+{
+    // Arrange
+    TTestToml toml(SettingsText);
+    TASWTomlDocument document;
+    TASWTomlResult const parsed = document.Parse(SettingsText);
+    TASWTomlResult const first = document.SetValue("port", 8080);
+    TASWTomlResult const expected = document.SetValue("port.x", 1);
+    TASWTomlEdits edits;
+    edits.SetValue("port", 8080).SetValue("port.x", 1).SetValue("name", "other");
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+
+    // Assert
+    CheckTrue(parsed.IsOk() && first.IsOk() && !expected.IsOk(), "the document should fail at the second edit");
+    CheckEmpty(ResultProblem(result, expected.Code, expected.Message, "port.x"),
+        "the failing edit's result should be returned");
+    CheckEquals(document.ToText(), toml.ToText(), "the edit before it should be kept, the one after it not made");
+    CheckEquals(1U, toml.GetReported().size(), "the failure should be reported once, by the operation that failed");
+    if (toml.GetReported().size() == 1)
+    {
+        CheckEmpty(MessageProblem(toml.GetReported()[0], ESeverity::Error, result.Code, result.Message, "port.x"),
+            "as the result says");
+    }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Interface, Apply_UsesTheValueOptions)
+{
+    // Arrange
+    TASWTomlOptions hexadecimal;
+    hexadecimal.Values.IntegerBase = EIntegerBase::Hexadecimal;
+    TTestToml toml("port = 1\nmasks = [1]\n", hexadecimal);
+    TASWTomlValueOptions octal;
+    octal.IntegerBase = EIntegerBase::Octal;
+    TASWTomlEdits edits;
+    edits.SetValue("port", 255).Append("masks", 8, octal).SetValue("mask", 9, octal).Append("masks", 16);
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+
+    // Assert
+    CheckTrue(result.IsOk(), "the edits should succeed: " + result.Message);
+    CheckEquals(std::string("port = 0xFF\n"
+        "masks = [1, 0o10, 0x10]\n"
+        "mask = 0o11\n"), toml.ToText(), "each value should be written with its edit's value options, or the object's");
+    CheckEquals(2, toml.GetValueOptionsAsked(), "the object's should be asked for once for each edit without");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Interface, GetValue_ConverterExceptionIsThrown)

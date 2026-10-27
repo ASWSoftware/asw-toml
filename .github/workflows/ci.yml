@@ -232,6 +232,49 @@ jobs:
             ctest --test-dir build-package -C "$config" --output-on-failure
           done
 
+  toml-test:
+    # toml-test's own runner (https://github.com/toml-lang/toml-test) on its TOML 1.1 list, with the decoder in
+    # tests/toml-test/decoder: each valid file must decode to the values toml-test expects, compared its own way, and
+    # each invalid one must be refused. The version is pinned, and is the one of the files the unit tests compile in
+    # (tests/toml-test/README.md).
+    name: Linux (GCC, toml-test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+      TOML_TEST_VERSION: v2.2.0
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # tests/cmake/CMakeLists.txt needs the ASWUnitTests submodule to configure, even for the decoder alone
+          submodules: true
+
+      - name: Set up Go
+        # toml-test is a Go program (Go 1.19 or later). No cache: the repository has no Go module of its own.
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install toml-test
+        run: go install "github.com/toml-lang/toml-test/v2/cmd/toml-test@${TOML_TEST_VERSION}"
+
+      - name: Configure
+        env:
+          CC: gcc
+          CXX: g++
+        run: cmake -S tests/cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build the decoder
+        run: cmake --build build --target ASWTomlTestDecoder
+
+      - name: Run toml-test
+        # It exits with 1 when a test fails, and lists each failure with the TOML, what toml-test expected and what the
+        # decoder wrote. toml-test splits -decoder at spaces, so its path can't have any.
+        run: |
+          "$(go env GOPATH)/bin/toml-test" test -toml=1.1 -decoder="$PWD/build/bin/ASWTomlTestDecoder"
+
   coverage:
     # Which lines of the library (ASWToml/) the tests run, on Linux: a table on this job's summary page, and an HTML
     # report (each source line marked) as an artifact. Informational: continue-on-error keeps it from failing the run;

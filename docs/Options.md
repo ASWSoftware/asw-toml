@@ -5,7 +5,8 @@ How TOML text is read, written and saved, and how values are written, is set by 
 `Writing`, `Saving` and `Values`. TOML has one syntax, so there is no dialect to choose: the
 reading options are limits. The defaults keep each line's line ending and the file's byte order
 mark, write `# comment` lines, save atomically, and write an integer in decimal and a path as a
-literal string, so most applications change nothing, or a setting or two.
+literal string, so most applications change nothing, or a setting or two. `ToJson()` has options of
+its own, given to each call: [`TASWTomlJsonOptions`](#taswtomljsonoptions-how-tojson-writes-json).
 
 ```cpp
 ASWToml::TASWBaseToml toml;
@@ -91,6 +92,19 @@ replaces one keeps that one's form with `Auto` (see [Format.md](Format.md)).
 | `StringStyle` | `Auto` | How a string is written (`EStringStyle`): `Auto`, as a literal string (`'C:\Users\me'`) when the text holds a backslash and a literal string can hold it, else a basic one, and in the form of the string it replaces; `Basic`, always a basic string (`"C:\\Users\\me"`); `Literal`, a literal string whenever one can hold the text (no `'` and no control character but a tab). |
 | `IntegerBase` | `Auto` | The base an integer is written in (`EIntegerBase`): `Auto`, decimal, or the base of the integer it replaces; `Decimal` (`255`), `Hexadecimal` (`0xFF`), `Octal` (`0o377`) or `Binary` (`0b11111111`). A negative number is always written in decimal, as TOML's other bases have no sign. |
 
+## `TASWTomlJsonOptions`: how `ToJson()` writes JSON
+
+`ToJson()` (`ASWToml_Json.h`, see [Types.md](Types.md#json)) takes its options with each call, not
+from `TASWTomlOptions`: exporting is an operation, not a way of reading or writing TOML. They are
+given with designated initializers, in the order of the members, e.g.
+`{ .Style = ASWToml::EJsonStyle::Tagged, .Indent = 0 }`.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `Style` | `Plain` | The form of the values (`EJsonStyle`): `Plain`, TOML's values as JSON's (a date or time as a string); `Tagged`, toml-test's form, every value but a table or an array as `{"type": "integer", "value": "42"}`, which loses nothing. |
+| `NonFinite` | `Fail` | How `Plain` writes `inf`, `-inf` and `nan`, which JSON has no number for (`EJsonNonFinite`): `Fail`, `ToJson()` fails with `InvalidValue`; `Null`, `null`; `String`, the float as TOML writes it, as a string (`"inf"`). `Tagged` always writes them. |
+| `Indent` | 2 | 0 for the whole text on one line, without blanks (`{"a":1,"b":[1,2]}`); else the spaces each level is indented by, from 1 to `MaxIndent` (16), laid out as JavaScript's `JSON.stringify(value, null, Indent)` and Python's `json.dumps(value, indent=Indent)` lay it out: each key and each element on a line of its own, `": "` after a key, and an empty table or array as `{}` or `[]`. A tagged value is always on one line. |
+
 ## Validation
 
 Each group's `Validate()` checks its own settings, and `TASWTomlOptions::Validate()` checks the four
@@ -105,5 +119,10 @@ with a message about the first problem it finds. The rules:
 - Each enumeration (`LineEnding`, `Bom`, `CommentPolicy`, `StringStyle`, `IntegerBase`) is one of
   its values, in case one was made from a number.
 
+`TASWTomlJsonOptions::Validate()` checks the JSON options the same way: `Indent` is at most
+`MaxIndent` (16), and `Style` and `NonFinite` are among their values. `ToJson()` calls it, and fails
+with its `InvalidOptions` before writing anything.
+
 `ToString()` names a value of each enumeration, e.g. `ToString(ASWToml::ELineEnding::CRLF)` is
-`"CRLF"`, and `"Unknown"` for a number that isn't one of its values.
+`"CRLF"` and `ToString(ASWToml::EJsonStyle::Tagged)` is `"Tagged"`, and `"Unknown"` for a number
+that isn't one of its values.

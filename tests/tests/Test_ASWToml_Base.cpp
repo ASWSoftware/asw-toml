@@ -23,6 +23,7 @@ SPDX-License-Identifier: MIT
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <random>
 #include <shared_mutex>
@@ -50,6 +51,7 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_File.h"
 #include "ASWToml_Interface.h"
 #include "ASWToml_Options.h"
@@ -85,6 +87,7 @@ using ASWToml::ETomlCode;
 using ASWToml::PathToUtf8;
 using ASWToml::TASWBaseToml;
 using ASWToml::TASWTomlDocument;
+using ASWToml::TASWTomlEdits;
 using ASWToml::TASWTomlLogCallback;
 using ASWToml::TASWTomlMessage;
 using ASWToml::TASWTomlOptions;
@@ -164,6 +167,8 @@ enum class EEditDuringSave
     RemoveKey,
     RemoveTable,
     FailedEdit,
+    Batch,
+    FailedBatch,
 };
 
 // The operation TOverlapSeam starts on another thread while it reads or writes the file
@@ -581,14 +586,19 @@ public:
     TASWTomlResult operator()(TWriteCall const& call) const;
 };
 
+//---------------------------------------------------------------------------
+
+void ApplyBatches(TThreadTest& test, std::size_t index);
 void CountUp(TThreadTest& test, std::size_t index);
 void FailEdits(TThreadTest& test, std::size_t index);
+TASWTomlEdits GenerationEdits(int generation);
 std::vector<TGenerationServer> GenerationServers(int generation);
 void LoadAppFile(TASWBaseToml* toml);
 void LoadRepeatedly(TThreadTest& test, std::size_t index);
 void LockReader(TLockCounters& counters, int iterations);
 void LockWriter(TLockCounters& counters, int iterations);
 TASWTomlDocument ParsedDocument(std::string_view text);
+void ReadBatches(TThreadTest& test, std::size_t index);
 void ReadCounts(TThreadTest& test, std::size_t index);
 void ReadDuringFileOperations(TThreadTest& test, std::size_t index);
 void ReadWithOptions(TThreadTest& test, std::size_t index);
@@ -606,6 +616,25 @@ void UseScratchTable(TThreadTest& test, std::size_t index);
 std::string ValuesProblem(TASWTomlDocument const& document, std::size_t writers, int largest);
 void WriteServers(TThreadTest& test, std::size_t index);
 
+//---------------------------------------------------------------------------
+/*
+    ApplyBatches
+
+    A writer thread of Apply_LookupsSeeAllOrNone: test.Iterations times, sets the keys of "batch" to the next
+    generation, in one batch (see GenerationEdits()).
+*/
+void ApplyBatches(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    for (int generation = 1; generation <= test.Iterations; ++generation)
+    {
+        TASWTomlResult const result = test.Toml.Apply(GenerationEdits(generation));
+        if (!result.IsOk())
+            test.Failures.Add("the batch should succeed: " + result.Message);
+
+        MaybeYield(generator);
+    }
+}
 //---------------------------------------------------------------------------
 /*
     CountUp
@@ -648,6 +677,19 @@ void FailEdits(TThreadTest& test, std::size_t index)
     }
 
     --test.Left;
+}
+//---------------------------------------------------------------------------
+/*
+    GenerationEdits
+
+    The batch of generation 'generation': batch.a, batch.b and batch.c set to it.
+*/
+TASWTomlEdits GenerationEdits(int generation)
+{
+    TASWTomlEdits edits;
+    edits.SetValue("batch.a", generation).SetValue("batch.b", generation).SetValue("batch.c", generation);
+
+    return edits;
 }
 //---------------------------------------------------------------------------
 /*
@@ -751,6 +793,33 @@ TASWTomlDocument ParsedDocument(std::string_view text)
     static_cast<void>(document.Parse(text));
 
     return document;
+}
+//---------------------------------------------------------------------------
+/*
+    ReadBatches
+
+    A reader thread of Apply_LookupsSeeAllOrNone: test.Iterations times, reads the table "batch", checking that its
+    three keys are of one generation that never goes back.
+*/
+void ReadBatches(TThreadTest& test, std::size_t index)
+{
+    std::mt19937 generator(ThreadsSeed + static_cast<std::uint32_t>(index));
+    int last = 0;
+    for (int i = 0; i < test.Iterations; ++i)
+    {
+        std::map<std::string, int> batch;
+        TASWTomlResult const result = test.Toml.TryGetValue("batch", batch);
+        if (!result.IsOk())
+            test.Failures.Add("the batch's table should convert: " + result.Message);
+        else if (batch.size() != 3 || batch["a"] != batch["b"] || batch["a"] != batch["c"])
+            test.Failures.Add("the batch's keys should be of one generation");
+        else if (batch["a"] < last)
+            test.Failures.Add("the batch's generation shouldn't go back");
+        else
+            last = batch["a"];
+
+        MaybeYield(generator);
+    }
 }
 //---------------------------------------------------------------------------
 /*
@@ -1236,6 +1305,12 @@ TEditingWriter::TEditingWriter(TSeamToml& toml, EEditDuringSave const& edit)
 //---------------------------------------------------------------------------
 TASWTomlResult TEditingWriter::operator()(TWriteCall const& call) const
 {
+    // The batches it makes: one that succeeds, and one whose second edit fails
+    TASWTomlEdits batch;
+    batch.SetValue("window.top", 5).Remove("name");
+    TASWTomlEdits failedBatch;
+    failedBatch.SetValue("window.top", 6).Rename("missing", "other");
+
     switch (*m_Edit)
     {
         case EEditDuringSave::SetKey:
@@ -1252,6 +1327,14 @@ TASWTomlResult TEditingWriter::operator()(TWriteCall const& call) const
 
         case EEditDuringSave::FailedEdit:
             static_cast<void>(m_Toml->Rename("missing", "other"));
+            break;
+
+        case EEditDuringSave::Batch:
+            static_cast<void>(m_Toml->Apply(batch));
+            break;
+
+        case EEditDuringSave::FailedBatch:
+            static_cast<void>(m_Toml->Apply(failedBatch));
             break;
     }
 
@@ -1594,6 +1677,55 @@ void TTest_ASWToml_BaseAccess::TearDown_Test(ITestCase& /*testCase*/)
 // /////// Begin tests after this line ///////////////////////
 
 //---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseAccess, Apply_FailureChangesNothing)
+{
+    // Arrange
+    TASWBaseToml toml;
+    static_cast<void>(toml.LoadText(SampleText));
+    TASWTomlDocument document = ParsedDocument(SampleText);
+    TASWTomlEdits edits;
+    edits.SetValue("port", 8080).Remove("servers[0]").Rename("missing", "other").SetValue("name", "other");
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+    TASWTomlResult const expected = document.Apply(edits);
+
+    // Assert
+    CheckFalse(expected.IsOk(), "the document should fail at the renaming");
+    CheckTrue(SameResult(result, expected), "the result should be the document's: " + result.Message);
+    CheckEquals(std::string(SampleText), toml.ToText(), "nothing should change, not even the edits before it");
+    CheckFalse(toml.IsModified(), "the object shouldn't be modified");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseAccess, Apply_MatchesTheDocument)
+{
+    // Arrange
+    TASWBaseToml toml;
+    static_cast<void>(toml.LoadText(SampleText));
+    TASWTomlDocument document = ParsedDocument(SampleText);
+    TASWTomlValue const server = TTable{ { "host", "b" }, { "port", 2 } };
+    TASWTomlEdits edits;
+    edits.SetValue("port", 8080).SetValue("window.left", 10).SetValue("new.key", "value").Append("servers", server);
+    edits.Rename("window.height", "tall").SetComment("window", "The main window").SetTrailingComment("port", "TCP");
+    edits.SetComment("", "New file comment").Remove("servers[0]");
+    TASWBaseToml empty;
+    static_cast<void>(empty.LoadText(SampleText));
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+    TASWTomlResult const expected = document.Apply(edits);
+    TASWTomlResult const none = empty.Apply(TASWTomlEdits());
+
+    // Assert
+    CheckTrue(result.IsOk() && expected.IsOk(), "the batch should succeed: " + result.Message);
+    CheckEquals(document.ToText(), toml.ToText(), "the batch should change the text as it does the document's");
+    CheckEquals(8080, toml.GetValue("port", 0), "a lookup should see the edits");
+    CheckTrue(toml.IsModified(), "the object should be modified");
+    CheckTrue(none.IsOk(), "an empty batch should succeed");
+    CheckEquals(std::string(SampleText), empty.ToText(), "and change nothing");
+    CheckFalse(empty.IsModified(), "nor set the modified flag");
+}
+//---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseAccess, Edits_FailureChangesNothing)
 {
     // Arrange
@@ -1839,6 +1971,59 @@ ASW_TEST(TTest_ASWToml_BaseAccess, New_IsEmptyWithTheDefaultOptions)
     CheckTrue(toml.GetValueOptions().IntegerBase == EIntegerBase::Auto, "the value options should be the defaults");
     CheckEquals(std::string(ASWToml::Version), std::string(toml.GetVersionStr()),
         "the version should be the library's");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseAccess, OutOfMemory_ApplyChangesNothing)
+{
+    // Arrange
+    if (!CanFailAllocations())
+        Skip("allocations can't be made to fail in this build (see CanFailAllocations())");
+
+    // The edits are made before an allocation can fail
+    std::string const value = "A value long enough not to fit in a string's own buffer";
+    TASWTomlEdits edits;
+    edits.SetValue("new.key", value).SetValue("port", 8080).Remove("window.height");
+    std::size_t failures = 0;
+
+    // Act & Assert
+    // Each allocation of the batch fails in turn, on a new object, until the batch makes no more
+    for (std::size_t number = 1; number < 100000; ++number)
+    {
+        TASWBaseToml toml;
+        static_cast<void>(toml.LoadText(SampleText));
+        std::string const which = " (allocation " + std::to_string(number) + ")";
+        TASWTomlResult result;
+        bool failed = false;
+        {
+            TFailingAlloc failingAlloc(number);
+            result = toml.Apply(edits);
+            failed = failingAlloc.HasFailed();
+        }
+
+        if (result.IsOk())
+        {
+            CheckTrue(toml.GetValue("new.key", std::string()) == value && toml.GetValue("port", 0) == 8080 &&
+                !toml.Contains("window.height") && toml.IsModified(), "a batch that succeeded should be complete" +
+                which);
+        }
+        else
+        {
+            ++failures;
+            CheckTrue(failed, "the batch should only fail when an allocation fails" + which);
+            CheckEquals(static_cast<int>(ETomlCode::UnexpectedException), static_cast<int>(result.Code),
+                "a failed allocation should be UnexpectedException" + which);
+            CheckStartsWith(result.Message, std::string("An unexpected exception was thrown: "),
+                "the message should say what was thrown" + which);
+            CheckEquals(std::string(), result.Path, "the result should have no path, since any edit may throw" + which);
+            CheckEquals(std::string(SampleText), toml.ToText(), "a failed batch should change nothing" + which);
+            CheckFalse(toml.IsModified(), "a failed batch shouldn't set the modified flag" + which);
+        }
+
+        if (!failed)
+            break;
+    }
+
+    CheckGreaterThan(failures, std::size_t(0), "at least one allocation should have failed");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseAccess, OutOfMemory_EditChangesNothing)
@@ -2234,6 +2419,41 @@ ASW_TEST(TTest_ASWToml_BaseCallback, Callback_MayReplaceItself)
     // Assert
     CheckEquals(std::size_t(1), calls, "the first callback should get the first message");
     CheckEquals(std::size_t(1), recorded.size(), "the callback it set should get the next one");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseCallback, FailedBatch_IsReportedOnce)
+{
+    // Arrange
+    TASWBaseToml toml;
+    static_cast<void>(toml.LoadText(SampleText));
+    TMessageVector messages;
+    toml.SetLogCallback(TRecorder(messages));
+    TASWTomlEdits succeeds;
+    succeeds.SetValue("window.width", 1).Remove("missing");
+    TASWTomlEdits fails;
+    fails.SetValue("port", 2).SetValue("port.x", 1).Rename("missing", "other");
+    TASWTomlEdits unconverted;
+    unconverted.SetValue("port", 3).SetValue("name", "\xFF");
+
+    // Act
+    TASWTomlResult const ok = toml.Apply(succeeds);
+    TASWTomlResult const results[] = { toml.Apply(fails), toml.Apply(unconverted) };
+
+    // Assert
+    CheckTrue(ok.IsOk(), "the first batch should succeed");
+    CheckEquals(std::string("port.x"), results[0].Path, "a batch should fail at its first failing edit");
+    CheckEquals(std::string("name"), results[1].Path, "or at the value that didn't convert");
+    std::size_t const count = sizeof(results) / sizeof(results[0]);
+    CheckEquals(count, messages.size(), "each failed batch, and only those, should be reported once");
+    for (std::size_t i = 0; i < count && i < messages.size(); ++i)
+    {
+        std::string const which = " (batch " + std::to_string(i) + ")";
+        CheckFalse(results[i].IsOk(), "the batch should fail" + which);
+        CheckTrue(messages[i].Severity == ESeverity::Error, "the message should be an Error" + which);
+        CheckTrue(messages[i].Code == results[i].Code, "with the result's code" + which);
+        CheckEquals(results[i].Message, messages[i].Text, "text" + which);
+        CheckEquals(results[i].Path, messages[i].Path, "and path" + which);
+    }
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseCallback, FailedEdit_IsReportedAsAnError)
@@ -3015,6 +3235,29 @@ ASW_TEST(TTest_ASWToml_BaseFile, Save_EditDuringSaveKeepsTheModifiedFlag)
     CheckFalse(toml.IsModified(), "an edit that failed during the save changed nothing, so the flag should be cleared");
     CheckTrue(ReadTestFile(file, contents), "the file should exist");
     CheckEquals(toml.ToText(), contents, "the file should have the document's text");
+
+    // Act
+    edit = EEditDuringSave::Batch;
+    std::string const textOfFifthSave = toml.ToText();
+    TASWTomlResult const fifth = toml.Save();
+
+    // Assert
+    CheckTrue(fifth.IsOk(), "the file should be saved: " + fifth.Message);
+    CheckTrue(toml.IsModified(), "a batch made during the save should keep the modified flag");
+    CheckTrue(ReadTestFile(file, contents), "the file should exist");
+    CheckEquals(textOfFifthSave, contents, "the file should have the text before the batch");
+    CheckEquals(5, toml.GetValue("window.top", 0), "the document should have the batch");
+
+    // Act
+    edit = EEditDuringSave::FailedBatch;
+    TASWTomlResult const sixth = toml.Save();
+
+    // Assert
+    CheckTrue(sixth.IsOk(), "the file should be saved: " + sixth.Message);
+    CheckFalse(toml.IsModified(), "a batch that failed during the save changed nothing, so the flag should be cleared");
+    CheckEquals(5, toml.GetValue("window.top", 0), "the failed batch should change nothing");
+    CheckTrue(ReadTestFile(file, contents), "the file should exist");
+    CheckEquals(toml.ToText(), contents, "the file should have the document's text");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseFile, Save_NoFilePathFails)
@@ -3388,6 +3631,50 @@ void TTest_ASWToml_BaseThreads::TearDown_Test(ITestCase& /*testCase*/)
 
 // /////// Begin tests after this line ///////////////////////
 
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_BaseThreads, Apply_LookupsSeeAllOrNone)
+{
+    // Arrange
+    // A writer sets the three keys of "batch" to the next generation in one batch, while others count their own keys
+    // up. Readers check that the keys of "batch", read in one lookup, are always of one generation that never goes
+    // back.
+    TThreadTest test;
+    test.Writers = 2;
+    test.Iterations = 1000;
+    test.Largest = test.Iterations;
+    std::size_t const readers = 3;
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        static_cast<void>(test.Toml.SetValue(WriterPath(i), 0));
+
+    static_cast<void>(test.Toml.Apply(GenerationEdits(0)));
+    std::atomic<int> reports{ 0 };
+    test.Toml.SetLogCallback(TCountingCallback(reports));
+    TWorkVector work;
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        work.push_back(std::bind(CountUp, std::ref(test), i));
+
+    for (std::size_t i = 0; i < readers; ++i)
+        work.push_back(std::bind(ReadBatches, std::ref(test), test.Writers + i));
+
+    work.push_back(std::bind(ApplyBatches, std::ref(test), test.Writers + readers));
+
+    // Act
+    RunTogether(work, test.Failures);
+
+    // Assert
+    CheckEquals(std::string(), test.Failures.Summary(), "no thread should find a problem");
+    std::map<std::string, int> const batch = test.Toml.GetValue("batch", std::map<std::string, int>());
+    std::map<std::string, int> const last = { { "a", test.Iterations }, { "b", test.Iterations },
+        { "c", test.Iterations } };
+    CheckTrue(batch == last, "the batch should have the last generation");
+    for (std::size_t i = 0; i < test.Writers; ++i)
+        CheckEquals(test.Iterations, test.Toml.GetValue(WriterPath(i), -1),
+            "each count should have its writer's last value");
+
+    CheckEquals(std::string(), ValuesProblem(test.Toml.GetDocument(), test.Writers, test.Iterations),
+        "the document should read back as it is");
+    CheckEquals(0, reports.load(), "nothing should be reported");
+}
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseThreads, Edits_LookupsNeverSeeAValueGoBack)
 {

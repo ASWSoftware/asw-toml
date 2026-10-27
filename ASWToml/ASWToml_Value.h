@@ -388,7 +388,9 @@ public:
     TKeyValueVector* AsTable() noexcept;
     TKeyValueVector const* AsTable() const noexcept;
 
-    // The value of 'key' in a table; nullptr if there is no such key or this value isn't a table
+    // The value of 'key' in a table; nullptr if there is no such key or this value isn't a table. It compares the
+    // table's keys one by one, so in a large table, find through a document instead (TASWTomlDocument::Find(), whose
+    // index finds a key in O(log n))
     TASWTomlValue* Find(std::string_view key) noexcept;
     TASWTomlValue const* Find(std::string_view key) const noexcept;
 

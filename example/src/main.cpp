@@ -4,10 +4,11 @@ Author: Anthony S. West - ASW Software
 
 Example for ASWToml: an application's settings class (with a table and an
 array of tables of its own structs), its first run, a file a user edited,
-settings used from two threads, values the class doesn't declare, and the
-document on its own. It writes ASWTomlExample.toml in the temp folder's
-ASWTomlExample folder, starting afresh on each run, and returns 0 when every
-step did what it shows. Run with --pause to wait for Enter before exiting.
+settings used from two threads, values the class doesn't declare, the
+document on its own, and several changes as one with the values as JSON. It
+writes ASWTomlExample.toml in the temp folder's ASWTomlExample folder,
+starting afresh on each run, and returns 0 when every step did what it shows.
+Run with --pause to wait for Enter before exiting.
 
 Copyright 2026 ASW Software
 
@@ -37,7 +38,9 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_File.h"
+#include "ASWToml_Json.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Settings.h"
 #include "ASWToml_Types.h"
@@ -192,6 +195,7 @@ void Step3_AUserEditedTheFile(TAppSettings& settings, std::filesystem::path cons
 void Step4_Threads(TAppSettings& settings);
 void Step5_ValuesTheClassDoesntDeclare(TAppSettings& settings, std::filesystem::path const& file);
 void Step6_TheDocument(TAppSettings const& settings);
+void Step7_SeveralChangesAsOne(TAppSettings& settings, std::filesystem::path const& file);
 template <typename T>
 std::string Text(T const& value);
 bool WriteFileText(std::filesystem::path const& path, std::string const& text);
@@ -254,7 +258,7 @@ void PrintMessage(ASWToml::TASWTomlMessage const& message)
 /*
     PrintText
 
-    Prints 'text', a TOML text, each line indented, without its line break.
+    Prints 'text', a TOML or JSON text, each line indented, without its line break.
 */
 void PrintText(std::string const& text)
 {
@@ -548,6 +552,58 @@ void Step6_TheDocument(TAppSettings const& settings)
 }
 //---------------------------------------------------------------------------
 /*
+    Step7_SeveralChangesAsOne
+
+    Makes several changes as one batch (TASWTomlEdits): two settings, added with Set() given the edits, and two
+    values the class doesn't declare, which Apply() makes all at once, under one lock, so another thread sees all of
+    them or none, at about the cost of one edit. A setting's value that Set() refuses is reported and left out, and
+    the rest is made; a batch with an edit that fails changes nothing. Then writes the network table as JSON with
+    ToJson(), and one value in toml-test's Tagged form, which keeps its TOML type.
+*/
+void Step7_SeveralChangesAsOne(TAppSettings& settings, std::filesystem::path const& file)
+{
+    PrintHeading("7. Several changes as one, and JSON");
+
+    ASWToml::TASWTomlEdits edits;
+    Check(settings.Theme.Set(edits, ETheme::Light).IsOk(), "the theme should be added to the batch");
+    Check(settings.Zoom.Set(edits, 1.25).IsOk(), "the zoom should be added to the batch");
+    ASWToml::TASWTomlResult const refused = settings.Level.Set(edits, 9);
+    Check(refused.Code == ASWToml::ETomlCode::ValueOutOfRange, "level 9 should be refused");
+    edits.SetValue("plugins.spell.enabled", true).SetComment("plugins.spell.enabled", "Checks while typing");
+    std::cout << "  " << edits.GetEdits().size() << " edits (level 9 refused: " << ASWToml::ToString(refused.Code);
+    std::cout << ")\n";
+
+    Check(settings.Apply(edits).IsOk(), "the batch should be made");
+    std::cout << "  Apply(): theme " << Text(settings.Theme.Get()) << ", zoom " << settings.Zoom.Get();
+    std::cout << ", plugins.spell.enabled " << Text(settings.GetValue("plugins.spell.enabled", false)) << "\n";
+
+    // days_kept exists, so the rename fails, and the user name isn't set either
+    ASWToml::TASWTomlEdits failing;
+    Check(settings.UserName.Set(failing, "Ada").IsOk(), "the user name should be added to the batch");
+    failing.Rename("logging.level", "days_kept");
+    std::string const before = settings.ToText();
+    ASWToml::TASWTomlResult const failed = settings.Apply(failing);
+    Check(failed.Code == ASWToml::ETomlCode::AlreadyExists, "the batch should fail");
+    Check(settings.ToText() == before, "the failed batch should change nothing");
+    std::cout << "  Apply() of a batch with an edit that fails: " << ASWToml::ToString(failed.Code);
+    std::cout << "; the user name is still " << settings.UserName.Get() << "\n";
+
+    Check(settings.Save().IsOk(), "the file should be saved");
+    PrintFile(file);
+
+    std::string json;
+    Check(ASWToml::ToJson(settings.GetValue("network", ASWToml::TASWTomlValue()), json).IsOk(),
+        "the network table should be written as JSON");
+    std::cout << "  ToJson() of network:\n";
+    PrintText(json);
+
+    std::string tagged;
+    Check(ASWToml::ToJson(settings.GetValue("general.licence_expires", ASWToml::TASWTomlValue()), tagged,
+        { .Style = ASWToml::EJsonStyle::Tagged }).IsOk(), "licence_expires should be written as tagged JSON");
+    std::cout << "  ToJson() of general.licence_expires, Tagged: " << tagged << "\n";
+}
+//---------------------------------------------------------------------------
+/*
     Text
 
     'value' as TOML text, as the library writes it with the default value options: the value of a key v in a
@@ -646,6 +702,7 @@ int main(int argc, char* argv[])
     Step4_Threads(settings);
     Step5_ValuesTheClassDoesntDeclare(settings, file);
     Step6_TheDocument(settings);
+    Step7_SeveralChangesAsOne(settings, file);
 
     std::cout << "\nThe file is " << ASWToml::PathToUtf8(file) << "\n";
     if (UnexpectedCount != 0)
