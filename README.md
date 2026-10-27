@@ -370,7 +370,9 @@ later standard.
 The tests include every file of [toml-test](https://github.com/toml-lang/toml-test)'s TOML 1.1 list,
 compiled in from `tests/toml-test` (its README says which version and how to update it): each valid
 file must read as toml-test's expected values and be written back byte for byte, and each invalid
-one must fail.
+one must fail. CI also runs toml-test's own program on that list, with the decoder the tests' CMake
+project builds (`ASWTomlTestDecoder`, from `tests/toml-test/decoder`): the "Linux (GCC, toml-test)"
+job. `tests/toml-test/README.md` says how to run it by hand.
 
 For RAD Studio, use `tests/rad370/ASWTomlTests.cbproj` or its scripts, `Build_Win64x_Debug.bat` and
 `Build_Win64x_Release.bat` (bcc64x). Output is written to `tests/build/bin/Win64x/<Config>`. GitHub

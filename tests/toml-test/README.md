@@ -4,7 +4,8 @@ The unit tests check ASWToml against [toml-test](https://github.com/toml-lang/to
 language-neutral test suite for TOML parsers: every file in its TOML 1.1 list
 (`tests/files-toml-1.1.0`). `TTest_ASWToml_TomlTest` in `tests/tests/Test_ASWToml_Document.cpp`
 checks that each valid file reads as the values its `.json` file gives and is written back byte for
-byte, and that each invalid file fails to parse.
+byte, and that each invalid file fails to parse. `tests/tests/Test_ASWToml_Json.cpp` checks that
+each valid file written as toml-test's tagged JSON (`ToJson()`) reads back as those values.
 
 The files are compiled into the tests, so they need no file paths at run time and run the same in
 every build (CMake, RAD Studio, CI):
@@ -13,6 +14,27 @@ every build (CMake, RAD Studio, CI):
   them. They hold each file as a C++ string literal (ASCII, with escapes for every other byte), and
   each valid file's expected values flattened to lines (`generate_corpus.py` describes the format).
 - `LICENSE-toml-test` is toml-test's license (MIT), which covers the files in the corpus.
+
+## toml-test's own runner
+
+CI also runs toml-test's own program on the same list, which compares the values its own way
+rather than as the unit tests read the `.json` files. It needs a decoder, a program that reads a
+TOML text on stdin and writes its values on stdout as toml-test's tagged JSON, or fails with exit
+code 1 for a text that isn't valid TOML. `decoder/main.cpp` is ASWToml's: it parses the text with
+the default options and writes it with `ToJson()` in the Tagged style. The tests' CMake project
+builds it next to the tests as `ASWTomlTestDecoder` (RAD Studio doesn't build it).
+
+To run it by hand, install toml-test with [Go](https://go.dev) (1.19 or later), then run it with
+the decoder's full path, which can't have spaces (toml-test splits the command at them):
+
+```
+go install github.com/toml-lang/toml-test/v2/cmd/toml-test@v2.2.0
+toml-test test -toml=1.1 -decoder=/path/to/tests/cmake/build/bin/ASWTomlTestDecoder
+```
+
+It prints the number of valid and invalid tests that passed and failed, each failure with its TOML,
+what toml-test expected and what the decoder wrote, and exits with 1 when any failed. The "Linux
+(GCC, toml-test)" job of `.github/workflows/ci.yml` does the same.
 
 ## Version
 
@@ -29,6 +51,7 @@ python generate_corpus.py <extracted folder, e.g. toml-test-2.2.0>
 ```
 
 It writes `TomlTest_Corpus.cpp` and `TomlTest_Corpus.h` next to itself. Then update the version
-above, the numbers of files the tests expect (in `Test_ASWToml_Document.cpp`), and
-`LICENSE-toml-test` if toml-test's license changed. CI never runs the generator: the generated
-files are committed.
+above and in the `go install` line, `TOML_TEST_VERSION` in `.github/workflows/ci.yml` (so CI's
+runner tests the same files), the numbers of files the tests expect (in
+`Test_ASWToml_Document.cpp`), and `LICENSE-toml-test` if toml-test's license changed. CI never runs
+the generator: the generated files are committed.

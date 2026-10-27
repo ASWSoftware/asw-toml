@@ -104,3 +104,25 @@ endif()
 set_target_properties(ASWTomlTests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# The decoder that toml-test's own runner starts for each test file (see tests/toml-test/README.md), built with the
+# same options, next to the tests.
+add_executable(ASWTomlTestDecoder
+    "${ASWTOML_TOML_TEST_DIR}/decoder/main.cpp"
+)
+
+target_link_libraries(ASWTomlTestDecoder PRIVATE ASWToml::ASWToml)
+
+if(MSVC)
+    target_compile_options(ASWTomlTestDecoder PRIVATE /W4 /Zc:__cplusplus)
+else()
+    target_compile_options(ASWTomlTestDecoder PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(MINGW)
+    target_link_options(ASWTomlTestDecoder PRIVATE -static-libgcc -static-libstdc++ -static)
+endif()
+
+set_target_properties(ASWTomlTestDecoder PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
