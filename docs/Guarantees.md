@@ -1,19 +1,24 @@
 # Guarantees: errors, threads, lifetimes and saving
 
-What ASWToml promises about failures, threads, object lifetimes, memory and stack, and the files it
-saves. The header comments have the details of each class and operation.
+What ASWToml promises about failures, threads, object lifetimes, memory and stack, the files it
+saves, and what each operation costs. The header comments have the details of each class and
+operation.
 
 ## Problems are returned and reported, not thrown
 
-- `Load()`, `LoadText()`, `Save()`, `SaveAs()` and every other operation that returns a
-  `TASWTomlResult` never throw. A failure is returned (`IsOk()` is false, with its `Code`, a
-  `Message` that is a complete sentence, and the file path, line, column, path and system error
-  when they apply) and reported to the log callback as an error. An unexpected exception inside one
-  (in practice `std::bad_alloc`, or one an application's converter or validator throws) is returned
-  as `UnexpectedException`, with nothing changed. `TASWTomlResult` is `[[nodiscard]]`.
+- A TOML object's `Load()`, `LoadText()`, `Save()`, `SaveAs()`, `Apply()` and every other
+  operation of it (and of its settings) that returns a `TASWTomlResult` never throw. A failure is
+  returned (`IsOk()` is false, with its `Code`, a `Message` that is a complete sentence, and the
+  file path, line, column, path and system error when they apply) and reported to the log callback
+  as an error. An unexpected exception inside one (in practice `std::bad_alloc`, or one an
+  application's converter or validator throws) is returned as `UnexpectedException`, with nothing
+  changed. `TASWTomlResult` is `[[nodiscard]]`.
+- A `TASWTomlDocument`'s operations and `ToJson()` return their failures the same way, with no log
+  callback to report them to, and throw only `std::bad_alloc`, after which nothing has changed.
 - A failed operation changes nothing: a load that fails keeps the document and the file path it
   had, a save that fails leaves the file, the document, the file path and `IsModified()` as they
-  were, and an edit that fails leaves the document as it was. A text with an error never loads in
+  were, and an edit that fails leaves the document as it was, as does a batch of edits, none of
+  which is made when one fails. A text with an error never loads in
   part: the first error fails the load (see [Format.md](Format.md)). The one exception is a missing
   file on `Load()` (an application's first run): the document is emptied (and given the settings'
   defaults) and the path becomes the file path, so `Save()` creates the file; the result is
@@ -30,12 +35,12 @@ saves. The header comments have the details of each class and operation.
 
 ### Out of memory
 
-The library's tests make each allocation of loading, saving, editing, applying the settings and a
-setting's `Set()` fail in turn, and check that the result is `UnexpectedException` with nothing
-changed, or a success that is complete. A save that fails after making its temporary file deletes
-it. With MSVC's debug iterators (a Debug build's default), the standard library allocates in some
-`noexcept` move constructors, so a failed allocation there ends the program (`std::terminate()`);
-release builds don't.
+The library's tests make each allocation of loading, saving, editing, a batch's `Apply()`, applying
+the settings and a setting's `Set()` fail in turn, and check that the result is
+`UnexpectedException` with nothing changed, or a success that is complete. A save that fails after
+making its temporary file deletes it. With MSVC's debug iterators (a Debug build's default), the
+standard library allocates in some `noexcept` move constructors, so a failed allocation there ends
+the program (`std::terminate()`); release builds don't.
 
 ## Thread safety
 
@@ -53,18 +58,24 @@ release builds don't.
   never pointers into the document, which another thread may change.
 - A setting's `Get()`, `Set()`, `Reset()` and `IsPresent()` are the owner's operations, as safe as
   them. Several calls are separate operations, though: another thread may see some of several
-  `Set()`s done and not the others. There is no edit of several keys under one lock in 1.0.
-- Each edit writes and parses the whole text under the exclusive lock (microseconds for a settings
-  file), so the object is for settings that are read often and written now and then, not for state
-  that changes many times a second (see [Settings.md](Settings.md)). libstdc++'s
+  `Set()`s done and not the others. A batch (`TASWTomlEdits`) is one: `Apply()` makes all its
+  edits under the exclusive lock, so other threads see all of them or none (see
+  [Settings.md](Settings.md#several-settings-as-one)).
+- An implementation of `IASWToml` of the application's own that doesn't override `Apply()` gets a
+  default that makes the edits one after the other through the implementation's own operations,
+  stopping at the first that fails and keeping the edits before it: not all or nothing.
+- Each edit writes and parses the whole text under the exclusive lock (see
+  [What costs what](#what-costs-what)), so the object is for settings that are read often and
+  written now and then, not for state that changes many times a second (see
+  [Settings.md](Settings.md)). libstdc++'s
   `std::shared_mutex` (GCC's standard library, on Linux and with MinGW) isn't fair to writers: with
   several threads editing back to back, one edit can wait hundreds of milliseconds, even seconds.
   libc++ and MSVC's standard library wait milliseconds at most.
 - `TASWTomlDocument` on its own isn't thread-safe (it is a plain value, copyable and movable: copy
   it, or guard it).
-- Two processes that use the same file aren't coordinated (there is no cross-process file lock in
-  1.0): each save replaces the whole file, so the last save wins, and a load reads either the old or
-  the new file, never a mix.
+- Two processes that use the same file aren't coordinated (there is no cross-process file lock):
+  each save replaces the whole file, so the last save wins, and a load reads either the old or the
+  new file, never a mix.
 
 ## Which thread runs a callback, and what it may do
 
@@ -106,6 +117,11 @@ edit that would nest a value deeper (see [Options.md](Options.md)). At 128, the 
 about 200 KB of stack in the measured worst case, an unoptimized MSVC build, and much less when
 optimized: well under a quarter of a 1 MB thread stack (Windows' default).
 
+`ToJson()` recurses too, and refuses a value inside more than 128 tables and arrays of the value it
+writes with `NestingTooDeep`, so no document's values are too deep for it (a value of the
+application's own can be nested deeper than any document). It takes far less stack: about 40 KB at
+its limit in the same build.
+
 ## Saving and crashes
 
 - By default a save is atomic: the text is written to a temporary file in the same folder, flushed
@@ -137,6 +153,34 @@ optimized: well under a quarter of a 1 MB thread stack (Windows' default).
 - What a value converter writes always reads back as the same value (e.g. the shortest text of a
   `double` that reads back exactly), on every supported compiler.
 
+## What costs what
+
+How the cost of each operation grows, without figures, which depend on the machine and the file:
+
+- **A load** reads the file and parses the whole text once, building the values and an index of the
+  tables and keys. A settings class then brings it up to date with a few edits, however many
+  settings it has: at most one for each table of settings (and one for each setting that has value
+  options of its own), and one for all the comments.
+- **A lookup** (`GetValue()`, `TryGetValue()`, `Contains()`, `TASWTomlDocument::Find()`) goes down
+  the path's key parts through the index: a key of a table of more than 16 keys is found in
+  O(log n), one of a smaller table by comparing its keys. `TASWTomlValue::Find()`, in a value of its
+  own, always compares the keys one by one. A setting's `Get()` is a lookup and a conversion.
+- **An edit** (`SetValue()`, `Append()`, `Remove()`, `Rename()`, a comment, a setting's `Set()`)
+  writes the changed text and parses the whole text again, about the cost of a load, so it grows
+  with the file, not with the change.
+- **A batch** (`Apply()`) writes its edits of different places together and parses the text once
+  for them, so several edits cost about one; only edits that depend on each other (at paths that
+  lead to one another, e.g. a key set inside a table an earlier edit of the batch adds, or changing
+  text next to each other's) need the text parsed again between them.
+- **Writing the text** (`ToText()`, a save) writes the text the document keeps, formatting nothing.
+- **`ToJson()`** walks the value once.
+- **Copies**: `GetDocument()` copies the whole document, and a lookup of a `TASWTomlValue` (e.g.
+  `GetValue("servers", ASWToml::TASWTomlValue())`) copies the value it gives.
+
+So: keep state that changes often in your own variables and set it now and then; make several
+changes together as one batch; read a large table's keys through the document or the TOML object,
+not through a copy of the table.
+
 ## Codes
 
 `ETomlCode` says what happened, in a `TASWTomlResult` and in a `TASWTomlMessage`. Its values never
@@ -146,8 +190,8 @@ change, so an application may store or compare them, and new codes are only adde
 | Value | Code | Reported as | When |
 |---|---|---|---|
 | 0 | `Ok` | | Success |
-| 1 | `InvalidArgument` | Error | An argument that can't be used: an empty file path, a path that isn't valid or goes through a value that isn't a table, a comment where there is no line for it |
-| 2 | `InvalidOptions` | Error | `TASWTomlOptions::Validate()` refused the options (see [Options.md](Options.md)) |
+| 1 | `InvalidArgument` | Error | An argument that can't be used: an empty file path, a path that isn't valid or goes through a value that isn't a table, a comment where there is no line for it, a batch's `Remove()` of the root, a setting's edit given to another object's `Apply()` |
+| 2 | `InvalidOptions` | Error | `TASWTomlOptions::Validate()` or `TASWTomlJsonOptions::Validate()` refused the options (see [Options.md](Options.md)) |
 | 3 | `NoFilePath` | Error | `Save()` with no file path (use `SaveAs()`) |
 | 4 | `FileNotFound` | Error; Warning for `Load()` | The file or a folder in its path doesn't exist |
 | 5 | `AccessDenied` | Error | The operating system denied access to the file or its folder |
@@ -158,7 +202,7 @@ change, so an application may store or compare them, and new codes are only adde
 | 10 | `InvalidUtf8` | Error | The text isn't valid UTF-8 (a string, key or comment to write that isn't is `InvalidValue`) |
 | 11 | `ParseFailed` | Error | The text isn't valid TOML, with the line and column of the error |
 | 12 | `DuplicateKey` | Error | A key or table is defined twice in the text, or a table again as another kind of value |
-| 13 | `NestingTooDeep` | Error | Values are nested deeper than `Reading.MaxNestingDepth` |
+| 13 | `NestingTooDeep` | Error | Values are nested deeper than `Reading.MaxNestingDepth`, or a value given to `ToJson()` deeper than `MaxNestingDepthLimit` |
 | 14 | `CreateFolderFailed` | Error | The file's folder doesn't exist and couldn't be created |
 | 15 | `WriteFailed` | Error | Writing the file, or its temporary file, failed |
 | 16 | `ReplaceFailed` | Error | The temporary file couldn't replace the file (e.g. a read-only file on Windows) |
@@ -166,7 +210,7 @@ change, so an application may store or compare them, and new codes are only adde
 | 18 | `NotFound` | Error; not reported by `GetValue()` or `TryGetValue()` | The key or table to read, change or rename doesn't exist, or a struct's table lacks a field's key |
 | 19 | `AlreadyExists` | Error | A rename to the name of a key or table that exists |
 | 20 | `TypeMismatch` | Warning when a load or a read gives the default; returned by `TryGetValue()` | The value's TOML type doesn't fit the C++ type it is read as, or a table of settings is another kind of value |
-| 21 | `InvalidValue` | Error; Warning when a load or a read gives the default | The value isn't one the type accepts, a validator refused it, or it can't be written |
+| 21 | `InvalidValue` | Error; Warning when a load or a read gives the default | The value isn't one the type accepts, a validator refused it, or it can't be written (as TOML, or by `ToJson()`) |
 | 22 | `ValueOutOfRange` | Error; Warning when a load or a read gives the default | A number is outside its type's range, or its setting's, or a TOML integer is beyond 64 bits |
 | 23 | `BackupFailed` | Warning | The backup couldn't be made; the file was saved anyway |
 | 24 | `TempFileCleanupFailed` | Warning | The temporary file of a failed save couldn't be deleted |
