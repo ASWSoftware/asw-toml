@@ -14,9 +14,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `TASWTomlDocument::Apply()` makes them as one: all of them, giving exactly the text the edits one
   after the other give, or none, failing with the result of the first edit that fails. Edits of
   different places are written together and the text is read once, so a batch costs about as much as
-  one edit. A typed value is converted when it is added; one that doesn't convert fails the batch. In
-  a batch, a `Remove()` of nothing changes nothing, and one of a path that isn't valid or of the root
-  fails.
+  one edit. A typed value is converted when it is added; one that doesn't convert fails the batch.
+  In a batch, a `Remove()` of nothing changes nothing, and one of a path that isn't valid or of the
+  root fails. A TOML object makes a batch with `IASWToml::Apply()`: `TASWBaseToml` makes it under
+  one lock, so other threads see all of it or none, and reports a failure once. `IASWToml::Apply()`
+  isn't pure virtual, so an application's own implementation of `IASWToml` still compiles; it gets a
+  default that makes the edits one after the other through its operations and stops at the first
+  that fails, keeping the edits before it.
 
 ### Changed
 

@@ -5,10 +5,11 @@ Author: Anthony S. West - ASW Software
 A TOML file reader/writer library.
 
 IASWToml, the interface of a TOML object (TASWBaseToml implements it): its
-operations by TASWTomlPath, each thread-safe and complete in itself, and the
-typed GetValue(), TryGetValue(), SetValue() and Append() built on them with
-the value converters (TASWTomlConverter). TASWTomlLogCallback, the function a
-TOML object reports its warnings and errors to.
+operations by TASWTomlPath, each thread-safe and complete in itself, Apply()
+of several edits (TASWTomlEdits), and the typed GetValue(), TryGetValue(),
+SetValue() and Append() built on them with the value converters
+(TASWTomlConverter). TASWTomlLogCallback, the function a TOML object reports
+its warnings and errors to.
 
 Requires C++ 20 or higher.
 
@@ -33,6 +34,7 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
@@ -72,6 +74,17 @@ private:
         TASWTomlValueOptions const&);
 
 private:
+    // The InvalidArgument result of a typed operation given 'path', which isn't valid: its GetError() as the message
+    static TASWTomlResult InvalidPath(TASWTomlPath const& path);
+
+    // The NotFound result of TryGetValue() for 'path', at which there is no value
+    static TASWTomlResult NoValueAt(TASWTomlPath const& path);
+
+private:
+    // Makes 'edit', an edit of Apply()'s default, by the operation of its kind, which reports its own failure; a
+    // removal is checked as a batch's (see Apply()), and its failure reported here
+    TASWTomlResult ApplyEdit(TASWTomlEdit const& edit);
+
     // GetValue() with 'options', or with GetValueOptions() when it is nullptr (only asked for when there is a value)
     template <TomlConvertible T>
     T GetOrDefault(TASWTomlPath const& path, T const& defaultValue, TASWTomlValueOptions const* options) const
@@ -98,12 +111,6 @@ private:
 
         return value;
     }
-
-    // The InvalidArgument result of a typed operation given 'path', which isn't valid: its GetError() as the message
-    static TASWTomlResult InvalidPath(TASWTomlPath const& path);
-
-    // The NotFound result of TryGetValue() for 'path', at which there is no value
-    static TASWTomlResult NoValueAt(TASWTomlPath const& path);
 
     // TryGetValue() with 'options', or with GetValueOptions() when it is nullptr (only asked for when there is a value)
     template <TomlConvertible T>
@@ -177,14 +184,15 @@ private:
     }
 
 protected:
-    IASWToml() = default;
-
     // The UnexpectedException result of the exception being handled (call it in a catch block): its message is "An
     // unexpected exception was thrown: " and what() for a std::exception, else "An exception that isn't a
     // std::exception was thrown."; the second form also has the path of 'path' (see TASWTomlResult::Path). Without a
     // message (or a path) when it can't be made.
     static TASWTomlResult CaughtException() noexcept;
     static TASWTomlResult CaughtException(TASWTomlPath const& path) noexcept;
+
+protected:
+    IASWToml() = default;
 
     // Appends 'value' to the array at 'path' with the value options 'values', as TASWTomlDocument::Append() does,
     // reporting a failure. The typed Append() is built on it.
@@ -212,6 +220,18 @@ public:
     IASWToml(IASWToml const&) = delete;
     IASWToml& operator=(IASWToml const&) = delete;
     virtual ~IASWToml() = default;
+
+    // Makes the edits of 'edits' (see ASWToml_Edits.h). TASWBaseToml makes them as TASWTomlDocument::Apply() does: all
+    // of them, as if one after the other, or none, seen by other threads all at once. This default, which an
+    // implementation written before Apply() existed has, makes them one after the other through the object's own
+    // operations, so it isn't all or nothing: each Append() and SetValue() by DocumentAppend() and DocumentSetValue(),
+    // with the edit's value options, else GetValueOptions(), and the others by Remove(), Rename(), SetComment() and
+    // SetTrailingComment(). It fails with the edits' failure to convert a value (see TASWTomlEdits::GetResult()) before
+    // any edit, and else stops at the first edit that fails, with its result, keeping the edits before it; an
+    // exception is UnexpectedException with the path of the edit it came from. A Remove() fails with InvalidArgument
+    // when its path isn't valid or is the root, and changes nothing when nothing is at its path, as in
+    // TASWTomlDocument::Apply(). Each failure is reported once: an operation's by the operation, the others here.
+    virtual TASWTomlResult Apply(TASWTomlEdits const& edits);
 
     // Whether there is a value at 'path': a table (the root table for the root path), a key or an element of an array,
     // as TASWTomlDocument::Find() finds it; false for a path that isn't valid

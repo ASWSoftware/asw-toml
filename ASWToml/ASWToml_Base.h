@@ -33,6 +33,7 @@ SPDX-License-Identifier: MIT
 #include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_Interface.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
@@ -222,6 +223,9 @@ public:
     // An empty document with the default options, no file path and no log callback
     TASWBaseToml() = default;
 
+    // Makes the edits as TASWTomlDocument::Apply() does (all of them or none) under the lock, so other threads see all
+    // of them or none, as one edit (an edit Save() tells apart, see IASWToml::Save()); a failure is reported once
+    TASWTomlResult Apply(TASWTomlEdits const& edits) override;
     bool Contains(TASWTomlPath const& path) const override;
     std::string GetComment(TASWTomlPath const& path) const override;
     TASWTomlDocument GetDocument() const override;

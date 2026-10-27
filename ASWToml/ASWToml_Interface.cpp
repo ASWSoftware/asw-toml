@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "ASWToml_Interface.h"
 //---------------------------------------------------------------------------
+#include <cstddef>
 #include <exception>
 #include <string>
 #include <string_view>
@@ -24,6 +25,38 @@ SPDX-License-Identifier: MIT
 
 namespace ASWToml
 {
+
+namespace
+{
+
+//---------------------------------------------------------------------------
+
+TASWTomlResult CheckRemoval(TASWTomlPath const& path);
+
+//---------------------------------------------------------------------------
+/*
+    CheckRemoval
+
+    Ok when a removal of a batch can be made at 'path'; InvalidArgument when 'path' isn't valid or is the root, as
+    TASWTomlDocument::Apply() fails (without a Path: neither has one)
+*/
+TASWTomlResult CheckRemoval(TASWTomlPath const& path)
+{
+    TASWTomlResult result;
+    if (path.IsValid() && !path.IsRoot())
+        return result;
+
+    result.Code = ETomlCode::InvalidArgument;
+    result.Message = path.IsValid() ? std::string("Can't remove the root table.") : path.GetError();
+
+    return result;
+}
+//---------------------------------------------------------------------------
+
+} // namespace
+
+//---------------------------------------------------------------------------
+
 
 /////////////////////////////////////////////////////////////////////////////
 // IASWToml
@@ -50,6 +83,65 @@ TASWTomlResult IASWToml::Append(TASWTomlPath const& path, std::string_view value
 TASWTomlResult IASWToml::Append(TASWTomlPath const& path, std::string_view value, TASWTomlValueOptions const& options)
 {
     return WriteText(path, value, &IASWToml::DocumentAppend, &options);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult IASWToml::Apply(TASWTomlEdits const& edits)
+{
+    TASWTomlResult result = edits.GetResult();
+    if (!result.IsOk())
+    {
+        ReportFailure(result);
+        return result;
+    }
+
+    // The edit being made, whose path an exception is given
+    std::size_t current = 0;
+    try
+    {
+        TASWTomlEdits::TEditVector const& all = edits.GetEdits();
+        for (; result.IsOk() && current < all.size(); ++current)
+            result = ApplyEdit(all[current]);
+    }
+    catch (...)
+    {
+        result = CaughtException(edits.GetEdits()[current].Path);
+        ReportFailure(result);
+    }
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult IASWToml::ApplyEdit(TASWTomlEdit const& edit)
+{
+    switch (edit.Kind)
+    {
+        case EEditKind::Append:
+            return DocumentAppend(edit.Path, edit.Value, edit.Values.has_value() ? *edit.Values : GetValueOptions());
+
+        case EEditKind::Remove:
+            break;
+
+        case EEditKind::Rename:
+            return Rename(edit.Path, edit.Text);
+
+        case EEditKind::SetComment:
+            return SetComment(edit.Path, edit.Text);
+
+        case EEditKind::SetTrailingComment:
+            return SetTrailingComment(edit.Path, edit.Text);
+
+        case EEditKind::SetValue:
+            return DocumentSetValue(edit.Path, edit.Value, edit.Values.has_value() ? *edit.Values : GetValueOptions());
+    }
+
+    // A removal. Remove() returns false for nothing to remove; in a batch, that changes nothing and isn't a failure.
+    TASWTomlResult const result = CheckRemoval(edit.Path);
+    if (result.IsOk())
+        static_cast<void>(Remove(edit.Path));
+    else
+        ReportFailure(result);
+
+    return result;
 }
 //---------------------------------------------------------------------------
 TASWTomlResult IASWToml::CaughtException() noexcept
