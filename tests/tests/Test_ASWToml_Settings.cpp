@@ -38,6 +38,7 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_File.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
@@ -81,6 +82,7 @@ using ASWToml::ESeverity;
 using ASWToml::ETomlCode;
 using ASWToml::TASWBaseToml;
 using ASWToml::TASWTomlDocument;
+using ASWToml::TASWTomlEdits;
 using ASWToml::TASWTomlMessage;
 using ASWToml::TASWTomlOptions;
 using ASWToml::TASWTomlPath;
@@ -102,6 +104,33 @@ using TLimitMap = std::map<std::string, int>;
 using TNameMap = std::map<int, std::string>;
 using TNestedVector = std::vector<std::vector<int> >;
 using TServerVector = std::vector<TTestServer>;
+
+// A text for TTestSettings with a value for some of its settings: a key with a trailing comment, a struct with a key
+// it doesn't know, an array of tables whose elements have keys the struct doesn't know and a comment, and a map
+constexpr char const* BatchText =
+    "[general]\n"
+    "name = \"Ann\"  # Hers\n"
+    "level = 1\n"
+    "\n"
+    "[net.server]\n"
+    "host = \"a\"\n"
+    "port = 1\n"
+    "extra = true\n"
+    "\n"
+    "[[net.servers]]\n"
+    "# X's comment.\n"
+    "host = \"x\"\n"
+    "port = 2\n"
+    "note = \"X\"\n"
+    "\n"
+    "[[net.servers]]\n"
+    "host = \"y\"\n"
+    "port = 3\n"
+    "note = \"Y\"\n"
+    "\n"
+    "[net.limits]\n"
+    "a = 1\n"
+    "b = 2\n";
 
 // The text a first run of TLoadSettings writes: every setting that isn't optional with its default value and its
 // comment, the tables' comments and the file comment
@@ -483,6 +512,8 @@ struct TWholeSettingsTest
 
 //---------------------------------------------------------------------------
 
+void AddRandomStep(TTestSettings& settings, TTestSettings& twin, TASWTomlEdits& edits, std::mt19937& generator,
+    TASWTomlResult& failure);
 void BindAndUnbind(TBindingsTest& test, std::size_t index);
 TServerVector BinderServers(std::size_t index);
 std::string BindingsProblem(TASWTomlDocument const& document, std::size_t stayers, std::size_t binders);
@@ -497,11 +528,117 @@ std::string OddOnly(int const& value);
 std::string OneServer(TServerVector const& value);
 void ReadWholeSettings(TWholeSettingsTest& test, std::size_t index);
 std::string RemovedFirstCluster(std::string const& first, std::string const& second);
+std::string ResultProblem(TASWTomlResult const& result, TASWTomlResult const& expected);
 void SaveSettingsRepeatedly(TWholeSettingsTest& test, std::size_t index);
 void SetServerPorts(TWholeSettingsTest& test, std::size_t index);
 void UseScratchSetting(TWholeSettingsTest& test, std::size_t index);
 std::string WholeSettingsProblem(TASWTomlDocument const& document, std::size_t writers, std::size_t others);
 
+//---------------------------------------------------------------------------
+/*
+    AddRandomStep
+
+    Adds a random edit to 'edits' (a setting's Set() given them, of a random value, some of which the setting refuses,
+    or an edit of a path of 'settings') and makes the same edit on 'twin' (the setting's Set(), or the object's
+    operation of the edit), setting 'failure' to the first of twin's edits that fails, if it is still Ok (but for a
+    value a setting refuses: its Set() given the edits adds nothing, and its Set() changes nothing)
+*/
+void AddRandomStep(TTestSettings& settings, TTestSettings& twin, TASWTomlEdits& edits, std::mt19937& generator,
+    TASWTomlResult& failure)
+{
+    static char const* const names[] = { "a", "Bea", "" };
+    static EColor const colors[] = { EColor::Red, EColor::Green, EColor::Blue, EColor::Unlisted };
+    static char const* const hosts[] = { "x", "y", "z" };
+    static char const* const removed[] = { "general.name", "net.server", "net.servers[0]", "net.limits", "general" };
+    static char const* const commented[] = { "general", "general.level", "net.server" };
+    int const kind = static_cast<int>(generator() % 11);
+    int const number = static_cast<int>(generator() % 7);
+    // A setting's Set() given the edits: when it fails, it adds nothing, and Set() changes nothing
+    TASWTomlResult added;
+    TASWTomlResult result;
+    switch (kind)
+    {
+        case 0:
+            added = settings.Name.Set(edits, names[number % 3]);
+            result = twin.Name.Set(names[number % 3]);
+            break;
+
+        case 1:
+            added = settings.Level.Set(edits, static_cast<unsigned>(number));
+            result = twin.Level.Set(static_cast<unsigned>(number));
+            break;
+
+        case 2:
+            added = settings.Zoom.Set(edits, number * 0.5);
+            result = twin.Zoom.Set(number * 0.5);
+            break;
+
+        case 3:
+            added = settings.Color.Set(edits, colors[number % 4]);
+            result = twin.Color.Set(colors[number % 4]);
+            break;
+
+        case 4:
+        {
+            TTestServer server{ "h" + std::to_string(number), static_cast<std::uint16_t>(number), number % 2 == 0,
+                std::nullopt };
+            if (number % 3 == 0)
+                server.Comment = "c";
+
+            added = settings.Server.Set(edits, server);
+            result = twin.Server.Set(server);
+            break;
+        }
+
+        case 5:
+        {
+            TServerVector servers;
+            for (int i = 0; i < number % 4; ++i)
+            {
+                TTestServer const server{ hosts[(number + i) % 3], static_cast<std::uint16_t>(i), true, std::nullopt };
+                servers.push_back(server);
+            }
+
+            added = settings.Servers.Set(edits, servers);
+            result = twin.Servers.Set(servers);
+            break;
+        }
+
+        case 6:
+        {
+            TLimitMap limits{ { "a", number } };
+            if (number % 2 == 0)
+                limits["c"] = number + 1;
+
+            added = settings.Limits.Set(edits, limits);
+            result = twin.Limits.Set(limits);
+            break;
+        }
+
+        case 7:
+            added = settings.Cheats.Set(edits, number % 2 == 0);
+            result = twin.Cheats.Set(number % 2 == 0);
+            break;
+
+        case 8:
+            edits.Remove(removed[number % 5]);
+            static_cast<void>(twin.Remove(removed[number % 5]));
+            break;
+
+        case 9:
+            edits.SetValue("net.server.extra", number);
+            result = twin.SetValue("net.server.extra", number);
+            break;
+
+        default:
+            edits.SetComment(commented[number % 3], "Raw " + std::to_string(number));
+            result = twin.SetComment(commented[number % 3], "Raw " + std::to_string(number));
+            break;
+    }
+
+    if (failure.IsOk() && added.IsOk())
+        failure = result;
+}
 //---------------------------------------------------------------------------
 /*
     BindAndUnbind
@@ -823,6 +960,26 @@ std::string RemovedFirstCluster(std::string const& first, std::string const& sec
     static_cast<void>(clusters.Set(value));
 
     return toml.ToText();
+}
+//---------------------------------------------------------------------------
+/*
+    ResultProblem
+
+    What differs between 'result' and 'expected' (their code, message and path); empty when nothing does
+*/
+std::string ResultProblem(TASWTomlResult const& result, TASWTomlResult const& expected)
+{
+    std::string problem;
+    if (result.Code != expected.Code)
+        problem += std::string(" code ") + ASWToml::ToString(result.Code) + " for " + ASWToml::ToString(expected.Code);
+
+    if (result.Message != expected.Message)
+        problem += " message '" + result.Message + "' for '" + expected.Message + "'";
+
+    if (result.Path != expected.Path)
+        problem += " path '" + result.Path + "' for '" + expected.Path + "'";
+
+    return problem.empty() ? problem : "the result has" + problem;
 }
 //---------------------------------------------------------------------------
 /*
@@ -1654,6 +1811,314 @@ ASW_TEST(TTest_ASWToml_SettingsAccess, ValueOptions_AreTheSettingsOwnOrTheOwners
     CheckEquals("[general]\nmask = 0xFF\nplain = 0o10\n"s, settings.ToText(),
         "the setting's own value options, else the owner's");
     CheckTrue(settings.Mask.Get() == 255 && settings.Plain.Get() == 8, "both read back");
+}
+//---------------------------------------------------------------------------
+
+/////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_SettingsBatch
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TTest_ASWToml_SettingsBatch::TTest_ASWToml_SettingsBatch()
+    : inherited("ASWToml_SettingsBatch_Tests")
+{
+}
+//---------------------------------------------------------------------------
+TTest_ASWToml_SettingsBatch::~TTest_ASWToml_SettingsBatch()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsBatch::SetUp_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsBatch::SetUp_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsBatch::TearDown_Group()
+{
+}
+//---------------------------------------------------------------------------
+void TTest_ASWToml_SettingsBatch::TearDown_Test(ITestCase& /*testCase*/)
+{
+}
+//---------------------------------------------------------------------------
+
+// /////// Begin tests after this line ///////////////////////
+
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsBatch, Apply_AddsKeysWithTheirComments)
+{
+    // Arrange
+    // The keys the settings add: color and name with their comments, cheats (which has none), and the server in an
+    // inline table, which has no line of its own for its comment
+    std::string const text = "net = { other = 1 }\n\n[general]\nlevel = 1\n";
+    TTestSettings settings(text);
+    TTestSettings twin(text);
+    TTestServer const server{ "s", 5, true, std::nullopt };
+    TASWTomlEdits edits;
+    TASWTomlResult const added[] = { settings.Color.Set(edits, EColor::Blue), settings.Cheats.Set(edits, true),
+        settings.Name.Set(edits, "Cy"), settings.Server.Set(edits, server), settings.Level.Set(edits, 2u) };
+    TASWTomlResult const expected[] = { twin.Color.Set(EColor::Blue), twin.Cheats.Set(true), twin.Name.Set("Cy"),
+        twin.Server.Set(server), twin.Level.Set(2u) };
+    TASWTomlDocument document = settings.GetDocument();
+    ASWToml::Detail::TBatchStats stats;
+
+    // Act
+    TASWTomlResult const result = settings.Apply(edits);
+    TASWTomlResult const viaDocument = document.Apply(edits, &settings, stats);
+
+    // Assert
+    for (std::size_t i = 0; i < sizeof(added) / sizeof(added[0]); ++i)
+        CheckTrue(added[i].IsOk() && expected[i].IsOk(), "each edit should be added and set: " + added[i].Message);
+
+    CheckTrue(result.IsOk() && viaDocument.IsOk(), "the batch should succeed: " + result.Message);
+    CheckEquals(Escaped(twin.ToText()), Escaped(settings.ToText()), "the text should be the Set()s' one by one");
+    CheckTrue(settings.ToText().find("# The color.\ncolor = ") != std::string::npos &&
+        settings.ToText().find("# The name.\nname = \"Cy\"") != std::string::npos,
+        "a key added gets its setting's comment");
+    CheckEquals(settings.ToText(), document.ToText(), "the document's Apply() for the owner should make the same");
+    CheckEquals(std::size_t(0), stats.Replays, "no group should be made again one by one");
+    CheckEquals(std::size_t(0), settings.Messages.size(), "nothing should be reported");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsBatch, Apply_GroupsLikeOtherEdits)
+{
+    // Arrange
+    // Settings' edits of different places are written together as other edits are, new keys without comments of one
+    // table merged; a key added with a comment takes one more group, for the comment
+    std::string const text = "[general]\nlevel = 1\nname = \"a\"\n";
+    TTestSettings settings(text);
+    TTestSettings twin(text);
+    TASWTomlEdits together;
+    TASWTomlResult const added[] = { settings.Level.Set(together, 3u), settings.Zoom.Set(together, 2.0),
+        settings.Plain.Set(together, 9) };
+    TASWTomlEdits commented;
+    TASWTomlResult const addedColor = settings.Color.Set(commented, EColor::Blue);
+    TASWTomlResult const addedAfter = settings.Name.Set(commented, "b");
+    TASWTomlDocument document = settings.GetDocument();
+    ASWToml::Detail::TBatchStats togetherStats;
+    ASWToml::Detail::TBatchStats commentedStats;
+
+    // Act
+    TASWTomlResult const togetherResult = document.Apply(together, &settings, togetherStats);
+    TASWTomlResult const commentedResult = document.Apply(commented, &settings, commentedStats);
+    TASWTomlResult const expected[] = { twin.Level.Set(3u), twin.Zoom.Set(2.0), twin.Plain.Set(9),
+        twin.Color.Set(EColor::Blue), twin.Name.Set("b") };
+
+    // Assert
+    CheckTrue(added[0].IsOk() && added[1].IsOk() && added[2].IsOk() && addedColor.IsOk() && addedAfter.IsOk(),
+        "each setting's edit should be added");
+    for (TASWTomlResult const& one : expected)
+        CheckTrue(one.IsOk(), "each Set() should succeed: " + one.Message);
+
+    CheckTrue(togetherResult.IsOk() && commentedResult.IsOk(), "each batch should succeed");
+    CheckEquals(Escaped(twin.ToText()), Escaped(document.ToText()), "the text should be the Set()s' one by one");
+    CheckEquals(std::size_t(1), togetherStats.Groups, "edits of different places should be one group");
+    CheckEquals(std::size_t(2), commentedStats.Groups, "a key added with a comment, then its comment with the rest");
+    CheckEquals(std::size_t(0), togetherStats.Replays + commentedStats.Replays, "no group should be made again");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsBatch, Apply_MatchesSetOneByOne)
+{
+    // Arrange
+    TTestSettings settings(BatchText);
+    TTestSettings twin(BatchText);
+    TServerVector servers = settings.Servers.Get();
+    servers.erase(servers.begin());
+    TTestServer const server{ "b", 2, true, std::nullopt };
+    TLimitMap const limits{ { "a", 5 } };
+    TASWTomlEdits edits;
+    TASWTomlResult const added[] = { settings.Name.Set(edits, "Bea"), settings.Level.Set(edits, 3u),
+        settings.Server.Set(edits, server), settings.Servers.Set(edits, servers), settings.Limits.Set(edits, limits),
+        settings.Zoom.Set(edits, 2.0), settings.Mask.Set(edits, 16) };
+    edits.SetComment("net.server", "Raw");
+    TASWTomlResult const expected[] = { twin.Name.Set("Bea"), twin.Level.Set(3u), twin.Server.Set(server),
+        twin.Servers.Set(servers), twin.Limits.Set(limits), twin.Zoom.Set(2.0), twin.Mask.Set(16),
+        twin.SetComment("net.server", "Raw") };
+    TASWTomlDocument document = settings.GetDocument();
+    ASWToml::Detail::TBatchStats stats;
+
+    // Act
+    TASWTomlResult const result = settings.Apply(edits);
+    TASWTomlResult const viaDocument = document.Apply(edits, &settings, stats);
+
+    // Assert
+    for (std::size_t i = 0; i < sizeof(added) / sizeof(added[0]); ++i)
+        CheckTrue(added[i].IsOk(), "each setting's edit should be added: " + added[i].Message);
+
+    for (std::size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i)
+        CheckTrue(expected[i].IsOk(), "each Set() should succeed: " + expected[i].Message);
+
+    CheckTrue(result.IsOk() && viaDocument.IsOk(), "the batch should succeed: " + result.Message);
+    CheckEquals(Escaped(twin.ToText()), Escaped(settings.ToText()), "the text should be the Set()s' one by one");
+    CheckTrue(settings.ToText().find("extra = true") != std::string::npos, "the struct keeps the key it doesn't know");
+    CheckTrue(settings.ToText().find("mask = 0x10") != std::string::npos, "a setting writes with its value options");
+    CheckTrue(settings.ToText().find("note = \"Y\"") != std::string::npos &&
+        settings.ToText().find("X's comment") == std::string::npos,
+        "the element removed goes, the other keeps its key");
+    CheckEquals(settings.ToText(), document.ToText(), "the document's Apply() for the owner should make the same");
+    CheckTrue(stats.Groups < edits.GetEdits().size(), "edits of different places should be written together");
+    CheckEquals(std::size_t(0), stats.Replays, "no group should be made again one by one");
+    CheckTrue(settings.IsModified(), "the object should be modified");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsBatch, Apply_RandomBatchesMatchSetOneByOne)
+{
+    // Arrange & Act & Assert
+    // Random batches of settings' edits and other edits, each compared with the same Set()s and edits one by one on a
+    // twin: the same text, or when an edit fails, its result, and nothing changed
+    std::string const texts[] = { "", BatchText, "general = { name = \"B\" }\nnet = { limits = { a = 1 } }\n" };
+    std::mt19937 generator(20261027);
+    std::size_t made = 0;
+    for (std::string const& text : texts)
+    {
+        for (int batch = 0; batch < 100; ++batch)
+        {
+            TTestSettings settings(text);
+            TTestSettings twin(text);
+            TASWTomlEdits edits;
+            TASWTomlResult failure;
+            int const count = 1 + static_cast<int>(generator() % 6);
+            for (int i = 0; i < count; ++i)
+                AddRandomStep(settings, twin, edits, generator, failure);
+
+            TASWTomlDocument document = settings.GetDocument();
+            ASWToml::Detail::TBatchStats stats;
+            TASWTomlResult const result = settings.Apply(edits);
+            TASWTomlResult const viaDocument = document.Apply(edits, &settings, stats);
+            std::string const which = " (text " + std::to_string(&text - texts) + ", batch " + std::to_string(batch) +
+                ")";
+            if (failure.IsOk())
+            {
+                CheckTrue(result.IsOk(), "the batch should succeed as the edits one by one do" + which + ": " +
+                    result.Message);
+                CheckEquals(Escaped(twin.ToText()), Escaped(settings.ToText()),
+                    "the text should be the edits' one by one" + which);
+            }
+            else
+            {
+                CheckEmpty(ResultProblem(result, failure), "the batch should fail as the edit one by one does" + which);
+                CheckEquals(Escaped(text), Escaped(settings.ToText()), "a failed batch should change nothing" + which);
+            }
+
+            CheckEmpty(ResultProblem(viaDocument, result), "the document's Apply() for the owner should do the same" +
+                which);
+            CheckEquals(settings.ToText(), document.ToText(), "and make the same text" + which);
+            CheckEquals(std::size_t(0), stats.Replays, "no group should be made again one by one" + which);
+            made += edits.GetEdits().size();
+        }
+    }
+
+    CheckGreaterThan(made, std::size_t(500), "the batches should have edits");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsBatch, Apply_SeesTheEditsBeforeIt)
+{
+    // Arrange
+    // Each setting's edit follows an edit of its value in the same batch: the struct is set over the value with extra
+    // changed, the name is added again with its comment after its removal, and the servers are paired with the
+    // elements left after the first one's removal
+    TTestSettings settings(BatchText);
+    TTestSettings twin(BatchText);
+    TTestServer const server{ "b", 2, true, std::nullopt };
+    TServerVector const servers{ TTestServer{ "y", 30, true, std::nullopt } };
+    TASWTomlEdits edits;
+    edits.SetValue("net.server.extra", 2);
+    TASWTomlResult const serverAdded = settings.Server.Set(edits, server);
+    edits.Remove("general.name");
+    TASWTomlResult const nameAdded = settings.Name.Set(edits, "Dee");
+    edits.Remove("net.servers[0]");
+    TASWTomlResult const serversAdded = settings.Servers.Set(edits, servers);
+    TASWTomlResult const extraSet = twin.SetValue("net.server.extra", 2);
+    TASWTomlResult const serverSet = twin.Server.Set(server);
+    bool const nameRemoved = twin.Remove("general.name");
+    TASWTomlResult const nameSet = twin.Name.Set("Dee");
+    bool const serverRemoved = twin.Remove("net.servers[0]");
+    TASWTomlResult const serversSet = twin.Servers.Set(servers);
+
+    // Act
+    TASWTomlResult const result = settings.Apply(edits);
+
+    // Assert
+    CheckTrue(serverAdded.IsOk() && nameAdded.IsOk() && serversAdded.IsOk(), "each setting's edit should be added");
+    CheckTrue(extraSet.IsOk() && serverSet.IsOk() && nameRemoved && nameSet.IsOk() && serverRemoved &&
+        serversSet.IsOk(), "each edit one by one should succeed");
+    CheckTrue(result.IsOk(), "the batch should succeed: " + result.Message);
+    CheckEquals(Escaped(twin.ToText()), Escaped(settings.ToText()), "the text should be the edits' one by one");
+    CheckTrue(settings.ToText().find("extra = 2") != std::string::npos,
+        "the struct is set over the value as it is then");
+    CheckTrue(settings.ToText().find("# The name.\nname = \"Dee\"") != std::string::npos,
+        "a key removed before is added again with its comment");
+    CheckTrue(settings.ToText().find("port = 30\nnote = \"Y\"") != std::string::npos,
+        "the element left keeps the key the struct doesn't know");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsBatch, Apply_SettingOfAnotherObjectFails)
+{
+    // Arrange
+    std::string const text = "[general]\nlevel = 1\n";
+    TTestSettings settings(text);
+    TTestSettings other(text);
+    TASWTomlDocument document;
+    TASWTomlResult const parsed = document.Parse(text);
+    TASWTomlEdits edits;
+    TASWTomlResult const added = settings.Level.Set(edits, 3u);
+    TASWTomlEdits failsBefore;
+    failsBefore.Rename("general.missing", "x");
+    TASWTomlResult const addedAfter = settings.Level.Set(failsBefore, 3u);
+    TASWTomlResult const notFound = TTestSettings(text).Rename("general.missing", "x");
+    TASWTomlResult const refused = ASWToml::Detail::SettingEditFailure("general.level");
+
+    // Act
+    TASWTomlResult const toOther = other.Apply(edits);
+    TASWTomlResult const toDocument = document.Apply(edits);
+    TASWTomlResult const firstFails = other.Apply(failsBefore);
+    TASWTomlResult const toOwner = settings.Apply(edits);
+
+    // Assert
+    CheckTrue(parsed.IsOk() && added.IsOk() && addedAfter.IsOk(), "the edits should be added");
+    CheckEquals(ETomlCode::InvalidArgument, refused.Code, "a setting's edit elsewhere is InvalidArgument");
+    CheckEquals("general.level"s, refused.Path, "at its path");
+    CheckEmpty(ResultProblem(toOther, refused), "another object's Apply() should refuse it");
+    CheckEmpty(ResultProblem(toDocument, refused), "and a document's");
+    CheckEmpty(ResultProblem(firstFails, notFound), "an edit before it that fails fails first");
+    CheckEquals(text, other.ToText(), "the other object shouldn't change");
+    CheckEquals(text, document.ToText(), "nor the document");
+    CheckEquals(std::size_t(2), other.Messages.size(), "each failure should be reported once");
+    CheckTrue(toOwner.IsOk() && settings.Level.Get() == 3u, "the owner's Apply() should make it");
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_SettingsBatch, Set_FailureAddsNothing)
+{
+    // Arrange
+    std::string const text = "[general]\nlevel = 1\n";
+    TTestSettings settings(text);
+    TASWTomlTable badTable{ settings, "a..b" };
+    TASWTomlSetting<int> inBadTable{ badTable, "x", 1 };
+    TTestSettings twin(text);
+    TASWTomlTable twinBadTable{ twin, "a..b" };
+    TASWTomlSetting<int> twinInBadTable{ twinBadTable, "x", 1 };
+    TASWTomlEdits edits;
+
+    // Act
+    TASWTomlResult const results[] = { settings.Level.Set(edits, 9u), settings.Name.Set(edits, ""),
+        settings.Unnamed.Set(edits, EColor::Unlisted), inBadTable.Set(edits, 2) };
+    TASWTomlResult const expected[] = { twin.Level.Set(9u), twin.Name.Set(""), twin.Unnamed.Set(EColor::Unlisted),
+        twinInBadTable.Set(2) };
+
+    // Assert
+    for (std::size_t i = 0; i < sizeof(results) / sizeof(results[0]); ++i)
+    {
+        CheckFalse(results[i].IsOk(), "the value should be refused (" + std::to_string(i) + ")");
+        CheckEmpty(ResultProblem(results[i], expected[i]), "as Set() refuses it (" + std::to_string(i) + ")");
+    }
+
+    CheckTrue(edits.IsEmpty(), "no edit should be added");
+    CheckTrue(edits.GetResult().IsOk(), "and the failures aren't kept in the edits");
+    CheckEquals(std::size_t(4), settings.Messages.size(), "each failure should be reported once");
+    CheckEquals(text, settings.ToText(), "nothing should change");
 }
 //---------------------------------------------------------------------------
 
@@ -3100,6 +3565,7 @@ ASW_TEST(TTest_ASWToml_SettingsThreads, GetAndSet_SeeWholeSettingsWhileLoading)
 
 //---------------------------------------------------------------------------
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsAccess, "Settings")
+ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsBatch, "Settings")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsLoad, "Settings")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsStructs, "Settings")
 ASW_REGISTER_TEST_GROUP_IN_SUITE(ASWUnitTests::TTest_ASWToml_SettingsThreads, "Settings")

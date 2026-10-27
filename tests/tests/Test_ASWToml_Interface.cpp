@@ -28,12 +28,14 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include "ASWUnitTests_Registry.h"
 //---------------------------------------------------------------------------
+#include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
 #include "ASWToml_Edits.h"
 #include "ASWToml_Interface.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
+#include "ASWToml_Settings.h"
 #include "ASWToml_Types.h"
 #include "ASWToml_Value.h"
 #include "ASWToml_Version.h"
@@ -819,6 +821,32 @@ ASW_TEST(TTest_ASWToml_Interface, Apply_RemovesAsABatchDoes)
         CheckEmpty(MessageProblem(toml.GetReported()[1], ESeverity::Error, rootResult.Code, rootResult.Message, ""),
             "as an Error");
     }
+}
+//---------------------------------------------------------------------------
+ASW_TEST(TTest_ASWToml_Interface, Apply_SettingsEditIsRefused)
+{
+    // Arrange
+    // Only a setting's owner (a TASWBaseToml) makes its edit; the default makes the edits before it
+    ASWToml::TASWBaseToml owner;
+    ASWToml::TASWTomlTable table{ owner, "general" };
+    ASWToml::TASWTomlSetting<int> level{ table, "level", 1 };
+    TTestToml toml(SettingsText);
+    TASWTomlEdits edits;
+    edits.SetValue("port", 8080);
+    TASWTomlResult const added = level.Set(edits, 3);
+    edits.SetValue("name", "other");
+
+    // Act
+    TASWTomlResult const result = toml.Apply(edits);
+
+    // Assert
+    TASWTomlResult const refused = ASWToml::Detail::SettingEditFailure("general.level");
+    CheckTrue(added.IsOk(), "the setting's edit should be added");
+    CheckEmpty(ResultProblem(result, ETomlCode::InvalidArgument, refused.Message, "general.level"),
+        "the setting's edit should be refused");
+    CheckEquals(8080, toml.GetValue("port", 0), "the edit before it should be kept");
+    CheckEquals(std::string("app"), toml.GetValue("name", ""), "and the one after it not made");
+    CheckEquals(1U, toml.GetReported().size(), "the failure should be reported once");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Interface, Apply_StopsAtTheFirstFailure)

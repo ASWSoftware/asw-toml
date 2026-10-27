@@ -20,7 +20,9 @@ SPDX-License-Identifier: MIT
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <list>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -57,6 +59,9 @@ using TFlagVector = std::vector<bool>;
 
 // Texts in order: of new elements or entries, or the lines of a comment
 using TStringVector = std::vector<std::string>;
+
+// The edits TASWTomlDocument::Apply() adds to a batch's: the comments of the keys its settings' edits add
+using TEditList = std::list<TASWTomlEdit>;
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -463,9 +468,11 @@ private:
     Detail::TDocIndex const& m_Index; // Its index
     TASWTomlValue const& m_Root; // Its values
     TASWTomlOptions const& m_Options; // The document's
-    TASWTomlEdits const& m_Edits; // The batch
+    Detail::TEditPointerVector const& m_Steps; // The edits of the batch, in the order they are made
+    IASWToml const* m_Owner; // The object whose settings' edits the batch makes, or nullptr
     std::size_t m_First; // The group's first edit
     std::size_t m_Next; // The edit after the group's last one
+    bool m_AddsKey = false; // Whether its last edit is a setting's that adds its key, whose comment is made next
     TSpliceVector m_Splices; // The changes of the group's edits
     TTextRangeVector m_Places; // The text they change, with what around it they read
     TPathVector m_Paths; // The paths they name or make
@@ -488,6 +495,11 @@ private:
     // Whether one of 'places' meets one of the group's
     bool Meets(TTextRangeVector const& places) const noexcept;
 
+    // For a setting's SetValue() of a value taken by parts at a path that has a value in the group's values, the
+    // overlay of its value on that one, adding to 'partners' how their arrays' elements pair (as the setting's Set()
+    // sets it); none for any other edit
+    std::optional<TASWTomlValue> Overlaid(TASWTomlEdit const& edit, Detail::TPartnersMap& partners) const;
+
     // The edit after the run of edits from 'first' that are planned as one, 'merged': SetValue()s of new keys of the
     // same table (none of their paths a prefix of another's) as a SetValue() of the table to its value with the keys
     // added, or Append()s to the same array as a SetValue() of the array to its value with the elements added (only
@@ -500,7 +512,7 @@ private:
     bool Places(TSpliceVector const& splices, TTextRangeVector& places, std::int64_t& lf, std::int64_t& crlf) const;
 
     // Plans 'edit' alone on the group's text, with an editor of its own, and sets 'splices' to its changes; fails as
-    // the document's edit of its kind fails, with nothing set
+    // the document's edit of its kind fails (a setting's as its Set() fails), with nothing set
     TASWTomlResult Plan(TASWTomlEdit const& edit, TSpliceVector& splices) const;
 
     // Whether one of 'paths' is related to one of the group's (see PathsRelated())
@@ -510,10 +522,16 @@ private:
     TASWTomlValueOptions const& ValuesOf(TASWTomlEdit const& edit) const noexcept;
 
 public:
-    // A group of the edits of 'edits' from 'first' on, on 'text', the document's text without a byte order mark, whose
-    // model is 'model', index 'index' and values 'root', with the document's 'options'; which outlive the group
+    // A group of the edits 'steps' from 'first' on, made by the Apply() of 'owner' (nullptr for none), on 'text', the
+    // document's text without a byte order mark, whose model is 'model', index 'index' and values 'root', with the
+    // document's 'options'; which outlive the group
     TBatchGroup(std::string const& text, Detail::TDocModel const& model, Detail::TDocIndex const& index,
-        TASWTomlValue const& root, TASWTomlOptions const& options, TASWTomlEdits const& edits, std::size_t first);
+        TASWTomlValue const& root, TASWTomlOptions const& options, Detail::TEditPointerVector const& steps,
+        IASWToml const* owner, std::size_t first);
+
+    // Whether the group's last edit is a setting's SetValue() that adds its key with a comment (after Build()): the
+    // key's comment is then the next edit (see KeyComment())
+    bool AddsKey() const noexcept;
 
     // Plans the group: its first edit, and each edit after it as long as it joins the group. Fails only when its first
     // edit fails, as the document's edit of its kind fails; an edit after it that fails isn't in the group, which ends
@@ -527,7 +545,8 @@ public:
     std::size_t GetNext() const noexcept;
 
     // Whether 'model', 'index' and 'root', read from EditedText(), are what the group's edits should make: the values
-    // the edits make on the group's values (ApplyToValues()), and each comment and trailing comment they set
+    // the edits make on the group's values (ApplyToValues()), and each comment and trailing comment they set (a
+    // setting's comment, or none for a key without a line of its own)
     bool ReadsBack(Detail::TDocModel const& model, Detail::TDocIndex const& index, TASWTomlValue const& root) const;
 };
 
@@ -544,6 +563,7 @@ struct TBatchState
     TASWTomlValue Root;
 };
 
+//---------------------------------------------------------------------------
 
 void AppendKey(Detail::TDocKey const& key, std::string& text);
 void AppendKeyValue(Detail::TDocKeyValue const& keyValue, std::string& text);
@@ -566,9 +586,11 @@ std::size_t FileCommentLines(Detail::TDocIndex const& index) noexcept;
 TASWTomlValue const* FindValue(TASWTomlValue const& root, TASWTomlPath const& path) noexcept;
 TASWTomlValue* FindValue(TASWTomlValue& root, TASWTomlPath const& path) noexcept;
 bool HasCommentControlCharacter(std::string_view text) noexcept;
+bool HasSettingComment(TASWTomlEdit const& edit) noexcept;
 bool IsArrayOfTables(TASWTomlValue const& value) noexcept;
 bool IsPathPrefix(TASWTomlPath const& prefix, TASWTomlPath const& path) noexcept;
 std::string Joined(TStringVector const& lines);
+TASWTomlEdit KeyComment(TASWTomlEdit const& edit);
 std::size_t KeyStart(std::string_view text, std::size_t offset) noexcept;
 std::string Layout(std::string_view before);
 std::size_t LineEnd(std::string_view text, std::size_t offset) noexcept;
@@ -978,6 +1000,17 @@ bool HasCommentControlCharacter(std::string_view text) noexcept
 }
 //---------------------------------------------------------------------------
 /*
+    HasSettingComment
+
+    Whether 'edit' is a setting's SetValue() whose key gets a comment when the edit adds it (see
+    TASWTomlDocument::Apply())
+*/
+bool HasSettingComment(TASWTomlEdit const& edit) noexcept
+{
+    return edit.Kind == EEditKind::SetValue && edit.Setting != nullptr && !edit.Setting->Comment.empty();
+}
+//---------------------------------------------------------------------------
+/*
     IsArrayOfTables
 
     Whether 'value' is written as an array of tables where a header can go: an array that isn't empty and holds only
@@ -1036,6 +1069,24 @@ std::string Joined(TStringVector const& lines)
     }
 
     return joined;
+}
+//---------------------------------------------------------------------------
+/*
+    KeyComment
+
+    The edit after 'edit', a setting's SetValue() that added its key, that gives the key the setting's comment: a
+    SetComment(), and a setting's too, so a key without a line of its own for it is kept without it (as the setting's
+    Set() keeps it)
+*/
+TASWTomlEdit KeyComment(TASWTomlEdit const& edit)
+{
+    TASWTomlEdit comment;
+    comment.Kind = EEditKind::SetComment;
+    comment.Path = edit.Path;
+    comment.Text = edit.Setting->Comment;
+    comment.Setting = edit.Setting;
+
+    return comment;
 }
 //---------------------------------------------------------------------------
 /*
@@ -3157,17 +3208,24 @@ TASWTomlResult TEditor::WriteKeyLines(std::string_view indent, TASWTomlValue con
 
 //---------------------------------------------------------------------------
 TBatchGroup::TBatchGroup(std::string const& text, Detail::TDocModel const& model, Detail::TDocIndex const& index,
-    TASWTomlValue const& root, TASWTomlOptions const& options, TASWTomlEdits const& edits, std::size_t first)
+    TASWTomlValue const& root, TASWTomlOptions const& options, Detail::TEditPointerVector const& steps,
+    IASWToml const* owner, std::size_t first)
     : m_Text(text),
       m_Model(model),
       m_Index(index),
       m_Root(root),
       m_Options(options),
-      m_Edits(edits),
+      m_Steps(steps),
+      m_Owner(owner),
       m_First(first),
       m_Next(first)
 {
     CountLineBreaks(m_Text, m_LF, m_CRLF);
+}
+//---------------------------------------------------------------------------
+bool TBatchGroup::AddsKey() const noexcept
+{
+    return m_AddsKey;
 }
 //---------------------------------------------------------------------------
 void TBatchGroup::AddPaths(TASWTomlEdit const& edit, TPathVector& paths) const
@@ -3193,6 +3251,12 @@ void TBatchGroup::AddPaths(TASWTomlEdit const& edit, TPathVector& paths) const
 //---------------------------------------------------------------------------
 bool TBatchGroup::ApplyToValues(TASWTomlEdit const& edit, TASWTomlValue& values) const
 {
+    // A setting's value taken by parts is set over the value there
+    Detail::TPartnersMap partners;
+    std::optional<TASWTomlValue> const overlaid = Overlaid(edit, partners);
+    if (overlaid.has_value())
+        return SetAtPath(values, edit.Path, 0, *overlaid);
+
     switch (edit.Kind)
     {
         case EEditKind::Append:
@@ -3238,14 +3302,14 @@ TASWTomlResult TBatchGroup::Build()
     ELineBreak const lineBreak = NewLineBreak(m_Model);
     TASWTomlResult result;
     std::size_t next = m_First;
-    while (next < m_Edits.GetEdits().size())
+    while (next < m_Steps.size())
     {
         TASWTomlEdit merged;
         std::size_t end = Merged(next, merged);
-        TASWTomlEdit const* edit = end > next + 1 ? &merged : &m_Edits.GetEdits()[next];
+        TASWTomlEdit const* edit = end > next + 1 ? &merged : m_Steps[next];
         TPathVector paths;
         for (std::size_t i = next; i < end; ++i)
-            AddPaths(m_Edits.GetEdits()[i], paths);
+            AddPaths(*m_Steps[i], paths);
 
         if (next > m_First && Related(paths))
             break;
@@ -3256,7 +3320,7 @@ TASWTomlResult TBatchGroup::Build()
         {
             // Planned alone instead, so a failure is the edit's own
             end = next + 1;
-            edit = &m_Edits.GetEdits()[next];
+            edit = m_Steps[next];
             result = Plan(*edit, splices);
         }
 
@@ -3283,6 +3347,13 @@ TASWTomlResult TBatchGroup::Build()
         m_LF = lf;
         m_CRLF = crlf;
         next = end;
+
+        // A setting's key that it adds gets its comment in the next edit, on the path the group has
+        if (HasSettingComment(*edit) && Detail::FindValue(m_Index, m_Root, edit->Path) == nullptr)
+        {
+            m_AddsKey = true;
+            break;
+        }
 
         // The edits after it would get another line break for their new lines, as the text's most common one
         bool const kept = lineBreak == ELineBreak::CRLF ? m_CRLF > m_LF : m_LF > m_CRLF;
@@ -3320,8 +3391,13 @@ std::size_t TBatchGroup::GetNext() const noexcept
 bool TBatchGroup::JoinsNewKeys(TASWTomlEdit const& edit, TASWTomlPath const& tablePath, std::size_t existing,
     TASWTomlValueOptions const& values, std::size_t first, std::size_t next) const
 {
-    if (edit.Kind != EEditKind::SetValue || !edit.Path.IsValid() || !SameValueOptions(ValuesOf(edit), values))
+    // A setting's key that it adds gets its comment in an edit of its own, so it isn't merged (nor is a run started
+    // with it: its first edit joins it too)
+    if (edit.Kind != EEditKind::SetValue || !edit.Path.IsValid() || !SameValueOptions(ValuesOf(edit), values) ||
+        HasSettingComment(edit))
+    {
         return false;
+    }
 
     // A new key of the table: the path goes through it, and its next part is missing
     TASWTomlPath::TPartVector const& parts = edit.Path.GetParts();
@@ -3337,7 +3413,7 @@ bool TBatchGroup::JoinsNewKeys(TASWTomlEdit const& edit, TASWTomlPath const& tab
     // A key set and then a key inside it would differ: one by one, the first may get a header of its own
     for (std::size_t i = first; i < next; ++i)
     {
-        TASWTomlPath const& other = m_Edits.GetEdits()[i].Path;
+        TASWTomlPath const& other = m_Steps[i]->Path;
         if (IsPathPrefix(other, edit.Path) || IsPathPrefix(edit.Path, other))
             return false;
     }
@@ -3361,8 +3437,7 @@ bool TBatchGroup::Meets(TTextRangeVector const& places) const noexcept
 //---------------------------------------------------------------------------
 std::size_t TBatchGroup::Merged(std::size_t first, TASWTomlEdit& merged) const
 {
-    TASWTomlEdits::TEditVector const& edits = m_Edits.GetEdits();
-    TASWTomlEdit const& edit = edits[first];
+    TASWTomlEdit const& edit = *m_Steps[first];
     if (!edit.Path.IsValid() || edit.Path.IsRoot())
         return first + 1;
 
@@ -3378,9 +3453,9 @@ std::size_t TBatchGroup::Merged(std::size_t first, TASWTomlEdit& merged) const
         bool const tables = m_Index.Nodes[node].Kind == ENodeKind::ArrayOfTables;
         merged.Path = edit.Path;
         merged.Value = *array;
-        for (; next < edits.size(); ++next)
+        for (; next < m_Steps.size(); ++next)
         {
-            TASWTomlEdit const& appended = edits[next];
+            TASWTomlEdit const& appended = *m_Steps[next];
             bool const samePath = IsPathPrefix(appended.Path, edit.Path) && IsPathPrefix(edit.Path, appended.Path);
             bool const sameValues = SameValueOptions(ValuesOf(appended), values);
             if (appended.Kind != EEditKind::Append || !samePath || !sameValues || (tables && !appended.Value.IsTable()))
@@ -3399,9 +3474,9 @@ std::size_t TBatchGroup::Merged(std::size_t first, TASWTomlEdit& merged) const
 
         merged.Path = tablePath;
         merged.Value = *table;
-        for (; next < edits.size(); ++next)
+        for (; next < m_Steps.size(); ++next)
         {
-            TASWTomlEdit const& added = edits[next];
+            TASWTomlEdit const& added = *m_Steps[next];
             if (!JoinsNewKeys(added, tablePath, existing, values, first, next))
                 break;
 
@@ -3417,6 +3492,21 @@ std::size_t TBatchGroup::Merged(std::size_t first, TASWTomlEdit& merged) const
     merged.Values = edit.Values;
 
     return next;
+}
+//---------------------------------------------------------------------------
+std::optional<TASWTomlValue> TBatchGroup::Overlaid(TASWTomlEdit const& edit, Detail::TPartnersMap& partners) const
+{
+    std::optional<TASWTomlValue> overlaid;
+    if (edit.Kind != EEditKind::SetValue || edit.Setting == nullptr || edit.Setting->Overlay == nullptr)
+        return overlaid;
+
+    // The edits of the group before it don't touch its path (see Related()), so the value there is the one it has when
+    // the edits are made one by one
+    TASWTomlValue const* const old = Detail::FindValue(m_Index, m_Root, edit.Path);
+    if (old != nullptr)
+        overlaid = edit.Setting->Overlay->Overlay(*old, edit.Value, partners);
+
+    return overlaid;
 }
 //---------------------------------------------------------------------------
 bool TBatchGroup::Places(TSpliceVector const& splices, TTextRangeVector& places, std::int64_t& lf,
@@ -3451,6 +3541,9 @@ bool TBatchGroup::Places(TSpliceVector const& splices, TTextRangeVector& places,
 //---------------------------------------------------------------------------
 TASWTomlResult TBatchGroup::Plan(TASWTomlEdit const& edit, TSpliceVector& splices) const
 {
+    if (edit.Setting != nullptr && edit.Setting->Owner != m_Owner)
+        return Detail::SettingEditFailure(edit.Path);
+
     TASWTomlValueOptions const& values = ValuesOf(edit);
     TASWTomlResult result;
     if (edit.Kind == EEditKind::Append || edit.Kind == EEditKind::SetValue)
@@ -3461,7 +3554,14 @@ TASWTomlResult TBatchGroup::Plan(TASWTomlEdit const& edit, TSpliceVector& splice
     if (!result.IsOk())
         return WithPath(result, edit.Path);
 
+    // A setting's value taken by parts is set over the value there, the elements of their arrays paired as the overlay
+    // pairs them
     TEditor editor(m_Text, m_Index, m_Root, m_Options, values, NewLineBreak(m_Model));
+    Detail::TPartnersMap partners;
+    std::optional<TASWTomlValue> const overlaid = Overlaid(edit, partners);
+    if (overlaid.has_value())
+        editor.SetPartners(partners);
+
     switch (edit.Kind)
     {
         case EEditKind::Append:
@@ -3489,9 +3589,13 @@ TASWTomlResult TBatchGroup::Plan(TASWTomlEdit const& edit, TSpliceVector& splice
             break;
 
         case EEditKind::SetValue:
-            result = editor.SetValue(edit.Path, edit.Value);
+            result = editor.SetValue(edit.Path, overlaid.has_value() ? *overlaid : edit.Value);
             break;
     }
+
+    // A setting's comment that has no line to go on is left out, as its Set() leaves it out
+    if (edit.Setting != nullptr && edit.Kind == EEditKind::SetComment && result.Code == ETomlCode::InvalidArgument)
+        return TASWTomlResult();
 
     if (!result.IsOk())
         return WithPath(result, edit.Path);
@@ -3508,7 +3612,7 @@ bool TBatchGroup::ReadsBack(Detail::TDocModel const& model, Detail::TDocIndex co
     TASWTomlValue expected = m_Root;
     for (std::size_t i = m_First; i < m_Next; ++i)
     {
-        if (!ApplyToValues(m_Edits.GetEdits()[i], expected))
+        if (!ApplyToValues(*m_Steps[i], expected))
             return false;
     }
 
@@ -3517,10 +3621,13 @@ bool TBatchGroup::ReadsBack(Detail::TDocModel const& model, Detail::TDocIndex co
 
     for (std::size_t i = m_First; i < m_Next; ++i)
     {
-        TASWTomlEdit const& edit = m_Edits.GetEdits()[i];
+        TASWTomlEdit const& edit = *m_Steps[i];
         if (edit.Kind == EEditKind::SetComment)
         {
-            if (CommentOf(model, index, edit.Path) != Joined(CommentLines(edit.Text)))
+            // A setting's comment may have had no line to go on, and then the key keeps the comment it has
+            std::string const comment = CommentOf(model, index, edit.Path);
+            bool const kept = edit.Setting != nullptr && comment == CommentOf(m_Model, m_Index, edit.Path);
+            if (comment != Joined(CommentLines(edit.Text)) && !kept)
                 return false;
         }
         else if (edit.Kind == EEditKind::SetTrailingComment)
@@ -3657,15 +3764,24 @@ TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits)
 {
     Detail::TBatchStats stats;
 
-    return Apply(edits, stats);
+    return Apply(edits, nullptr, stats);
 }
 //---------------------------------------------------------------------------
-TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits, Detail::TBatchStats& stats)
+TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits, IASWToml const* owner, Detail::TBatchStats& stats)
 {
     stats = Detail::TBatchStats();
     TASWTomlResult result = edits.GetResult();
     if (!result.IsOk() || edits.IsEmpty())
         return result;
+
+    // The edits in the order they are made: the batch's, and after a setting's edit that adds its key, the key's
+    // comment, held by 'comments'
+    Detail::TEditPointerVector steps;
+    steps.reserve(edits.GetEdits().size());
+    for (TASWTomlEdit const& edit : edits.GetEdits())
+        steps.push_back(&edit);
+
+    TEditList comments;
 
     // Each group starts from the text the one before it made (the document's for the first), and the model, index and
     // values read from it, kept in one of 'states' while the group's are read into the other; the document takes the
@@ -3675,12 +3791,12 @@ TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits, Detail::TBatc
     std::string text = BodyText();
     bool modified = false;
     std::size_t first = 0;
-    while (first < edits.GetEdits().size())
+    while (first < steps.size())
     {
         Detail::TDocModel const& model = current == NoIndex ? m_Model : states[current].Model;
         Detail::TDocIndex const& index = current == NoIndex ? m_Index : states[current].Index;
         TASWTomlValue const& root = current == NoIndex ? m_Root : states[current].Root;
-        TBatchGroup group(text, model, index, root, m_Options, edits, first);
+        TBatchGroup group(text, model, index, root, m_Options, steps, owner, first);
         result = group.Build();
         if (!result.IsOk())
             return result;
@@ -3703,7 +3819,7 @@ TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits, Detail::TBatc
                 replayed.m_Index = index;
                 replayed.m_Root = root;
                 replayed.m_Options = m_Options;
-                result = replayed.ApplyOneByOne(edits, first, group.GetNext());
+                result = replayed.ApplyOneByOne(steps, first, group.GetNext(), owner);
                 if (!result.IsOk())
                     return result;
 
@@ -3719,6 +3835,11 @@ TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits, Detail::TBatc
         }
 
         first = group.GetNext();
+        if (group.AddsKey())
+        {
+            comments.push_back(KeyComment(*steps[first - 1]));
+            steps.insert(steps.begin() + static_cast<std::ptrdiff_t>(first), &comments.back());
+        }
     }
 
     if (modified)
@@ -3727,8 +3848,11 @@ TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits, Detail::TBatc
     return result;
 }
 //---------------------------------------------------------------------------
-TASWTomlResult TASWTomlDocument::ApplyEdit(TASWTomlEdit const& edit)
+TASWTomlResult TASWTomlDocument::ApplyEdit(TASWTomlEdit const& edit, IASWToml const* owner)
 {
+    if (edit.Setting != nullptr && edit.Setting->Owner != owner)
+        return Detail::SettingEditFailure(edit.Path);
+
     TASWTomlValueOptions const& values = edit.Values.has_value() ? *edit.Values : m_Options.Values;
     switch (edit.Kind)
     {
@@ -3742,13 +3866,30 @@ TASWTomlResult TASWTomlDocument::ApplyEdit(TASWTomlEdit const& edit)
             return Rename(edit.Path, edit.Text);
 
         case EEditKind::SetComment:
-            return SetComment(edit.Path, edit.Text);
+        {
+            // A setting's comment that has no line to go on is left out, as its Set() leaves it out
+            TASWTomlResult result = SetComment(edit.Path, edit.Text);
+            if (edit.Setting != nullptr && result.Code == ETomlCode::InvalidArgument)
+                result = TASWTomlResult();
+
+            return result;
+        }
 
         case EEditKind::SetTrailingComment:
             return SetTrailingComment(edit.Path, edit.Text);
 
         case EEditKind::SetValue:
-            return SetValue(edit.Path, edit.Value, values);
+        {
+            // A setting's value taken by parts is set over the value there, as its Set() sets it
+            TASWTomlValue const* const old = Find(edit.Path);
+            if (edit.Setting == nullptr || edit.Setting->Overlay == nullptr || old == nullptr)
+                return SetValue(edit.Path, edit.Value, values);
+
+            Detail::TPartnersMap partners;
+            TASWTomlValue const overlaid = edit.Setting->Overlay->Overlay(*old, edit.Value, partners);
+
+            return SetValue(edit.Path, overlaid, values, partners);
+        }
     }
 
     // A removal. Remove() returns false for nothing to remove as for a removal that failed; in a batch, the first
@@ -3766,11 +3907,12 @@ TASWTomlResult TASWTomlDocument::ApplyEdit(TASWTomlEdit const& edit)
     return result;
 }
 //---------------------------------------------------------------------------
-TASWTomlResult TASWTomlDocument::ApplyOneByOne(TASWTomlEdits const& edits, std::size_t first, std::size_t next)
+TASWTomlResult TASWTomlDocument::ApplyOneByOne(Detail::TEditPointerVector const& steps, std::size_t first,
+    std::size_t next, IASWToml const* owner)
 {
     TASWTomlResult result;
     for (std::size_t i = first; result.IsOk() && i < next; ++i)
-        result = ApplyEdit(edits.GetEdits()[i]);
+        result = ApplyEdit(*steps[i], owner);
 
     return result;
 }

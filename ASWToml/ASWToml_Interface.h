@@ -230,7 +230,9 @@ public:
     // any edit, and else stops at the first edit that fails, with its result, keeping the edits before it; an
     // exception is UnexpectedException with the path of the edit it came from. A Remove() fails with InvalidArgument
     // when its path isn't valid or is the root, and changes nothing when nothing is at its path, as in
-    // TASWTomlDocument::Apply(). Each failure is reported once: an operation's by the operation, the others here.
+    // TASWTomlDocument::Apply(); a setting's edit (see TASWTomlSetting::Set() given edits) fails with InvalidArgument,
+    // as only its owner's Apply() makes it. Each failure is reported once: an operation's by the operation, the others
+    // here.
     virtual TASWTomlResult Apply(TASWTomlEdits const& edits);
 
     // Whether there is a value at 'path': a table (the root table for the root path), a key or an element of an array,

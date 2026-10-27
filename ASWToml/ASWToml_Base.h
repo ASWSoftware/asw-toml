@@ -51,7 +51,6 @@ namespace Detail
 {
 
 class TSettingBase;
-class TValueOverlay;
 
 /////////////////////////////////////////////////////////////////////////////
 // TMutex
@@ -224,7 +223,10 @@ public:
     TASWBaseToml() = default;
 
     // Makes the edits as TASWTomlDocument::Apply() does (all of them or none) under the lock, so other threads see all
-    // of them or none, as one edit (an edit Save() tells apart, see IASWToml::Save()); a failure is reported once
+    // of them or none, as one edit (an edit Save() tells apart, see IASWToml::Save()); a failure is reported once. The
+    // edits of the object's settings are made as their Set() would make them (see TASWTomlSetting::Set() given edits);
+    // another object's fail with InvalidArgument. An exception (out of memory) is UnexpectedException without a Path:
+    // no one edit ran out of it.
     TASWTomlResult Apply(TASWTomlEdits const& edits) override;
     bool Contains(TASWTomlPath const& path) const override;
     std::string GetComment(TASWTomlPath const& path) const override;

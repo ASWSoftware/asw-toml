@@ -19,6 +19,7 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "ASWToml_Edits.h"
 //---------------------------------------------------------------------------
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,10 +28,35 @@ SPDX-License-Identifier: MIT
 namespace ASWToml
 {
 
+//---------------------------------------------------------------------------
+TASWTomlResult Detail::SettingEditFailure(TASWTomlPath const& path)
+{
+    TASWTomlResult result;
+    result.Code = ETomlCode::InvalidArgument;
+    result.Path = path.ToString();
+    result.Message = "The edit of setting " + result.Path + " can only be made by the Apply() of its own TOML object.";
+
+    return result;
+}
+//---------------------------------------------------------------------------
+
+
 /////////////////////////////////////////////////////////////////////////////
 // TASWTomlEdits
 /////////////////////////////////////////////////////////////////////////////
 
+//---------------------------------------------------------------------------
+void TASWTomlEdits::AddSetting(TASWTomlPath const& path, TASWTomlValue value, TASWTomlValueOptions const& values,
+    std::shared_ptr<Detail::TSettingEdit const> setting)
+{
+    TASWTomlEdit edit;
+    edit.Kind = EEditKind::SetValue;
+    edit.Path = path;
+    edit.Value = std::move(value);
+    edit.Values = values;
+    edit.Setting = std::move(setting);
+    m_Edits.push_back(std::move(edit));
+}
 //---------------------------------------------------------------------------
 TASWTomlEdits& TASWTomlEdits::AddText(EEditKind kind, TASWTomlPath const& path, std::string_view text)
 {

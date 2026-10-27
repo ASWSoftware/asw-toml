@@ -6350,7 +6350,7 @@ ASWToml::TASWTomlResult TTest_ASWToml_DocumentBatch::CheckBatch(std::string cons
     TASWTomlDocument expected = original;
     ASWToml::TASWTomlResult const expectedResult = OneByOne(expected, edits);
     applied = original;
-    ASWToml::TASWTomlResult const result = applied.Apply(edits, stats);
+    ASWToml::TASWTomlResult const result = applied.Apply(edits, nullptr, stats);
 
     TASWTomlDocument const& wanted = expectedResult.IsOk() ? expected : original;
     CheckEmpty(ResultsDiffer(expectedResult, result), msg + ": the result should be the edits' one by one", loc);
@@ -6877,7 +6877,7 @@ void TTest_ASWToml_DocumentEditFuzz::CheckRandomBatches(std::string const& text,
         ASWToml::TASWTomlResult const expectedResult = OneByOne(expected, batchEdits);
         TASWTomlDocument applied = document;
         ASWToml::Detail::TBatchStats stats;
-        ASWToml::TASWTomlResult const result = applied.Apply(batchEdits, stats);
+        ASWToml::TASWTomlResult const result = applied.Apply(batchEdits, nullptr, stats);
 
         // Checked with if, as the checks run thousands of times
         TASWTomlDocument const& wanted = expectedResult.IsOk() ? expected : document;

@@ -17,11 +17,13 @@ SPDX-License-Identifier: MIT
 // Module header
 #include "ASWToml_Settings.h"
 //---------------------------------------------------------------------------
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
 //---------------------------------------------------------------------------
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_Interface.h"
 #include "ASWToml_Options.h"
 //---------------------------------------------------------------------------
@@ -31,6 +33,8 @@ namespace ASWToml
 
 namespace
 {
+
+//---------------------------------------------------------------------------
 
 TASWTomlMessage KeyAddedMessage(std::string path, TASWTomlValue const& value, TASWTomlValueOptions const& options);
 TASWTomlMessage ResultMessage(ESeverity severity, TASWTomlResult const& result);
@@ -329,6 +333,16 @@ TSettingBase::TSettingBase(TASWTomlTable const& table, std::string_view key, std
         m_PathError = "The path of the setting's table, " + m_TablePath.ToString() +
             ", has an index: a table of settings is named by keys only.";
     }
+}
+//---------------------------------------------------------------------------
+void TSettingBase::AddEdit(TASWTomlEdits& edits, TASWTomlValue value, TASWTomlValueOptions const& values,
+    std::shared_ptr<TValueOverlay const> overlay) const
+{
+    std::shared_ptr<TSettingEdit> setting = std::make_shared<TSettingEdit>();
+    setting->Owner = m_Owner;
+    setting->Comment = m_Comment;
+    setting->Overlay = std::move(overlay);
+    edits.AddSetting(m_Path, std::move(value), values, std::move(setting));
 }
 //---------------------------------------------------------------------------
 void TSettingBase::AddFailure(TSettingsApply& apply, TASWTomlResult const& result) const

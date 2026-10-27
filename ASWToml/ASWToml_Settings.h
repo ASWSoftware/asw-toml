@@ -31,6 +31,7 @@ SPDX-License-Identifier: MIT
 #include <concepts>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -42,6 +43,7 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_Base.h"
 #include "ASWToml_Converters.h"
 #include "ASWToml_Document.h"
+#include "ASWToml_Edits.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
@@ -127,25 +129,6 @@ struct TPartRepair
 
 // The parts replaced and the keys added, in the order they were found
 using TPartRepairVector = std::vector<TPartRepair>;
-
-
-/////////////////////////////////////////////////////////////////////////////
-// TValueOverlay
-//
-// Works out the value a setting's Set() writes over the value the document has (see TASWBaseToml::SetSettingValue()
-// and OverlayValue()). Implemented by TSettingOverlay<T>.
-/////////////////////////////////////////////////////////////////////////////
-class TValueOverlay
-{
-public:
-    virtual ~TValueOverlay() = default;
-
-    // The value to set where the document has 'old' (one of its values), for the new value 'value', adding to
-    // 'partners' how the elements of the arrays of 'old' pair with the new ones (see TASWTomlDocument::SetValue()).
-    // Throws only std::bad_alloc.
-    virtual TASWTomlValue Overlay(TASWTomlValue const& old, TASWTomlValue const& value,
-        TPartnersMap& partners) const = 0;
-};
 
 //---------------------------------------------------------------------------
 
@@ -252,18 +235,19 @@ public:
 /////////////////////////////////////////////////////////////////////////////
 // TSettingOverlay
 //
-// The overlay of a value of T (see OverlayValue()), for TASWTomlSetting<T>::Set()
+// The overlay of a value of T (see OverlayValue()), for TASWTomlSetting<T>::Set(), with copies of the value and the
+// value options, so a setting's edit in a batch keeps it
 /////////////////////////////////////////////////////////////////////////////
 template <typename T>
 class TSettingOverlay final : public TValueOverlay
 {
 private:
-    T const& m_In;
-    TASWTomlValueOptions const& m_Options;
+    T m_In;
+    TASWTomlValueOptions m_Options;
 
 public:
-    // The overlay of the value 'in', written with 'options'; both must outlive it
-    TSettingOverlay(T const& in, TASWTomlValueOptions const& options) noexcept
+    // The overlay of the value 'in', written with 'options'
+    TSettingOverlay(T const& in, TASWTomlValueOptions const& options)
         : m_In(in),
           m_Options(options)
     {
@@ -870,6 +854,12 @@ protected:
     TSettingBase(TASWTomlTable const& table, std::string_view key, std::string_view comment);
     virtual ~TSettingBase() = default;
 
+    // Adds the setting's edit to 'edits': a SetValue() at its path of 'value', written with 'values', made by the
+    // owner's Apply() as WriteValue() makes it, with 'overlay' (nullptr for none; see TASWTomlSetting::Set() given
+    // edits)
+    void AddEdit(TASWTomlEdits& edits, TASWTomlValue value, TASWTomlValueOptions const& values,
+        std::shared_ptr<TValueOverlay const> overlay) const;
+
     // Adds 'result', a failure of applying the setting, to 'apply' as an Error
     void AddFailure(TSettingsApply& apply, TASWTomlResult const& result) const;
 
@@ -1297,8 +1287,58 @@ public:
                 // keeps what T doesn't know (see OverlayValue()).
                 if (result.IsOk())
                 {
-                    Detail::TSettingOverlay<T> const overlay(value, options);
-                    return WriteValue(written, options, Detail::ByParts<T> ? &overlay : nullptr);
+                    if constexpr (Detail::ByParts<T>)
+                    {
+                        Detail::TSettingOverlay<T> const overlay(value, options);
+                        return WriteValue(written, options, &overlay);
+                    }
+                    else
+                    {
+                        return WriteValue(written, options, nullptr);
+                    }
+                }
+
+                result = SetFailure(std::move(result));
+            }
+        }
+        catch (...)
+        {
+            result = CaughtSetFailure();
+        }
+
+        ReportFailure(result);
+
+        return result;
+    }
+
+    // Adds to 'edits' the edit that Set(value) makes, so the owner's Apply() makes it with the batch's other edits:
+    // checked and converted now, as Set() does it (with the value options it would write with now), failing as Set()
+    // fails, and then adding nothing (the failure is reported, but not kept in 'edits'). The owner's Apply() makes it
+    // at its place in the batch as Set() would make it there: over the value there, for a value taken by parts, and
+    // giving a key it adds the setting's comment. The Apply() of another object, or a document's, fails with
+    // InvalidArgument for it.
+    TASWTomlResult Set(TASWTomlEdits& edits, T const& value) const
+    {
+        TASWTomlResult result;
+        try
+        {
+            result = PathProblem();
+            if (result.IsOk())
+            {
+                TASWTomlValueOptions const options = ValueOptions();
+                TASWTomlValue written;
+                result = TASWTomlConverter<T>::ToValue(value, written, options);
+                if (result.IsOk())
+                    result = Check(value, written, options);
+
+                if (result.IsOk())
+                {
+                    std::shared_ptr<Detail::TValueOverlay const> overlay;
+                    if constexpr (Detail::ByParts<T>)
+                        overlay = std::make_shared<Detail::TSettingOverlay<T> const>(value, options);
+
+                    AddEdit(edits, std::move(written), options, std::move(overlay));
+                    return result;
                 }
 
                 result = SetFailure(std::move(result));

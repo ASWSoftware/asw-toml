@@ -62,6 +62,37 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////////
+// TTest_ASWToml_SettingsBatch
+//
+// TASWTomlSetting<T>::Set() given edits: the setting's edit in a batch, made by the owner's Apply() as the setting's
+// Set() would make it at its place, and refused by any other Apply()
+/////////////////////////////////////////////////////////////////////////////
+class TTest_ASWToml_SettingsBatch : public TAutoTestGroup<TTest_ASWToml_SettingsBatch>
+{
+private:
+    typedef TAutoTestGroup<TTest_ASWToml_SettingsBatch> inherited;
+
+public: // Test methods, each defined with ASW_TEST
+    void Test_Apply_AddsKeysWithTheirComments();
+    void Test_Apply_GroupsLikeOtherEdits();
+    void Test_Apply_MatchesSetOneByOne();
+    void Test_Apply_RandomBatchesMatchSetOneByOne();
+    void Test_Apply_SeesTheEditsBeforeIt();
+    void Test_Apply_SettingOfAnotherObjectFails();
+    void Test_Set_FailureAddsNothing();
+
+public:
+    TTest_ASWToml_SettingsBatch();
+    ~TTest_ASWToml_SettingsBatch() override;
+
+    void SetUp_Group() override;
+    void SetUp_Test(ITestCase& testCase) override;
+    void TearDown_Group() override;
+    void TearDown_Test(ITestCase& testCase) override;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_SettingsLoad
 //
 // What Load() and LoadText() do with the settings and tables bound to the object: missing keys added, values that

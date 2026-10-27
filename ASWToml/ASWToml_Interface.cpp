@@ -113,6 +113,15 @@ TASWTomlResult IASWToml::Apply(TASWTomlEdits const& edits)
 //---------------------------------------------------------------------------
 TASWTomlResult IASWToml::ApplyEdit(TASWTomlEdit const& edit)
 {
+    // A setting's edit is made only by its owner, a TASWBaseToml, whose Apply() doesn't come here
+    if (edit.Setting != nullptr)
+    {
+        TASWTomlResult const result = Detail::SettingEditFailure(edit.Path);
+        ReportFailure(result);
+
+        return result;
+    }
+
     switch (edit.Kind)
     {
         case EEditKind::Append:

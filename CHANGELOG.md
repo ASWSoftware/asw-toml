@@ -20,7 +20,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one lock, so other threads see all of it or none, and reports a failure once. `IASWToml::Apply()`
   isn't pure virtual, so an application's own implementation of `IASWToml` still compiles; it gets a
   default that makes the edits one after the other through its operations and stops at the first
-  that fails, keeping the edits before it.
+  that fails, keeping the edits before it. Settings join a batch with
+  `TASWTomlSetting<T>::Set(edits, value)`, which checks and converts the value as `Set()` does (a
+  value it refuses adds no edit, and is reported); the owner's `Apply()` then makes the edit as
+  `Set()` would at its place in the batch (a value taken by parts set over the value there, a key it
+  adds given the setting's comment), and any other `Apply()` refuses it with `InvalidArgument`.
 
 ### Changed
 

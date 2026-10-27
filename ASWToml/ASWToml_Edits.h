@@ -6,7 +6,8 @@ A TOML file reader/writer library.
 
 TASWTomlEdits: a list of edits of a TOML document (set a value, append,
 remove, rename, set a comment or a trailing comment), which
-TASWTomlDocument::Apply() makes as one: all of them or none.
+TASWTomlDocument::Apply() and a TOML object's Apply() make as one: all of
+them or none. The edits of settings (TASWTomlSetting::Set() given edits).
 
 Requires C++ 20 or higher.
 
@@ -24,6 +25,7 @@ SPDX-License-Identifier: MIT
 #ifndef ASWToml_EditsH
 #define ASWToml_EditsH
 //---------------------------------------------------------------------------
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -31,6 +33,7 @@ SPDX-License-Identifier: MIT
 #include <vector>
 //---------------------------------------------------------------------------
 #include "ASWToml_Converters.h"
+#include "ASWToml_Document.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Path.h"
 #include "ASWToml_Types.h"
@@ -39,6 +42,55 @@ SPDX-License-Identifier: MIT
 
 namespace ASWToml
 {
+
+class IASWToml;
+
+// The internals of a setting's edit
+namespace Detail
+{
+
+class TSettingBase;
+
+/////////////////////////////////////////////////////////////////////////////
+// TValueOverlay
+//
+// Works out the value a setting's Set() writes over the value the document has (see TASWBaseToml::SetSettingValue()
+// and OverlayValue()). Implemented by TSettingOverlay<T>.
+/////////////////////////////////////////////////////////////////////////////
+class TValueOverlay
+{
+public:
+    virtual ~TValueOverlay() = default;
+
+    // The value to set where the document has 'old' (one of its values), for the new value 'value', adding to
+    // 'partners' how the elements of the arrays of 'old' pair with the new ones (see TASWTomlDocument::SetValue()).
+    // Throws only std::bad_alloc.
+    virtual TASWTomlValue Overlay(TASWTomlValue const& old, TASWTomlValue const& value,
+        TPartnersMap& partners) const = 0;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TSettingEdit
+//
+// What makes a SetValue() a setting's edit (see TASWTomlSetting::Set() given edits): the owner's Apply() makes it as
+// the setting's Set() would make it at its place, setting a value taken by parts over the value there, and giving a
+// key it adds the setting's comment
+/////////////////////////////////////////////////////////////////////////////
+struct TSettingEdit
+{
+    IASWToml const* Owner = nullptr; // The setting's owner, the only object whose Apply() makes the edit
+    std::string Comment; // The comment a key the edit adds gets ("" for none)
+    std::shared_ptr<TValueOverlay const> Overlay; // For a value taken by parts, else nullptr
+};
+
+//---------------------------------------------------------------------------
+
+// The InvalidArgument result of the edit of a setting at 'path' that an Apply() other than its owner's was given
+TASWTomlResult SettingEditFailure(TASWTomlPath const& path);
+
+} // namespace Detail
+
 
 // What an edit of a TASWTomlEdits does: the TASWTomlDocument edit of the same name
 enum class EEditKind : int
@@ -66,6 +118,10 @@ struct TASWTomlEdit
 
     // Append and SetValue: the value options the value is written with; none for the document's (its options' Values)
     std::optional<TASWTomlValueOptions> Values;
+
+    // A setting's SetValue() (or the comment of the key it added, see TASWTomlDocument::Apply()), made only by the
+    // owner's Apply(); nullptr for any other edit. Internal: set by TASWTomlSetting::Set() given edits.
+    std::shared_ptr<Detail::TSettingEdit const> Setting;
 };
 
 
@@ -80,6 +136,9 @@ struct TASWTomlEdit
 /////////////////////////////////////////////////////////////////////////////
 class TASWTomlEdits
 {
+private:
+    friend class Detail::TSettingBase;
+
 public:
     // The edits, in order
     using TEditVector = std::vector<TASWTomlEdit>;
@@ -101,6 +160,11 @@ private:
 
         return *this;
     }
+
+    // Adds a setting's SetValue() at 'path' of 'value', written with 'values', made as 'setting' says (see
+    // TASWTomlSetting::Set() given edits)
+    void AddSetting(TASWTomlPath const& path, TASWTomlValue value, TASWTomlValueOptions const& values,
+        std::shared_ptr<Detail::TSettingEdit const> setting);
 
     // Adds an edit of 'kind' at 'path' with the text 'text'
     TASWTomlEdits& AddText(EEditKind kind, TASWTomlPath const& path, std::string_view text);

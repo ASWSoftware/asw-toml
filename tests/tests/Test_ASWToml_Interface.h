@@ -41,6 +41,7 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Apply_ExceptionIsReported();
     void Test_Apply_MakesTheEditsByTheOperations();
     void Test_Apply_RemovesAsABatchDoes();
+    void Test_Apply_SettingsEditIsRefused();
     void Test_Apply_StopsAtTheFirstFailure();
     void Test_Apply_UsesTheValueOptions();
     void Test_GetValue_ConverterExceptionIsThrown();

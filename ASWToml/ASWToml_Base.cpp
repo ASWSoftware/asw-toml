@@ -218,14 +218,17 @@ TASWTomlResult TASWBaseToml::Apply(TASWTomlEdits const& edits)
 
     try
     {
+        // The document makes the edits of this object's settings too
+        Detail::TBatchStats stats;
         std::lock_guard<Detail::TSharedMutex> lock(m_Mutex);
-        result = m_Document.Apply(edits);
+        result = m_Document.Apply(edits, this, stats);
         if (result.IsOk())
             ++m_EditCount;
     }
     catch (...)
     {
-        // Thrown by one of the edits, which one isn't known
+        // Out of memory (the document's Apply() throws nothing else), planning an edit or reading a group's text: no
+        // one edit to name
         result = CaughtException();
     }
 
