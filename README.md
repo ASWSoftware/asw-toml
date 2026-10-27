@@ -236,7 +236,7 @@ or let CMake download it with `FetchContent`:
 include(FetchContent)
 FetchContent_Declare(ASWToml
     GIT_REPOSITORY https://github.com/ASWSoftware/asw-toml.git
-    GIT_TAG v1.0.0      # A release tag
+    GIT_TAG v1.1.0      # A release tag
     GIT_SUBMODULES ""   # Skip the unit-test framework submodule
 )
 FetchContent_MakeAvailable(ASWToml)
@@ -260,7 +260,7 @@ cmake --install build --config Release --prefix C:/Libraries/ASWToml
 and find it with `find_package` (pass the prefix in `CMAKE_PREFIX_PATH`):
 
 ```
-find_package(ASWToml 1.0 CONFIG REQUIRED)
+find_package(ASWToml 1.1 CONFIG REQUIRED)
 target_link_libraries(MyApp PRIVATE ASWToml::ASWToml)
 ```
 
@@ -338,7 +338,7 @@ class and operation.
 
 ASWToml follows [Semantic Versioning](https://semver.org). Releases are tagged on `main` (e.g.
 `v1.0.0`). Between releases, the `develop` branch carries the next planned version with a
-pre-release, e.g. `1.1.0-dev.1`, which comes before `1.1.0`. `ASWToml/ASWToml_Version.h` has the
+pre-release, e.g. `1.2.0-dev.1`, which comes before `1.2.0`. `ASWToml/ASWToml_Version.h` has the
 version as macros, for code that supports several ASWToml versions, and as constants in the
 `ASWToml` namespace:
 

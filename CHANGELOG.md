@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-27
+
 ### Added
 
 - Batches: `TASWTomlEdits` (`ASWToml_Edits.h`) lists edits of a document (`SetValue()`, `Append()`,
@@ -394,5 +396,6 @@ The first release.
   `Guarantees.md` (errors, threads, callbacks, lifetimes, nesting and stack, saving and crashes,
   and every `ETomlCode`). The README has a quick start, an API overview and links to them.
 
-[Unreleased]: https://github.com/ASWSoftware/asw-toml/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/ASWSoftware/asw-toml/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/ASWSoftware/asw-toml/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ASWSoftware/asw-toml/releases/tag/v1.0.0
