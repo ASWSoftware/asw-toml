@@ -144,6 +144,10 @@
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Interface.h</DependentOn>
             <BuildOrder>75</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Json.cpp">
+            <DependentOn>..\..\..\..\ASWToml\ASWToml_Json.h</DependentOn>
+            <BuildOrder>85</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\..\ASWToml\ASWToml_Options.cpp">
             <DependentOn>..\..\..\..\ASWToml\ASWToml_Options.h</DependentOn>
             <BuildOrder>51</BuildOrder>
@@ -220,6 +224,10 @@
             <DependentOn>..\..\..\tests\Test_ASWToml_Interface.h</DependentOn>
             <BuildOrder>76</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\..\tests\Test_ASWToml_Json.cpp">
+            <DependentOn>..\..\..\tests\Test_ASWToml_Json.h</DependentOn>
+            <BuildOrder>86</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\tests\Test_ASWToml_Options.cpp">
             <DependentOn>..\..\..\tests\Test_ASWToml_Options.h</DependentOn>
             <BuildOrder>52</BuildOrder>
@@ -264,6 +272,10 @@
             <DependentOn>..\..\..\tests\UT_Helper_FailingAlloc.h</DependentOn>
             <BuildOrder>79</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\..\tests\UT_Helper_Json.cpp">
+            <DependentOn>..\..\..\tests\UT_Helper_Json.h</DependentOn>
+            <BuildOrder>87</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\..\tests\UT_Helper_TempDir.cpp">
             <DependentOn>..\..\..\tests\UT_Helper_TempDir.h</DependentOn>
             <BuildOrder>55</BuildOrder>
@@ -271,6 +283,10 @@
         <CppCompile Include="..\..\..\tests\UT_Helper_Threads.cpp">
             <DependentOn>..\..\..\tests\UT_Helper_Threads.h</DependentOn>
             <BuildOrder>80</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="..\..\..\tests\UT_Helper_TomlTest.cpp">
+            <DependentOn>..\..\..\tests\UT_Helper_TomlTest.h</DependentOn>
+            <BuildOrder>88</BuildOrder>
         </CppCompile>
         <CppCompile Include="..\..\..\toml-test\TomlTest_Corpus.cpp">
             <DependentOn>..\..\..\toml-test\TomlTest_Corpus.h</DependentOn>

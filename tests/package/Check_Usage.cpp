@@ -5,8 +5,8 @@ Author: Anthony S. West - ASW Software
 Check of the installed CMake package: tests/package/CMakeLists.txt builds this file against an ASWToml installed with
 `cmake --install` and found with find_package(), and running it returns 0 when the installed library works: every
 installed header compiles, a settings class (with a struct and an array of tables) reads and writes a text and a
-file, and a document is parsed, edited and written back (so the library, its file layer and the threading library it
-links to are all there).
+file, and a document is parsed, edited, written back and exported as JSON (so the library, its file layer and the
+threading library it links to are all there).
 
 Copyright 2026 ASW Software
 
@@ -31,6 +31,7 @@ SPDX-License-Identifier: MIT
 #include "ASWToml_File.h"
 #include "ASWToml_Index.h"
 #include "ASWToml_Interface.h"
+#include "ASWToml_Json.h"
 #include "ASWToml_Options.h"
 #include "ASWToml_Parser.h"
 #include "ASWToml_Path.h"
@@ -181,6 +182,11 @@ int main()
     Check(document.SetValue("colors.back", ASWToml::TASWTomlValue("navy")).IsOk(), "the value should be set");
     Check(document.ToText() == "# Colors\n[colors]\nback = \"navy\"  # The background\nfore = 0x000000\n",
         "only the value's text should change");
+
+    // The document's values as JSON
+    std::string json;
+    Check(ASWToml::ToJson(document.GetRoot(), json, { .Indent = 0 }).IsOk(), "the values should be written as JSON");
+    Check(json == "{\"colors\":{\"back\":\"navy\",\"fore\":0}}", "the JSON should hold the document's values");
 
     if (ProblemCount != 0)
         return 1;

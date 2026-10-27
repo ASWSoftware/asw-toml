@@ -25,6 +25,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value it refuses adds no edit, and is reported); the owner's `Apply()` then makes the edit as
   `Set()` would at its place in the batch (a value taken by parts set over the value there, a key it
   adds given the setting's comment), and any other `Apply()` refuses it with `InvalidArgument`.
+- JSON export: `ToJson()` (`ASWToml_Json.h`) writes any `TASWTomlValue` (a document's root table,
+  a value found in it, or a value of its own) as JSON text, with `TASWTomlJsonOptions`: the `Plain`
+  style writes TOML's values as JSON's (a date or time as a string in RFC 3339, an integer as a
+  number in decimal), and the `Tagged` style writes toml-test's form, each value with its TOML type,
+  which loses nothing. `NonFinite` says how `Plain` writes `inf` and `nan`, which JSON lacks (fail,
+  the default, `null` or a string), and `Indent` how the text is laid out (0 for one line). A string
+  or key that isn't valid UTF-8, or a date or time that isn't valid, fails with `InvalidValue` and the
+  path of the value. There is no JSON import.
 
 ### Changed
 

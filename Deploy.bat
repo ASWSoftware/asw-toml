@@ -85,6 +85,10 @@ call :CopyFile "ASWToml\ASWToml_Interface.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Int
 if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Interface.h" "%TARGET_DIR%\ASWToml\ASWToml_Interface.h"
 if errorlevel 1 exit /b 1
+call :CopyFile "ASWToml\ASWToml_Json.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Json.cpp"
+if errorlevel 1 exit /b 1
+call :CopyFile "ASWToml\ASWToml_Json.h" "%TARGET_DIR%\ASWToml\ASWToml_Json.h"
+if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Options.cpp" "%TARGET_DIR%\ASWToml\ASWToml_Options.cpp"
 if errorlevel 1 exit /b 1
 call :CopyFile "ASWToml\ASWToml_Options.h" "%TARGET_DIR%\ASWToml\ASWToml_Options.h"

@@ -50,6 +50,8 @@ add_library(ASWToml STATIC
     ASWToml/ASWToml_Index.h
     ASWToml/ASWToml_Interface.cpp
     ASWToml/ASWToml_Interface.h
+    ASWToml/ASWToml_Json.cpp
+    ASWToml/ASWToml_Json.h
     ASWToml/ASWToml_Options.cpp
     ASWToml/ASWToml_Options.h
     ASWToml/ASWToml_Parser.cpp

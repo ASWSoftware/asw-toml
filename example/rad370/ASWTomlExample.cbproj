@@ -124,6 +124,10 @@
             <DependentOn>..\..\ASWToml\ASWToml_Interface.h</DependentOn>
             <BuildOrder>5</BuildOrder>
         </CppCompile>
+        <CppCompile Include="..\..\ASWToml\ASWToml_Json.cpp">
+            <DependentOn>..\..\ASWToml\ASWToml_Json.h</DependentOn>
+            <BuildOrder>18</BuildOrder>
+        </CppCompile>
         <CppCompile Include="..\..\ASWToml\ASWToml_Options.cpp">
             <DependentOn>..\..\ASWToml\ASWToml_Options.h</DependentOn>
             <BuildOrder>6</BuildOrder>

@@ -50,6 +50,7 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Edits.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_File.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Interface.cpp"
+    "${ASWTOML_TESTS_DIR}/Test_ASWToml_Json.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Options.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Path.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Scalars.cpp"
@@ -61,8 +62,10 @@ add_executable(ASWTomlTests
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Writer.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_Converters.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_FailingAlloc.cpp"
+    "${ASWTOML_TESTS_DIR}/UT_Helper_Json.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_TempDir.cpp"
     "${ASWTOML_TESTS_DIR}/UT_Helper_Threads.cpp"
+    "${ASWTOML_TESTS_DIR}/UT_Helper_TomlTest.cpp"
     "${ASWTOML_TOML_TEST_DIR}/TomlTest_Corpus.cpp"
 )
 
