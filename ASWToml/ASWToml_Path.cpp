@@ -79,6 +79,7 @@ std::size_t SkipBlanks(std::string_view text, std::size_t offset) noexcept
 
 } // namespace
 
+//---------------------------------------------------------------------------
 
 /////////////////////////////////////////////////////////////////////////////
 // TASWTomlPathPart

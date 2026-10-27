@@ -189,6 +189,7 @@ struct TDocIndex
     TIndexVector BlockLines;
 };
 
+//---------------------------------------------------------------------------
 
 // Builds 'index' and 'root' from 'model', whose text without a byte order mark is 'text': applies TOML's table rules
 // as TASWTomlDocument::Parse() describes them (DuplicateKey) and the limit 'maxDepth' (NestingTooDeep), with the Line

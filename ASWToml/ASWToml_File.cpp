@@ -1021,6 +1021,8 @@ TASWTomlResult WriteWholeFile(std::filesystem::path const& path, std::string_vie
 } // namespace Detail
 
 //---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
 std::string PathToUtf8(std::filesystem::path const& path)
 {
 #if defined(_WIN32)

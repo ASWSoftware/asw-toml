@@ -863,6 +863,8 @@ public:
 
 } // namespace Detail
 
+//---------------------------------------------------------------------------
+
 // Whether T has a converter: TASWTomlConverter<T> is defined, with FromValue() and ToValue() as TASWTomlConverter
 // describes them
 template <typename T>

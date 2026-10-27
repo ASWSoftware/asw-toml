@@ -51,6 +51,8 @@ enum class EBom
     Utf32BE, // 00 00 FE FF
 };
 
+//---------------------------------------------------------------------------
+
 // The size in bytes of 'bom' (0 for EBom::None)
 std::size_t BomSize(EBom bom) noexcept;
 

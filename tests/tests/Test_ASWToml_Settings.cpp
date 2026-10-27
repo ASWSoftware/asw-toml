@@ -1275,6 +1275,7 @@ std::string TThrowingValidator::operator()(int const& /*value*/) const
 
 } // namespace
 
+//---------------------------------------------------------------------------
 
 /////////////////////////////////////////////////////////////////////////////
 // TTest_ASWToml_SettingsAccess

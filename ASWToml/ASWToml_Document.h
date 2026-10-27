@@ -101,7 +101,6 @@ struct TDocKey
     TPartVector Parts; // Never empty
 };
 
-
 struct TDocElement;
 struct TDocInlineEntry;
 
@@ -288,6 +287,7 @@ struct TBatchStats
 
 } // namespace Detail
 
+//---------------------------------------------------------------------------
 
 /////////////////////////////////////////////////////////////////////////////
 // TASWTomlPathComment

@@ -629,7 +629,6 @@ ASW_TEST(TTest_ASWToml_DateTimes, OffsetDateTime_ToSysTime_AnyDuration)
     if (!std::ratio_equal_v<TPeriod, std::nano>)
         farClockCount = "253402300799" + zeros;
 
-
     // Act & Assert
     CheckEquals("253402300799"s, CountText(last.ToSysTime<std::chrono::seconds>()), "9999 in seconds");
     CheckEquals("253402300799999"s, CountText(last.ToSysTime<std::chrono::milliseconds>()), "in milliseconds");

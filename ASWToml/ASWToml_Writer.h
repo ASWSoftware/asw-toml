@@ -68,6 +68,7 @@ struct TWriteStyle
     std::size_t MaxDepth = 0;
 };
 
+//---------------------------------------------------------------------------
 
 // Appends a line for each key of 'table' (a table value) as dotted keys after 'prefix', the key parts of the table as
 // written (e.g. server or a."b c"), each line 'indent', the key, " = ", its value (as WriteValue() writes it) and the

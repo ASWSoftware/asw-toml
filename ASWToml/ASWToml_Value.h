@@ -293,7 +293,6 @@ struct TASWTomlOffsetDateTime
     bool operator==(TASWTomlOffsetDateTime const& other) const = default;
 };
 
-
 struct TASWTomlKeyValue;
 
 /////////////////////////////////////////////////////////////////////////////
