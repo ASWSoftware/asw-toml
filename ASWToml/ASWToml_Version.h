@@ -30,10 +30,10 @@ SPDX-License-Identifier: MIT
 // ASWTOML_VERSION_STRING is "MAJOR.MINOR.PATCH", followed by "-PRERELEASE" if the pre-release isn't empty; change
 // them together (a unit test checks that they match).
 #define ASWTOML_VERSION_MAJOR 1
-#define ASWTOML_VERSION_MINOR 1
+#define ASWTOML_VERSION_MINOR 2
 #define ASWTOML_VERSION_PATCH 0
-#define ASWTOML_VERSION_PRERELEASE ""
-#define ASWTOML_VERSION_STRING "1.1.0"
+#define ASWTOML_VERSION_PRERELEASE "dev.1"
+#define ASWTOML_VERSION_STRING "1.2.0-dev.1"
 
 namespace ASWToml
 {
