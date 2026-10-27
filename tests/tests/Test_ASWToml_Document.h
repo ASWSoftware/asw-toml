@@ -690,8 +690,19 @@ private:
 
 private:
     // Checks that Apply() of 'edits' to a document of 'text' gives what the edits made one by one give (see
-    // OneByOne()): the same result, and the same text and modified flag, or on a failure, the document as it was; sets
-    // 'applied' to the document Apply() made, and gives its result
+    // OneByOne()): the same result, and the same text and modified flag, or on a failure, the document as it was; and
+    // that it made no group of them again one by one. Sets 'applied' to the document Apply() made and 'stats' to how,
+    // and gives its result.
+    ASWToml::TASWTomlResult CheckBatch(std::string const& text, ASWToml::TASWTomlEdits const& edits,
+        ASWToml::TASWTomlDocument& applied, ASWToml::Detail::TBatchStats& stats, std::string const& msg,
+        std::source_location loc = std::source_location::current());
+
+    // Checks that Apply() of 'edits', which succeed, to a document of 'text' gives what CheckBatch() checks, in
+    // 'groups' groups
+    void CheckGroups(std::string const& text, ASWToml::TASWTomlEdits const& edits, std::size_t groups,
+        std::string const& msg, std::source_location loc = std::source_location::current());
+
+    // CheckBatch(), without the stats
     ASWToml::TASWTomlResult CheckSameAsOneByOne(std::string const& text, ASWToml::TASWTomlEdits const& edits,
         ASWToml::TASWTomlDocument& applied, std::string const& msg,
         std::source_location loc = std::source_location::current());
@@ -705,6 +716,11 @@ public: // Test methods, each defined with ASW_TEST
     void Test_Apply_ModifiedFlagAsOneByOne();
     void Test_Apply_RemoveOfNothingOrTheRoot();
     void Test_Apply_ValueOptions();
+    void Test_Groups_IndependentEditsShareOne();
+    void Test_Groups_LineBreakRule();
+    void Test_Groups_MergedRuns();
+    void Test_Groups_PathRule();
+    void Test_Groups_PlaceRule();
 
 public:
     TTest_ASWToml_DocumentBatch();
@@ -745,10 +761,12 @@ private:
     // ones before it are made, so it may build on them), one batch after another, on a document of 'text' parsed with
     // 'options' (named 'name' in messages), with a generator seeded with 'seed', and checks that Apply() of each gives
     // what its edits made one by one give (see OneByOne()): the result, and the text, values and modified flag, or on
-    // a failure, the document as it was. Adds the code of each batch's result to 'results'. The first problem ends
-    // the batches.
+    // a failure, the document as it was; and that it made no group of them again one by one. Adds the code of each
+    // batch's result to 'results', and the edits and groups of those that succeeded to 'edits' and 'groups'. The
+    // first problem ends the batches.
     void CheckRandomBatches(std::string const& text, ASWToml::TASWTomlOptions const& options, std::uint32_t seed,
-        std::string const& name, TResultCountMap& results, std::source_location loc = std::source_location::current());
+        std::string const& name, TResultCountMap& results, std::size_t& edits, std::size_t& groups,
+        std::source_location loc = std::source_location::current());
 
     // Makes EditFuzzEditCount random edits (see RandomEdit()) one after another on a document of 'text' parsed with
     // 'options' (named 'name' in messages), with a generator seeded with 'seed', and checks each: that it does what it

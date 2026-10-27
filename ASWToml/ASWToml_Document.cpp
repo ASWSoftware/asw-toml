@@ -19,6 +19,7 @@ SPDX-License-Identifier: MIT
 //---------------------------------------------------------------------------
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <string_view>
@@ -49,6 +50,7 @@ using Detail::ENodeKind;
 using Detail::NoIndex;
 using Detail::TIndexVector;
 using Detail::TTextRange;
+using Detail::TTextRangeVector;
 
 // For each line of a text, or each element or entry of an array or inline table, whether an edit removes it
 using TFlagVector = std::vector<bool>;
@@ -407,6 +409,9 @@ public:
     // SetTrailingComment() or SetValue() succeeded, before IsEmpty() and EditedText().
     void Finish();
 
+    // The changes of the text, in the order of their places in it (after Finish())
+    TSpliceVector const& GetSplices() const noexcept;
+
     // Whether the edit changes nothing
     bool IsEmpty() const noexcept;
 
@@ -431,9 +436,120 @@ public:
 };
 
 
+/////////////////////////////////////////////////////////////////////////////
+// TBatchGroup
+//
+// A group of the edits of a batch (see TASWTomlDocument::Apply()) that are written on one text together, so the text is
+// read once for all of them. Each edit is planned alone, with an editor of its own, on the text the group starts from,
+// and joins the group unless it depends on an edit that already did:
+// - one of its paths is related to one of theirs (PathsRelated()): its own, the new one of a key it renames, and the
+//   first missing table it makes;
+// - the text it changes meets theirs: a change inside a line by its bytes and the byte after them (so two inserts at
+//   one place meet), a change of lines by those lines and the line before and after them;
+// - an edit before it changed the text's line breaks so that the line break new lines get (the text's most common
+//   one) may be another one.
+// A run of new keys of one table, or of values appended to one array, is planned as one edit that sets the table or
+// the array to its value with them added (see Merged()). The changes of the group's edits never meet, so they make one
+// text, which with the edits planned on the text before them one by one gives the same text.
+/////////////////////////////////////////////////////////////////////////////
+class TBatchGroup
+{
+private:
+    // Paths an edit names or makes
+    using TPathVector = std::vector<TASWTomlPath>;
+
+    std::string const& m_Text; // The text the group starts from, without a byte order mark
+    Detail::TDocModel const& m_Model; // Its model
+    Detail::TDocIndex const& m_Index; // Its index
+    TASWTomlValue const& m_Root; // Its values
+    TASWTomlOptions const& m_Options; // The document's
+    TASWTomlEdits const& m_Edits; // The batch
+    std::size_t m_First; // The group's first edit
+    std::size_t m_Next; // The edit after the group's last one
+    TSpliceVector m_Splices; // The changes of the group's edits
+    TTextRangeVector m_Places; // The text they change, with what around it they read
+    TPathVector m_Paths; // The paths they name or make
+    std::int64_t m_LF = 0; // How many LF line breaks the text has with their changes
+    std::int64_t m_CRLF = 0; // How many CRLF line breaks
+
+    // Adds to 'paths' the paths 'edit' names or makes: its own, the new one of a key it renames, and the first missing
+    // table on the way that a SetValue() or Append() makes
+    void AddPaths(TASWTomlEdit const& edit, TPathVector& paths) const;
+
+    // Makes 'edit' (planned with the others of the group) on 'values', the group's values, as the values its text
+    // should read as; false when it can't be (which no edit planned should do)
+    bool ApplyToValues(TASWTomlEdit const& edit, TASWTomlValue& values) const;
+
+    // Whether 'edit', the edit 'next' of the batch, joins the run of SetValue()s of new keys from 'first' (see
+    // Merged()) of the table at 'tablePath', the first 'existing' parts of their paths, written with 'values'
+    bool JoinsNewKeys(TASWTomlEdit const& edit, TASWTomlPath const& tablePath, std::size_t existing,
+        TASWTomlValueOptions const& values, std::size_t first, std::size_t next) const;
+
+    // Whether one of 'places' meets one of the group's
+    bool Meets(TTextRangeVector const& places) const noexcept;
+
+    // The edit after the run of edits from 'first' that are planned as one, 'merged': SetValue()s of new keys of the
+    // same table (none of their paths a prefix of another's) as a SetValue() of the table to its value with the keys
+    // added, or Append()s to the same array as a SetValue() of the array to its value with the elements added (only
+    // tables to an array of tables), each with the same value options; first + 1 when there is no such run of two
+    std::size_t Merged(std::size_t first, TASWTomlEdit& merged) const;
+
+    // Sets 'places' to the text 'splices' (an edit's changes of the group's text) change, with what around it they
+    // read, and adds the line breaks they write to 'lf' and 'crlf' and takes away those they remove; true when they
+    // write or remove any
+    bool Places(TSpliceVector const& splices, TTextRangeVector& places, std::int64_t& lf, std::int64_t& crlf) const;
+
+    // Plans 'edit' alone on the group's text, with an editor of its own, and sets 'splices' to its changes; fails as
+    // the document's edit of its kind fails, with nothing set
+    TASWTomlResult Plan(TASWTomlEdit const& edit, TSpliceVector& splices) const;
+
+    // Whether one of 'paths' is related to one of the group's (see PathsRelated())
+    bool Related(TPathVector const& paths) const noexcept;
+
+    // The value options 'edit' writes its value with: its own, else the document's
+    TASWTomlValueOptions const& ValuesOf(TASWTomlEdit const& edit) const noexcept;
+
+public:
+    // A group of the edits of 'edits' from 'first' on, on 'text', the document's text without a byte order mark, whose
+    // model is 'model', index 'index' and values 'root', with the document's 'options'; which outlive the group
+    TBatchGroup(std::string const& text, Detail::TDocModel const& model, Detail::TDocIndex const& index,
+        TASWTomlValue const& root, TASWTomlOptions const& options, TASWTomlEdits const& edits, std::size_t first);
+
+    // Plans the group: its first edit, and each edit after it as long as it joins the group. Fails only when its first
+    // edit fails, as the document's edit of its kind fails; an edit after it that fails isn't in the group, which ends
+    // before it.
+    TASWTomlResult Build();
+
+    // The group's text with its edits' changes made
+    std::string EditedText() const;
+
+    // The edit after the group's last one (after Build())
+    std::size_t GetNext() const noexcept;
+
+    // Whether 'model', 'index' and 'root', read from EditedText(), are what the group's edits should make: the values
+    // the edits make on the group's values (ApplyToValues()), and each comment and trailing comment they set
+    bool ReadsBack(Detail::TDocModel const& model, Detail::TDocIndex const& index, TASWTomlValue const& root) const;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// TBatchState
+//
+// The model, index and values read from the text a group of the edits of a batch made (see TASWTomlDocument::Apply())
+/////////////////////////////////////////////////////////////////////////////
+struct TBatchState
+{
+    Detail::TDocModel Model;
+    Detail::TDocIndex Index;
+    TASWTomlValue Root;
+};
+
+
 void AppendKey(Detail::TDocKey const& key, std::string& text);
 void AppendKeyValue(Detail::TDocKeyValue const& keyValue, std::string& text);
 void AppendValue(Detail::TDocValue const& value, std::string& text);
+bool BeginsBefore(TSplice const& left, TSplice const& right) noexcept;
+TASWTomlResult CheckRemoval(TASWTomlPath const& path);
 bool CommentIsThere(Detail::TDocModel const& model, Detail::TDocIndex const& index, TASWTomlPath const& path,
     std::string_view text);
 TStringVector CommentLines(std::string_view text);
@@ -441,22 +557,32 @@ std::string CommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& i
 std::size_t CommentStart(Detail::TDocIndex const& index, std::size_t line) noexcept;
 std::string_view CommentText(std::string_view text) noexcept;
 std::string ConvertLineBreaks(std::string const& text, ELineBreak lineBreak);
+void CountLineBreaks(std::string_view text, std::int64_t& lf, std::int64_t& crlf) noexcept;
 std::size_t DefiningLine(Detail::TDocIndex const& index, std::size_t node) noexcept;
 Detail::TDocIndex EmptyIndex();
+std::size_t ExistingParts(Detail::TDocIndex const& index, TASWTomlPath const& path);
 TASWTomlResult Failure(ETomlCode code, std::string message);
 std::size_t FileCommentLines(Detail::TDocIndex const& index) noexcept;
 TASWTomlValue const* FindValue(TASWTomlValue const& root, TASWTomlPath const& path) noexcept;
 TASWTomlValue* FindValue(TASWTomlValue& root, TASWTomlPath const& path) noexcept;
 bool HasCommentControlCharacter(std::string_view text) noexcept;
 bool IsArrayOfTables(TASWTomlValue const& value) noexcept;
+bool IsPathPrefix(TASWTomlPath const& prefix, TASWTomlPath const& path) noexcept;
 std::string Joined(TStringVector const& lines);
 std::size_t KeyStart(std::string_view text, std::size_t offset) noexcept;
 std::string Layout(std::string_view before);
+std::size_t LineEnd(std::string_view text, std::size_t offset) noexcept;
+std::size_t LineStart(std::string_view text, std::size_t offset) noexcept;
 std::string MessagePath(TASWTomlPath const& path);
 std::string_view ModelText(Detail::TDocModel const& model, Detail::TIndexLine const& line) noexcept;
+ELineBreak NewLineBreak(Detail::TDocModel const& model) noexcept;
+bool PathsRelated(TASWTomlPath const& left, TASWTomlPath const& right) noexcept;
 TASWTomlPath Prefix(TASWTomlPath const& path, std::size_t count);
 void RemoveValue(TASWTomlValue& root, Detail::TDocIndex const& index, TASWTomlPath const& path);
 TASWTomlResult RepeatedComment(Detail::TDocIndex const& index, TASWTomlDocument::TPathCommentVector const& comments);
+bool SameParts(TASWTomlPathPart const& left, TASWTomlPathPart const& right) noexcept;
+bool SameValueOptions(TASWTomlValueOptions const& left, TASWTomlValueOptions const& right) noexcept;
+bool SetAtPath(TASWTomlValue& value, TASWTomlPath const& path, std::size_t first, TASWTomlValue const& set);
 bool SpliceBefore(TSplice const& left, TSplice const& right) noexcept;
 std::string TrailingCommentOf(Detail::TDocModel const& model, Detail::TDocIndex const& index,
     TASWTomlPath const& path);
@@ -541,6 +667,33 @@ void AppendValue(Detail::TDocValue const& value, std::string& text)
             text += '}';
             break;
     }
+}
+//---------------------------------------------------------------------------
+/*
+    BeginsBefore
+
+    Whether 'left' starts before 'right', to sort the changes of several edits that never meet
+*/
+bool BeginsBefore(TSplice const& left, TSplice const& right) noexcept
+{
+    return left.Begin < right.Begin;
+}
+//---------------------------------------------------------------------------
+/*
+    CheckRemoval
+
+    Ok when a removal of a batch (see TASWTomlDocument::Apply()) can be made at 'path'; InvalidArgument, with 'path' in
+    Path, when 'path' isn't valid or is the root
+*/
+TASWTomlResult CheckRemoval(TASWTomlPath const& path)
+{
+    if (!path.IsValid())
+        return WithPath(Failure(ETomlCode::InvalidArgument, path.GetError()), path);
+
+    if (path.IsRoot())
+        return WithPath(Failure(ETomlCode::InvalidArgument, "Can't remove the root table."), path);
+
+    return TASWTomlResult();
 }
 //---------------------------------------------------------------------------
 /*
@@ -671,6 +824,22 @@ std::string ConvertLineBreaks(std::string const& text, ELineBreak lineBreak)
 }
 //---------------------------------------------------------------------------
 /*
+    CountLineBreaks
+
+    Adds the LF line breaks of 'text' to 'lf', and its CRLF line breaks to 'crlf'
+*/
+void CountLineBreaks(std::string_view text, std::int64_t& lf, std::int64_t& crlf) noexcept
+{
+    for (std::size_t i = text.find('\n'); i != std::string_view::npos; i = text.find('\n', i + 1))
+    {
+        if (i > 0 && text[i - 1] == '\r')
+            ++crlf;
+        else
+            ++lf;
+    }
+}
+//---------------------------------------------------------------------------
+/*
     DefiningLine
 
     The line of 'index' that defines 'node', whose comment and trailing comment are the node's: the key line of a
@@ -700,6 +869,21 @@ Detail::TDocIndex EmptyIndex()
     index.BlockLines.push_back(0);
 
     return index;
+}
+//---------------------------------------------------------------------------
+/*
+    ExistingParts
+
+    How many of the parts of 'path' (valid), from the first, lead to a node of 'index': the number of its parts when
+    something is at 'path'
+*/
+std::size_t ExistingParts(Detail::TDocIndex const& index, TASWTomlPath const& path)
+{
+    std::size_t count = 0;
+    while (count < path.GetParts().size() && Detail::FindNode(index, Prefix(path, count + 1)) != NoIndex)
+        ++count;
+
+    return count;
 }
 //---------------------------------------------------------------------------
 /*
@@ -815,6 +999,27 @@ bool IsArrayOfTables(TASWTomlValue const& value) noexcept
 }
 //---------------------------------------------------------------------------
 /*
+    IsPathPrefix
+
+    Whether 'prefix' is the first parts of 'path', or 'path' itself
+*/
+bool IsPathPrefix(TASWTomlPath const& prefix, TASWTomlPath const& path) noexcept
+{
+    TASWTomlPath::TPartVector const& parts = path.GetParts();
+    TASWTomlPath::TPartVector const& prefixParts = prefix.GetParts();
+    if (prefixParts.size() > parts.size())
+        return false;
+
+    for (std::size_t i = 0; i < prefixParts.size(); ++i)
+    {
+        if (!SameParts(prefixParts[i], parts[i]))
+            return false;
+    }
+
+    return true;
+}
+//---------------------------------------------------------------------------
+/*
     Joined
 
     'lines' joined with "\n"
@@ -881,6 +1086,33 @@ std::string Layout(std::string_view before)
 }
 //---------------------------------------------------------------------------
 /*
+    LineEnd
+
+    The offset after the line break of the line of 'text' that the byte at 'offset' is on (or that starts there); the
+    end of 'text' when it has no line break after 'offset'
+*/
+std::size_t LineEnd(std::string_view text, std::size_t offset) noexcept
+{
+    std::size_t const lineBreak = text.find('\n', offset);
+
+    return lineBreak != std::string_view::npos ? lineBreak + 1 : text.size();
+}
+//---------------------------------------------------------------------------
+/*
+    LineStart
+
+    The offset of the first byte of the line of 'text' that the byte at 'offset' is on (or that starts there)
+*/
+std::size_t LineStart(std::string_view text, std::size_t offset) noexcept
+{
+    std::size_t start = offset;
+    while (start > 0 && text[start - 1] != '\n')
+        --start;
+
+    return start;
+}
+//---------------------------------------------------------------------------
+/*
     MessagePath
 
     'path' as messages show it (TASWTomlPath::ToString()), the root path as "the root table"
@@ -903,6 +1135,43 @@ std::string_view ModelText(Detail::TDocModel const& model, Detail::TIndexLine co
         return block.Header.Text;
 
     return block.Entries[line.Entry].Text;
+}
+//---------------------------------------------------------------------------
+/*
+    NewLineBreak
+
+    The line break new lines of the text of 'model' get, as TASWTomlDocument::GetLineBreak() describes it
+*/
+ELineBreak NewLineBreak(Detail::TDocModel const& model) noexcept
+{
+    if (model.LineBreak == ELineBreak::None)
+        return Detail::NativeLineBreak();
+
+    return model.LineBreak;
+}
+//---------------------------------------------------------------------------
+/*
+    PathsRelated
+
+    Whether an edit at 'left' and one at 'right' may depend on each other: one is a prefix of the other (or both are the
+    same), or they go into the same array at different indexes and one of them is the element itself (which an edit
+    may remove, or make a value of another kind, moving the other's place)
+*/
+bool PathsRelated(TASWTomlPath const& left, TASWTomlPath const& right) noexcept
+{
+    if (IsPathPrefix(left, right) || IsPathPrefix(right, left))
+        return true;
+
+    TASWTomlPath::TPartVector const& leftParts = left.GetParts();
+    TASWTomlPath::TPartVector const& rightParts = right.GetParts();
+    std::size_t same = 0;
+    while (SameParts(leftParts[same], rightParts[same]))
+        ++same;
+
+    if (!leftParts[same].IsIndex() || !rightParts[same].IsIndex())
+        return false;
+
+    return same + 1 == leftParts.size() || same + 1 == rightParts.size();
 }
 //---------------------------------------------------------------------------
 /*
@@ -992,6 +1261,67 @@ TASWTomlResult RepeatedComment(Detail::TDocIndex const& index, TASWTomlDocument:
     }
 
     return TASWTomlResult();
+}
+//---------------------------------------------------------------------------
+/*
+    SameParts
+
+    Whether 'left' and 'right' are the same key or the same index
+*/
+bool SameParts(TASWTomlPathPart const& left, TASWTomlPathPart const& right) noexcept
+{
+    if (left.IsIndex() != right.IsIndex())
+        return false;
+
+    return left.IsIndex() ? left.GetIndex() == right.GetIndex() : left.GetKey() == right.GetKey();
+}
+//---------------------------------------------------------------------------
+/*
+    SameValueOptions
+
+    Whether 'left' and 'right' write values the same way
+*/
+bool SameValueOptions(TASWTomlValueOptions const& left, TASWTomlValueOptions const& right) noexcept
+{
+    return left.StringStyle == right.StringStyle && left.IntegerBase == right.IntegerBase;
+}
+//---------------------------------------------------------------------------
+/*
+    SetAtPath
+
+    Sets the value at the parts of 'path' (valid) from 'first' on in 'value' to 'set', as TASWTomlDocument::SetValue()
+    sets the value at a path in the document's values: a missing key on the way becomes a table; 'value' itself when
+    there are no such parts. False (and 'value' may have changed) when an index on the way is past the end of its array
+    or the parts go through a value that isn't a table or an array.
+*/
+bool SetAtPath(TASWTomlValue& value, TASWTomlPath const& path, std::size_t first, TASWTomlValue const& set)
+{
+    TASWTomlPath::TPartVector const& parts = path.GetParts();
+    TASWTomlValue* holder = &value;
+    for (std::size_t i = first; holder != nullptr && i < parts.size(); ++i)
+    {
+        bool const last = i + 1 == parts.size();
+        if (parts[i].IsKey())
+        {
+            TASWTomlValue* const found = holder->Find(parts[i].GetKey());
+            if (found == nullptr || last)
+                holder = holder->Set(parts[i].GetKey(), last ? set : TASWTomlValue(TASWTomlValue::TKeyValueVector()));
+            else
+                holder = found;
+        }
+        else
+        {
+            TASWTomlValue::TValueVector* const array = holder->AsArray();
+            holder = array != nullptr && parts[i].GetIndex() < array->size() ? &(*array)[parts[i].GetIndex()] : nullptr;
+            if (holder != nullptr && last)
+                *holder = set;
+        }
+    }
+
+    if (holder != nullptr && first == parts.size())
+        *holder = set;
+
+    return holder != nullptr;
 }
 //---------------------------------------------------------------------------
 /*
@@ -1495,6 +1825,11 @@ void TEditor::Finish()
             break;
         }
     }
+}
+//---------------------------------------------------------------------------
+TSpliceVector const& TEditor::GetSplices() const noexcept
+{
+    return m_Splices;
 }
 //---------------------------------------------------------------------------
 bool TEditor::Holds(std::size_t node, TASWTomlValue const& value) const
@@ -2815,6 +3150,409 @@ TASWTomlResult TEditor::WriteKeyLines(std::string_view indent, TASWTomlValue con
 }
 //---------------------------------------------------------------------------
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TBatchGroup
+/////////////////////////////////////////////////////////////////////////////
+
+//---------------------------------------------------------------------------
+TBatchGroup::TBatchGroup(std::string const& text, Detail::TDocModel const& model, Detail::TDocIndex const& index,
+    TASWTomlValue const& root, TASWTomlOptions const& options, TASWTomlEdits const& edits, std::size_t first)
+    : m_Text(text),
+      m_Model(model),
+      m_Index(index),
+      m_Root(root),
+      m_Options(options),
+      m_Edits(edits),
+      m_First(first),
+      m_Next(first)
+{
+    CountLineBreaks(m_Text, m_LF, m_CRLF);
+}
+//---------------------------------------------------------------------------
+void TBatchGroup::AddPaths(TASWTomlEdit const& edit, TPathVector& paths) const
+{
+    paths.push_back(edit.Path);
+    if (!edit.Path.IsValid() || edit.Path.IsRoot())
+        return;
+
+    TASWTomlPath::TPartVector const& parts = edit.Path.GetParts();
+    if (edit.Kind == EEditKind::Rename && parts.back().IsKey())
+    {
+        TASWTomlPath renamed = Prefix(edit.Path, parts.size() - 1);
+        renamed.Append(edit.Text);
+        paths.push_back(std::move(renamed));
+    }
+    else if (edit.Kind == EEditKind::Append || edit.Kind == EEditKind::SetValue)
+    {
+        std::size_t const existing = ExistingParts(m_Index, edit.Path);
+        if (existing + 1 < parts.size())
+            paths.push_back(Prefix(edit.Path, existing + 1));
+    }
+}
+//---------------------------------------------------------------------------
+bool TBatchGroup::ApplyToValues(TASWTomlEdit const& edit, TASWTomlValue& values) const
+{
+    switch (edit.Kind)
+    {
+        case EEditKind::Append:
+            if (TASWTomlValue* const array = FindValue(values, edit.Path))
+                return array->Append(edit.Value);
+
+            return SetAtPath(values, edit.Path, 0, TASWTomlValue(TASWTomlValue::TValueVector(1, edit.Value)));
+
+        case EEditKind::Remove:
+            if (Detail::FindNode(m_Index, edit.Path) != NoIndex)
+                RemoveValue(values, m_Index, edit.Path);
+
+            return true;
+
+        case EEditKind::Rename:
+            break;
+
+        case EEditKind::SetComment:
+        case EEditKind::SetTrailingComment:
+            return true;
+
+        case EEditKind::SetValue:
+            return SetAtPath(values, edit.Path, 0, edit.Value);
+    }
+
+    // A renamed key keeps its place in its table
+    TASWTomlValue* const table = FindValue(values, Prefix(edit.Path, edit.Path.GetParts().size() - 1));
+    if (table == nullptr || table->AsTable() == nullptr)
+        return false;
+
+    std::string const& oldKey = edit.Path.GetParts().back().GetKey();
+    for (TASWTomlKeyValue& item : *table->AsTable())
+    {
+        if (item.Key == oldKey)
+            item.Key = edit.Text;
+    }
+
+    return true;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TBatchGroup::Build()
+{
+    ELineBreak const lineBreak = NewLineBreak(m_Model);
+    TASWTomlResult result;
+    std::size_t next = m_First;
+    while (next < m_Edits.GetEdits().size())
+    {
+        TASWTomlEdit merged;
+        std::size_t end = Merged(next, merged);
+        TASWTomlEdit const* edit = end > next + 1 ? &merged : &m_Edits.GetEdits()[next];
+        TPathVector paths;
+        for (std::size_t i = next; i < end; ++i)
+            AddPaths(m_Edits.GetEdits()[i], paths);
+
+        if (next > m_First && Related(paths))
+            break;
+
+        TSpliceVector splices;
+        result = Plan(*edit, splices);
+        if (!result.IsOk() && end > next + 1)
+        {
+            // Planned alone instead, so a failure is the edit's own
+            end = next + 1;
+            edit = &m_Edits.GetEdits()[next];
+            result = Plan(*edit, splices);
+        }
+
+        // An edit after the first that fails is planned again as the first of the next group, on the text the edits
+        // before it make, as they would make it one by one
+        if (!result.IsOk())
+        {
+            if (next > m_First)
+                result = TASWTomlResult();
+
+            break;
+        }
+
+        TTextRangeVector places;
+        std::int64_t lf = m_LF;
+        std::int64_t crlf = m_CRLF;
+        bool const lineBreaks = Places(splices, places, lf, crlf);
+        if (next > m_First && Meets(places))
+            break;
+
+        m_Splices.insert(m_Splices.end(), splices.begin(), splices.end());
+        m_Places.insert(m_Places.end(), places.begin(), places.end());
+        m_Paths.insert(m_Paths.end(), paths.begin(), paths.end());
+        m_LF = lf;
+        m_CRLF = crlf;
+        next = end;
+
+        // The edits after it would get another line break for their new lines, as the text's most common one
+        bool const kept = lineBreak == ELineBreak::CRLF ? m_CRLF > m_LF : m_LF > m_CRLF;
+        if (lineBreaks && !kept)
+            break;
+    }
+
+    m_Next = next;
+    std::stable_sort(m_Splices.begin(), m_Splices.end(), BeginsBefore);
+
+    return result;
+}
+//---------------------------------------------------------------------------
+std::string TBatchGroup::EditedText() const
+{
+    std::string text;
+    std::size_t done = 0;
+    for (TSplice const& splice : m_Splices)
+    {
+        text.append(m_Text, done, splice.Begin - done);
+        text += splice.Text;
+        done = splice.End;
+    }
+
+    text.append(m_Text, done, std::string::npos);
+
+    return text;
+}
+//---------------------------------------------------------------------------
+std::size_t TBatchGroup::GetNext() const noexcept
+{
+    return m_Next;
+}
+//---------------------------------------------------------------------------
+bool TBatchGroup::JoinsNewKeys(TASWTomlEdit const& edit, TASWTomlPath const& tablePath, std::size_t existing,
+    TASWTomlValueOptions const& values, std::size_t first, std::size_t next) const
+{
+    if (edit.Kind != EEditKind::SetValue || !edit.Path.IsValid() || !SameValueOptions(ValuesOf(edit), values))
+        return false;
+
+    // A new key of the table: the path goes through it, and its next part is missing
+    TASWTomlPath::TPartVector const& parts = edit.Path.GetParts();
+    if (parts.size() <= existing || !IsPathPrefix(tablePath, edit.Path) || ExistingParts(m_Index, edit.Path) != existing)
+        return false;
+
+    for (std::size_t i = existing; i < parts.size(); ++i)
+    {
+        if (parts[i].IsIndex())
+            return false;
+    }
+
+    // A key set and then a key inside it would differ: one by one, the first may get a header of its own
+    for (std::size_t i = first; i < next; ++i)
+    {
+        TASWTomlPath const& other = m_Edits.GetEdits()[i].Path;
+        if (IsPathPrefix(other, edit.Path) || IsPathPrefix(edit.Path, other))
+            return false;
+    }
+
+    return true;
+}
+//---------------------------------------------------------------------------
+bool TBatchGroup::Meets(TTextRangeVector const& places) const noexcept
+{
+    for (TTextRange const& place : places)
+    {
+        for (TTextRange const& other : m_Places)
+        {
+            if (place.Begin < other.End && other.Begin < place.End)
+                return true;
+        }
+    }
+
+    return false;
+}
+//---------------------------------------------------------------------------
+std::size_t TBatchGroup::Merged(std::size_t first, TASWTomlEdit& merged) const
+{
+    TASWTomlEdits::TEditVector const& edits = m_Edits.GetEdits();
+    TASWTomlEdit const& edit = edits[first];
+    if (!edit.Path.IsValid() || edit.Path.IsRoot())
+        return first + 1;
+
+    TASWTomlValueOptions const& values = ValuesOf(edit);
+    std::size_t next = first;
+    if (edit.Kind == EEditKind::Append)
+    {
+        std::size_t const node = Detail::FindNode(m_Index, edit.Path);
+        TASWTomlValue const* const array = Detail::FindValue(m_Index, m_Root, edit.Path);
+        if (node == NoIndex || array == nullptr || !array->IsArray())
+            return first + 1;
+
+        bool const tables = m_Index.Nodes[node].Kind == ENodeKind::ArrayOfTables;
+        merged.Path = edit.Path;
+        merged.Value = *array;
+        for (; next < edits.size(); ++next)
+        {
+            TASWTomlEdit const& appended = edits[next];
+            bool const samePath = IsPathPrefix(appended.Path, edit.Path) && IsPathPrefix(edit.Path, appended.Path);
+            bool const sameValues = SameValueOptions(ValuesOf(appended), values);
+            if (appended.Kind != EEditKind::Append || !samePath || !sameValues || (tables && !appended.Value.IsTable()))
+                break;
+
+            merged.Value.Append(appended.Value);
+        }
+    }
+    else if (edit.Kind == EEditKind::SetValue && Detail::FindNode(m_Index, edit.Path) == NoIndex)
+    {
+        std::size_t const existing = ExistingParts(m_Index, edit.Path);
+        TASWTomlPath const tablePath = Prefix(edit.Path, existing);
+        TASWTomlValue const* const table = Detail::FindValue(m_Index, m_Root, tablePath);
+        if (table == nullptr || !table->IsTable())
+            return first + 1;
+
+        merged.Path = tablePath;
+        merged.Value = *table;
+        for (; next < edits.size(); ++next)
+        {
+            TASWTomlEdit const& added = edits[next];
+            if (!JoinsNewKeys(added, tablePath, existing, values, first, next))
+                break;
+
+            if (!SetAtPath(merged.Value, added.Path, existing, added.Value))
+                break;
+        }
+    }
+
+    if (next < first + 2)
+        return first + 1;
+
+    merged.Kind = EEditKind::SetValue;
+    merged.Values = edit.Values;
+
+    return next;
+}
+//---------------------------------------------------------------------------
+bool TBatchGroup::Places(TSpliceVector const& splices, TTextRangeVector& places, std::int64_t& lf,
+    std::int64_t& crlf) const
+{
+    bool lineBreaks = false;
+    for (TSplice const& splice : splices)
+    {
+        std::int64_t removedLF = 0;
+        std::int64_t removedCRLF = 0;
+        std::int64_t writtenLF = 0;
+        std::int64_t writtenCRLF = 0;
+        CountLineBreaks(std::string_view(m_Text).substr(splice.Begin, splice.End - splice.Begin), removedLF,
+            removedCRLF);
+        CountLineBreaks(splice.Text, writtenLF, writtenCRLF);
+        lf += writtenLF - removedLF;
+        crlf += writtenCRLF - removedCRLF;
+        if (removedLF + removedCRLF + writtenLF + writtenCRLF == 0)
+        {
+            places.push_back(TTextRange{ splice.Begin, splice.End + 1 });
+            continue;
+        }
+
+        lineBreaks = true;
+        std::size_t const start = LineStart(m_Text, splice.Begin);
+        std::size_t const before = start > 0 ? LineStart(m_Text, start - 1) : 0;
+        places.push_back(TTextRange{ before, std::max(LineEnd(m_Text, splice.End), splice.End + 1) });
+    }
+
+    return lineBreaks;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TBatchGroup::Plan(TASWTomlEdit const& edit, TSpliceVector& splices) const
+{
+    TASWTomlValueOptions const& values = ValuesOf(edit);
+    TASWTomlResult result;
+    if (edit.Kind == EEditKind::Append || edit.Kind == EEditKind::SetValue)
+        result = values.Validate();
+    else if (edit.Kind == EEditKind::Remove)
+        result = CheckRemoval(edit.Path);
+
+    if (!result.IsOk())
+        return WithPath(result, edit.Path);
+
+    TEditor editor(m_Text, m_Index, m_Root, m_Options, values, NewLineBreak(m_Model));
+    switch (edit.Kind)
+    {
+        case EEditKind::Append:
+            result = editor.Append(edit.Path, edit.Value);
+            break;
+
+        case EEditKind::Remove:
+            if (Detail::FindNode(m_Index, edit.Path) != NoIndex)
+                editor.Remove(Detail::FindNode(m_Index, edit.Path));
+
+            break;
+
+        case EEditKind::Rename:
+            result = editor.Rename(edit.Path, edit.Text);
+            break;
+
+        case EEditKind::SetComment:
+            if (!CommentIsThere(m_Model, m_Index, edit.Path, edit.Text))
+                result = editor.SetComment(edit.Path, edit.Text);
+
+            break;
+
+        case EEditKind::SetTrailingComment:
+            result = editor.SetTrailingComment(edit.Path, edit.Text);
+            break;
+
+        case EEditKind::SetValue:
+            result = editor.SetValue(edit.Path, edit.Value);
+            break;
+    }
+
+    if (!result.IsOk())
+        return WithPath(result, edit.Path);
+
+    editor.Finish();
+    splices = editor.GetSplices();
+
+    return result;
+}
+//---------------------------------------------------------------------------
+bool TBatchGroup::ReadsBack(Detail::TDocModel const& model, Detail::TDocIndex const& index,
+    TASWTomlValue const& root) const
+{
+    TASWTomlValue expected = m_Root;
+    for (std::size_t i = m_First; i < m_Next; ++i)
+    {
+        if (!ApplyToValues(m_Edits.GetEdits()[i], expected))
+            return false;
+    }
+
+    if (!Detail::IdenticalValues(root, expected))
+        return false;
+
+    for (std::size_t i = m_First; i < m_Next; ++i)
+    {
+        TASWTomlEdit const& edit = m_Edits.GetEdits()[i];
+        if (edit.Kind == EEditKind::SetComment)
+        {
+            if (CommentOf(model, index, edit.Path) != Joined(CommentLines(edit.Text)))
+                return false;
+        }
+        else if (edit.Kind == EEditKind::SetTrailingComment)
+        {
+            if (TrailingCommentOf(model, index, edit.Path) != Trimmed(edit.Text))
+                return false;
+        }
+    }
+
+    return true;
+}
+//---------------------------------------------------------------------------
+bool TBatchGroup::Related(TPathVector const& paths) const noexcept
+{
+    for (TASWTomlPath const& path : paths)
+    {
+        for (TASWTomlPath const& other : m_Paths)
+        {
+            if (PathsRelated(path, other))
+                return true;
+        }
+    }
+
+    return false;
+}
+//---------------------------------------------------------------------------
+TASWTomlValueOptions const& TBatchGroup::ValuesOf(TASWTomlEdit const& edit) const noexcept
+{
+    return edit.Values.has_value() ? *edit.Values : m_Options.Values;
+}
+//---------------------------------------------------------------------------
+
 } // namespace
 
 //---------------------------------------------------------------------------
@@ -2917,22 +3655,74 @@ TASWTomlDocument::TASWTomlDocument()
 //---------------------------------------------------------------------------
 TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits)
 {
+    Detail::TBatchStats stats;
+
+    return Apply(edits, stats);
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::Apply(TASWTomlEdits const& edits, Detail::TBatchStats& stats)
+{
+    stats = Detail::TBatchStats();
     TASWTomlResult result = edits.GetResult();
     if (!result.IsOk() || edits.IsEmpty())
         return result;
 
-    // Made on a copy, which the document takes only when every edit succeeded
-    TASWTomlDocument edited = *this;
-    edited.m_Modified = false;
-    for (TASWTomlEdit const& edit : edits.GetEdits())
+    // Each group starts from the text the one before it made (the document's for the first), and the model, index and
+    // values read from it, kept in one of 'states' while the group's are read into the other; the document takes the
+    // last only when every edit succeeded
+    TBatchState states[2];
+    std::size_t current = NoIndex;
+    std::string text = BodyText();
+    bool modified = false;
+    std::size_t first = 0;
+    while (first < edits.GetEdits().size())
     {
-        result = edited.ApplyEdit(edit);
+        Detail::TDocModel const& model = current == NoIndex ? m_Model : states[current].Model;
+        Detail::TDocIndex const& index = current == NoIndex ? m_Index : states[current].Index;
+        TASWTomlValue const& root = current == NoIndex ? m_Root : states[current].Root;
+        TBatchGroup group(text, model, index, root, m_Options, edits, first);
+        result = group.Build();
         if (!result.IsOk())
             return result;
+
+        ++stats.Groups;
+        std::string edited = group.EditedText();
+        if (edited != text)
+        {
+            std::size_t const target = current == 0 ? 1 : 0;
+            TBatchState& state = states[target];
+            bool const readsBack = ReadEdited(edited, state.Model, state.Index, state.Root).IsOk() &&
+                group.ReadsBack(state.Model, state.Index, state.Root);
+            if (!readsBack)
+            {
+                // No edit should get here (1.0's edits check theirs too, and none fails there either); then the
+                // group's edits are made one by one, so the result is still theirs
+                ++stats.Replays;
+                TASWTomlDocument replayed;
+                replayed.m_Model = model;
+                replayed.m_Index = index;
+                replayed.m_Root = root;
+                replayed.m_Options = m_Options;
+                result = replayed.ApplyOneByOne(edits, first, group.GetNext());
+                if (!result.IsOk())
+                    return result;
+
+                edited = replayed.BodyText();
+                state.Model = std::move(replayed.m_Model);
+                state.Index = std::move(replayed.m_Index);
+                state.Root = std::move(replayed.m_Root);
+            }
+
+            text = std::move(edited);
+            current = target;
+            modified = true;
+        }
+
+        first = group.GetNext();
     }
 
-    if (edited.m_Modified)
-        Commit(edited.m_Model, edited.m_Index, edited.m_Root);
+    if (modified)
+        Commit(states[current].Model, states[current].Index, states[current].Root);
 
     return result;
 }
@@ -2963,18 +3753,24 @@ TASWTomlResult TASWTomlDocument::ApplyEdit(TASWTomlEdit const& edit)
 
     // A removal. Remove() returns false for nothing to remove as for a removal that failed; in a batch, the first
     // changes nothing and isn't a failure
-    if (!edit.Path.IsValid())
-        return WithPath(Failure(ETomlCode::InvalidArgument, edit.Path.GetError()), edit.Path);
+    TASWTomlResult result = CheckRemoval(edit.Path);
+    if (!result.IsOk())
+        return result;
 
-    if (edit.Path.IsRoot())
-        return WithPath(Failure(ETomlCode::InvalidArgument, "Can't remove the root table."), edit.Path);
-
-    TASWTomlResult result;
     if (Detail::FindNode(m_Index, edit.Path) != NoIndex && !Remove(edit.Path))
     {
         result = WithPath(Failure(ETomlCode::InvalidValue, "Can't remove " + MessagePath(edit.Path) +
             ": the text without it doesn't read back as the values without it."), edit.Path);
     }
+
+    return result;
+}
+//---------------------------------------------------------------------------
+TASWTomlResult TASWTomlDocument::ApplyOneByOne(TASWTomlEdits const& edits, std::size_t first, std::size_t next)
+{
+    TASWTomlResult result;
+    for (std::size_t i = first; result.IsOk() && i < next; ++i)
+        result = ApplyEdit(edits.GetEdits()[i]);
 
     return result;
 }
@@ -3077,10 +3873,7 @@ std::string TASWTomlDocument::GetComment(TASWTomlPath const& path) const
 //---------------------------------------------------------------------------
 ELineBreak TASWTomlDocument::GetLineBreak() const noexcept
 {
-    if (m_Model.LineBreak == ELineBreak::None)
-        return Detail::NativeLineBreak();
-
-    return m_Model.LineBreak;
+    return NewLineBreak(m_Model);
 }
 //---------------------------------------------------------------------------
 TASWTomlOptions const& TASWTomlDocument::GetOptions() const noexcept

@@ -267,6 +267,20 @@ TIndexVector Partners(std::size_t oldSize, std::size_t size, TElementMatch const
 // array set in its place become, as Partners() gives them (see TASWTomlDocument::SetValue())
 using TPartnersMap = std::map<TASWTomlValue const*, TIndexVector>;
 
+
+/////////////////////////////////////////////////////////////////////////////
+// TBatchStats
+//
+// How TASWTomlDocument::Apply() made a batch of edits, for tests: how many groups of edits it wrote together, and how
+// many of those it made again one by one because their text didn't read as they should make it (which no edit should
+// do)
+/////////////////////////////////////////////////////////////////////////////
+struct TBatchStats
+{
+    std::size_t Groups = 0;
+    std::size_t Replays = 0;
+};
+
 } // namespace Detail
 
 
@@ -308,6 +322,10 @@ private:
     // Makes 'edit', an edit of a batch (see Apply()), with the edit of its kind
     TASWTomlResult ApplyEdit(TASWTomlEdit const& edit);
 
+    // Makes the edits of 'edits' from 'first' to before 'next' one after another (ApplyEdit()), up to the first that
+    // fails, and gives its result
+    TASWTomlResult ApplyOneByOne(TASWTomlEdits const& edits, std::size_t first, std::size_t next);
+
     // The model's text without a byte order mark, each line break as it is (what ToText() writes with the default
     // writing options, but for the byte order mark)
     std::string BodyText() const;
@@ -342,8 +360,14 @@ public:
     // InvalidArgument when its path isn't valid or is the root, and changes nothing when nothing is at its path. When
     // 'edits' holds a value that didn't convert (see TASWTomlEdits::GetResult()), it fails with that result before any
     // edit, and nothing changes. The modified flag is set when the text changed, and left as it was otherwise (with no
-    // edits too). Throws only std::bad_alloc, and then nothing changes either.
+    // edits too). The edits are planned one at a time, and those that don't depend on one another (at paths that
+    // don't lead to one another, changing text away from each other's) are written together and the text read once,
+    // so a batch of edits of different places costs about as much as one edit; however they are grouped, the result
+    // is the one the edits one after the other give. Throws only std::bad_alloc, and then nothing changes either.
     TASWTomlResult Apply(TASWTomlEdits const& edits);
+
+    // Apply() that sets 'stats' to how it made the edits (see Detail::TBatchStats), for tests
+    TASWTomlResult Apply(TASWTomlEdits const& edits, Detail::TBatchStats& stats);
 
     // Adds 'value' at the end of the array at 'path', written with the document's Values options (the second form:
     // with 'values'), as SetValue() writes a value:
