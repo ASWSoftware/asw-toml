@@ -116,6 +116,8 @@ constexpr TDurationUnit DurationUnit() noexcept
     return unit;
 }
 
+//---------------------------------------------------------------------------
+
 // Sets 'dateTime' to the date and time 'count' units of 'unit' after 1970-01-01T00:00:00; false (and 'dateTime'
 // unchanged) when that is outside the years 0 to 9999
 bool LocalDateTimeFromCount(std::int64_t count, TDurationUnit const& unit, TASWTomlLocalDateTime& dateTime) noexcept;
@@ -146,6 +148,7 @@ bool OffsetDateTimeToCount(TASWTomlOffsetDateTime const& dateTime, TDurationUnit
 
 } // namespace Detail
 
+//---------------------------------------------------------------------------
 
 /////////////////////////////////////////////////////////////////////////////
 // TASWTomlLocalTime

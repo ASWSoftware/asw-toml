@@ -584,6 +584,8 @@ void TTableReader::ToValue(std::size_t node, TASWTomlValue& value) const
 } // namespace
 
 //---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
 TASWTomlResult BuildIndex(TDocModel const& model, std::string_view text, std::size_t maxDepth, TDocIndex& index,
     TASWTomlValue& root)
 {

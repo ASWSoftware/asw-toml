@@ -91,7 +91,6 @@ TASWTomlResult SettingEditFailure(TASWTomlPath const& path);
 
 } // namespace Detail
 
-
 // What an edit of a TASWTomlEdits does: the TASWTomlDocument edit of the same name
 enum class EEditKind : int
 {

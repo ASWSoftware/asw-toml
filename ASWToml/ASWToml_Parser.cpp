@@ -102,6 +102,8 @@ public:
     TASWTomlResult Parse(TDocModel::TBlockVector& blocks);
 };
 
+//---------------------------------------------------------------------------
+
 ELineBreak MostCommonLineBreak(std::string_view text) noexcept;
 
 //---------------------------------------------------------------------------
@@ -553,6 +555,8 @@ TASWTomlResult TParser::TooDeep(std::string const& what, std::size_t depth, std:
 //---------------------------------------------------------------------------
 
 } // namespace
+
+//---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
 TASWTomlResult ParseDocument(std::string_view text, TASWTomlReadingOptions const& options, TDocModel& model)

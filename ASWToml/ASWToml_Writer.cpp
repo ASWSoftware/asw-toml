@@ -374,6 +374,8 @@ TASWTomlResult WriteScalar(TASWTomlValue const& value, TASWTomlValueOptions cons
 } // namespace
 
 //---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
 TASWTomlResult WriteDottedKeys(std::string_view indent, std::string_view prefix, TASWTomlValue const& table,
     TWriteStyle const& style, std::string& text)
 {

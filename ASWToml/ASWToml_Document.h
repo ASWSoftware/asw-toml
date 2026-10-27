@@ -324,6 +324,13 @@ private:
     TASWTomlValue m_Root; // The values of m_Model, as GetRoot() describes
     bool m_Modified = false; // See IsModified()
 
+private:
+    // Reads 'text' (a whole document, with or without a byte order mark) into 'model', 'index' and 'root' with the
+    // reading options of 'options', as Parse() describes; on failure, they are left as they were
+    static TASWTomlResult ReadText(std::string_view text, TASWTomlOptions const& options, Detail::TDocModel& model,
+        Detail::TDocIndex& index, TASWTomlValue& root);
+
+private:
     // Makes 'edit', an edit of a batch made by the Apply() of 'owner' (see Apply()), with the edit of its kind, and a
     // setting's as its Set() would
     TASWTomlResult ApplyEdit(TASWTomlEdit const& edit, IASWToml const* owner);
@@ -345,11 +352,6 @@ private:
     // (but no Line or Column, as they would be about a text the caller never saw) when the text doesn't parse.
     TASWTomlResult ReadEdited(std::string const& body, Detail::TDocModel& model, Detail::TDocIndex& index,
         TASWTomlValue& root) const;
-
-    // Reads 'text' (a whole document, with or without a byte order mark) into 'model', 'index' and 'root' with the
-    // reading options of 'options', as Parse() describes; on failure, they are left as they were
-    static TASWTomlResult ReadText(std::string_view text, TASWTomlOptions const& options, Detail::TDocModel& model,
-        Detail::TDocIndex& index, TASWTomlValue& root);
 
     // SetValue() with 'values', the arrays that 'partners' has (nullptr for none) paired as it says
     TASWTomlResult SetValueWith(TASWTomlPath const& path, TASWTomlValue const& value,

@@ -57,6 +57,8 @@ using TFoldedKeyVector = std::vector<std::pair<std::string, std::string> >;
 // The TOML texts of the elements of an array, each with its element's index (see SortByText())
 using TTextVector = std::vector<std::pair<std::string, std::size_t> >;
 
+//---------------------------------------------------------------------------
+
 char AsciiLower(char c) noexcept;
 std::int64_t CountOfSeconds(std::int64_t seconds, Detail::TDurationUnit const& unit) noexcept;
 std::string DateText(std::chrono::year_month_day const& date);
