@@ -9,6 +9,9 @@
         <Projects Include="..\..\..\rad370\ASWTomlTests.cbproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="..\..\..\win32\gui\rad370\ASWTomlTests_Win32_GUI.cbproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -35,14 +38,23 @@
     <Target Name="ASWTomlTests:Make">
         <MSBuild Projects="..\..\..\rad370\ASWTomlTests.cbproj" Targets="Make"/>
     </Target>
+    <Target Name="ASWTomlTests_Win32_GUI">
+        <MSBuild Projects="..\..\..\win32\gui\rad370\ASWTomlTests_Win32_GUI.cbproj"/>
+    </Target>
+    <Target Name="ASWTomlTests_Win32_GUI:Clean">
+        <MSBuild Projects="..\..\..\win32\gui\rad370\ASWTomlTests_Win32_GUI.cbproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ASWTomlTests_Win32_GUI:Make">
+        <MSBuild Projects="..\..\..\win32\gui\rad370\ASWTomlTests_Win32_GUI.cbproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="ASWTomlTests_VCL_GUI;ASWTomlTests"/>
+        <CallTarget Targets="ASWTomlTests_VCL_GUI;ASWTomlTests;ASWTomlTests_Win32_GUI"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="ASWTomlTests_VCL_GUI:Clean;ASWTomlTests:Clean"/>
+        <CallTarget Targets="ASWTomlTests_VCL_GUI:Clean;ASWTomlTests:Clean;ASWTomlTests_Win32_GUI:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="ASWTomlTests_VCL_GUI:Make;ASWTomlTests:Make"/>
+        <CallTarget Targets="ASWTomlTests_VCL_GUI:Make;ASWTomlTests:Make;ASWTomlTests_Win32_GUI:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

@@ -39,8 +39,8 @@ if(NOT TARGET ASWToml::ASWToml)
     add_subdirectory("${ASWTOML_ROOT}" aswtoml)
 endif()
 
-add_executable(ASWTomlTests
-    ${ASWUNITTESTS_SOURCES}
+# The test modules and helpers, which both the console runner and, on Windows, the Win32 GUI runner run.
+set(ASWTOML_TEST_SOURCES
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Base.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters_Containers.cpp"
@@ -69,41 +69,71 @@ add_executable(ASWTomlTests
     "${ASWTOML_TOML_TEST_DIR}/TomlTest_Corpus.cpp"
 )
 
-target_include_directories(ASWTomlTests PRIVATE
-    "${ASWUNITTESTS_SOURCE_DIR}"
-    "${ASWTOML_TESTS_DIR}"
-    "${ASWTOML_TOML_TEST_DIR}"
-)
-
-target_link_libraries(ASWTomlTests PRIVATE ASWToml::ASWToml)
-
 # ASWUnitTests' --test-timeout-seconds uses std::thread/std::future, which needs an explicit threading library on
 # Linux and some MinGW-w64 distributions.
 find_package(Threads REQUIRED)
-target_link_libraries(ASWTomlTests PRIVATE Threads::Threads)
 
-if(MSVC)
-    target_compile_options(ASWTomlTests PRIVATE /W4 /Zc:__cplusplus)
-else()
-    target_compile_options(ASWTomlTests PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+# The settings both test runners share.
+function(aswtoml_configure_test_runner target)
+    target_include_directories(${target} PRIVATE
+        "${ASWTOML_TESTS_DIR}"
+        "${ASWTOML_TOML_TEST_DIR}"
+    )
 
-# The converter tests instantiate thousands of templates, so an unoptimized build of them has more sections than a
-# Windows object file holds in its usual format (MSVC's error C1128); the big object format holds them. MSVC needs
-# the option, while Clang and GNU as (binutils 2.47) switch to that format by themselves when a file needs it.
-if(MSVC)
-    target_compile_options(ASWTomlTests PRIVATE /bigobj)
-endif()
+    target_link_libraries(${target} PRIVATE ASWToml::ASWToml Threads::Threads)
 
-if(MINGW)
-    # Statically link the MinGW runtime so the executable launches without MinGW's bin directory on PATH (e.g. on a
-    # CI runner).
-    target_link_options(ASWTomlTests PRIVATE -static-libgcc -static-libstdc++ -static)
-endif()
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /Zc:__cplusplus)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
 
-set_target_properties(ASWTomlTests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    # The converter tests instantiate thousands of templates, so an unoptimized build of them has more sections than
+    # a Windows object file holds in its usual format (MSVC's error C1128); the big object format holds them. MSVC
+    # needs the option, while Clang and GNU as (binutils 2.47) switch to that format by themselves when a file needs
+    # it.
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /bigobj)
+    endif()
+
+    if(MINGW)
+        # Statically link the MinGW runtime so the executable launches without MinGW's bin directory on PATH (e.g. on
+        # a CI runner).
+        target_link_options(${target} PRIVATE -static-libgcc -static-libstdc++ -static)
+    endif()
+
+    set_target_properties(${target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+endfunction()
+
+add_executable(ASWTomlTests
+    ${ASWUNITTESTS_SOURCES}
+    ${ASWTOML_TEST_SOURCES}
 )
+
+target_include_directories(ASWTomlTests PRIVATE "${ASWUNITTESTS_SOURCE_DIR}")
+aswtoml_configure_test_runner(ASWTomlTests)
+
+if(WIN32)
+    # The ASWUnitTests icon, which the resource compiler finds through the include path.
+    target_sources(ASWTomlTests PRIVATE "${ASWUNITTESTS_ROOT}/resource/ASWUnitTests_Icon.rc")
+    target_include_directories(ASWTomlTests PRIVATE "${ASWUNITTESTS_ROOT}/resource")
+
+    # The Win32 GUI runner: the same tests in a window. Its WinMain takes the place of the console runner's main.cpp,
+    # and its sources list has the icon.
+    include("${ASWUNITTESTS_ROOT}/win32/gui/src/ASWUnitTests_Win32GUI_Sources.cmake")
+
+    add_executable(ASWTomlTests_Win32_GUI WIN32
+        ${ASWUNITTESTS_WIN32_GUI_SOURCES}
+        ${ASWTOML_TEST_SOURCES}
+    )
+
+    target_include_directories(ASWTomlTests_Win32_GUI PRIVATE ${ASWUNITTESTS_WIN32_GUI_INCLUDE_DIRS})
+    target_link_libraries(ASWTomlTests_Win32_GUI PRIVATE ${ASWUNITTESTS_WIN32_GUI_LIBRARIES})
+    target_link_options(ASWTomlTests_Win32_GUI PRIVATE ${ASWUNITTESTS_WIN32_GUI_LINK_OPTIONS})
+    aswtoml_configure_test_runner(ASWTomlTests_Win32_GUI)
+endif()
 
 # The decoder that toml-test's own runner starts for each test file (see tests/toml-test/README.md), built with the
 # same options, next to the tests.

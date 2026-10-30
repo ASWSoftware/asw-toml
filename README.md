@@ -405,13 +405,21 @@ CI also measures which lines of the library the tests run (a Linux GCC build wit
 by gcovr): the "Linux (GCC, coverage)" job shows a table on its summary page and keeps an HTML
 report as the `coverage-report` artifact. It is informational and never fails the run.
 
-On Windows with RAD Studio, the tests can also run in the ASWUnitTests VCL GUI runner, a window for
-choosing tests and reading their results: build `tests/vcl/gui/rad370/ASWTomlTests_VCL_GUI.cbproj`
-(or its `Build_*.bat` scripts), which writes `ASWTomlTests_VCL_GUI.exe` to
-`tests/build/bin/Win64x/<Config>`. `ASWTomlTests_Group.groupproj` in the same folder opens it
-together with the console test project. The GUI takes the console runner's command line options
-plus a few of its own, e.g. `--run --exit` to run every test and exit with the console runner's exit
-code; see the ASWUnitTests README's "VCL GUI Runner" section.
+On Windows, the tests can also run in an ASWUnitTests GUI runner, a window for choosing tests and
+reading their results, with a light and a dark theme (**View > Theme**). The GUI runners take the
+console runner's command line options plus a few of their own, e.g. `--run --exit` to run every test
+and exit with the console runner's exit code; see the ASWUnitTests README's "GUI Runners" section.
+
+- The Win32 GUI runner uses only the Windows API. The CMake build makes it on Windows as
+  `ASWTomlTests_Win32_GUI.exe`, next to the console runner, and CI runs it in the Windows jobs. For
+  RAD Studio, use `tests/win32/gui/rad370/ASWTomlTests_Win32_GUI.cbproj` or its `Build_Win64x_*.bat`
+  scripts.
+- The VCL GUI runner needs RAD Studio: use `tests/vcl/gui/rad370/ASWTomlTests_VCL_GUI.cbproj` or its
+  `Build_Win64x_*.bat` scripts.
+
+The RAD Studio builds write `ASWTomlTests_Win32_GUI.exe` and `ASWTomlTests_VCL_GUI.exe` to
+`tests/build/bin/Win64x/<Config>`. `tests/vcl/gui/rad370/ASWTomlTests_Group.groupproj` opens both
+GUI projects together with the console test project.
 
 # Coding Standards
 
