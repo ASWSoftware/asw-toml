@@ -2009,7 +2009,7 @@ ASW_TEST(TTest_ASWToml_TextConverters, Helpers_TypeMismatch)
     // Assert
     AssertEquals(names.size(), values.size(), "a name for each type");
     for (std::size_t i = 0; i < values.size(); ++i)
-        CheckEquals(names[i], std::string(ASWToml::Detail::TypeName(values[i])), "the name of each type");
+        CheckEquals(names[i], ASWToml::Detail::TypeName(values[i]), "the name of each type");
 
     CheckEquals(ETomlCode::TypeMismatch, result.Code, "the code");
     CheckEquals("The value 5 is an integer, not a string."s, result.Message, "the message");

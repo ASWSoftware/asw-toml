@@ -1693,7 +1693,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, Apply_FailureChangesNothing)
     // Assert
     CheckFalse(expected.IsOk(), "the document should fail at the renaming");
     CheckTrue(SameResult(result, expected), "the result should be the document's: " + result.Message);
-    CheckEquals(std::string(SampleText), toml.ToText(), "nothing should change, not even the edits before it");
+    CheckEquals(SampleText, toml.ToText(), "nothing should change, not even the edits before it");
     CheckFalse(toml.IsModified(), "the object shouldn't be modified");
 }
 //---------------------------------------------------------------------------
@@ -1722,7 +1722,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, Apply_MatchesTheDocument)
     CheckEquals(8080, toml.GetValue("port", 0), "a lookup should see the edits");
     CheckTrue(toml.IsModified(), "the object should be modified");
     CheckTrue(none.IsOk(), "an empty batch should succeed");
-    CheckEquals(std::string(SampleText), empty.ToText(), "and change nothing");
+    CheckEquals(SampleText, empty.ToText(), "and change nothing");
     CheckFalse(empty.IsModified(), "nor set the modified flag");
 }
 //---------------------------------------------------------------------------
@@ -1754,7 +1754,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, Edits_FailureChangesNothing)
         "a key under a value that isn't a table as SetValue() does");
     CheckTrue(SameResult(document.Append("port", 1), append) && append.Code == ETomlCode::InvalidArgument,
         "an append to a value that isn't an array as Append() does");
-    CheckEquals(std::string(SampleText), toml.ToText(), "the text should be unchanged");
+    CheckEquals(SampleText, toml.ToText(), "the text should be unchanged");
     CheckFalse(toml.IsModified(), "the object shouldn't be modified");
 }
 //---------------------------------------------------------------------------
@@ -1809,7 +1809,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, GetDocument_IsACopy)
 
     // Assert
     CheckTrue(result.IsOk(), "the copy should be edited");
-    CheckEquals(std::string(SampleText), toml.GetDocument().ToText(), "the copy should have the object's text");
+    CheckEquals(SampleText, toml.GetDocument().ToText(), "the copy should have the object's text");
     CheckEquals(640, toml.GetValue("window.width", 0), "editing the copy shouldn't change the object");
     CheckFalse(toml.IsModified(), "the object shouldn't be modified");
 }
@@ -1850,7 +1850,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, LoadText_ReplacesTheDocument)
 
     // Assert
     CheckTrue(result.IsOk(), "the text should be loaded");
-    CheckEquals(std::string(SampleText), toml.ToText(), "the text should be written back as it is");
+    CheckEquals(SampleText, toml.ToText(), "the text should be written back as it is");
     CheckFalse(toml.Contains("old"), "the old document should be gone");
     CheckFalse(toml.IsModified(), "a loaded document shouldn't be modified");
     CheckEquals(std::string(), toml.GetFilePath(), "there should still be no file path");
@@ -1945,10 +1945,10 @@ ASW_TEST(TTest_ASWToml_BaseAccess, Lookups_MatchTheDocument)
     CheckTrue(toml.GetKeyNames("window") == windowKeys, "a table's too");
     CheckTrue(toml.GetKeyNames("port").empty() && toml.GetKeyNames("servers").empty() &&
         toml.GetKeyNames("missing").empty(), "a value that isn't a table should have none");
-    CheckEquals(std::string("Settings of the app"), toml.GetComment(""), "the file comment should be the document's");
-    CheckEquals(std::string("The window"), toml.GetComment("window"), "a table's comment");
-    CheckEquals(std::string("In pixels"), toml.GetComment("window.height"), "a key's comment");
-    CheckEquals(std::string("The name"), toml.GetTrailingComment("name"), "a trailing comment");
+    CheckEquals("Settings of the app", toml.GetComment(""), "the file comment should be the document's");
+    CheckEquals("The window", toml.GetComment("window"), "a table's comment");
+    CheckEquals("In pixels", toml.GetComment("window.height"), "a key's comment");
+    CheckEquals("The name", toml.GetTrailingComment("name"), "a trailing comment");
     CheckTrue(toml.GetValue("window", TASWTomlValue()) == *document.Find("window"), "a value as it is");
 }
 //---------------------------------------------------------------------------
@@ -1969,7 +1969,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, New_IsEmptyWithTheDefaultOptions)
         options.Writing.CommentPrefix == defaults.Writing.CommentPrefix &&
         options.Saving.AtomicSave == defaults.Saving.AtomicSave, "the options should be the defaults");
     CheckTrue(toml.GetValueOptions().IntegerBase == EIntegerBase::Auto, "the value options should be the defaults");
-    CheckEquals(std::string(ASWToml::Version), std::string(toml.GetVersionStr()),
+    CheckEquals(ASWToml::Version, std::string(toml.GetVersionStr()),
         "the version should be the library's");
 }
 //---------------------------------------------------------------------------
@@ -2012,10 +2012,10 @@ ASW_TEST(TTest_ASWToml_BaseAccess, OutOfMemory_ApplyChangesNothing)
             CheckTrue(failed, "the batch should only fail when an allocation fails" + which);
             CheckEquals(static_cast<int>(ETomlCode::UnexpectedException), static_cast<int>(result.Code),
                 "a failed allocation should be UnexpectedException" + which);
-            CheckStartsWith(result.Message, std::string("An unexpected exception was thrown: "),
+            CheckStartsWith(result.Message, "An unexpected exception was thrown: ",
                 "the message should say what was thrown" + which);
             CheckEquals(std::string(), result.Path, "the result should have no path, since any edit may throw" + which);
-            CheckEquals(std::string(SampleText), toml.ToText(), "a failed batch should change nothing" + which);
+            CheckEquals(SampleText, toml.ToText(), "a failed batch should change nothing" + which);
             CheckFalse(toml.IsModified(), "a failed batch shouldn't set the modified flag" + which);
         }
 
@@ -2063,10 +2063,10 @@ ASW_TEST(TTest_ASWToml_BaseAccess, OutOfMemory_EditChangesNothing)
             CheckTrue(failed, "the edit should only fail when an allocation fails" + which);
             CheckEquals(static_cast<int>(ETomlCode::UnexpectedException), static_cast<int>(result.Code),
                 "a failed allocation should be UnexpectedException" + which);
-            CheckStartsWith(result.Message, std::string("An unexpected exception was thrown: "),
+            CheckStartsWith(result.Message, "An unexpected exception was thrown: ",
                 "the message should say what was thrown" + which);
-            CheckEquals(std::string("new.key"), result.Path, "the result should have the path" + which);
-            CheckEquals(std::string(SampleText), toml.ToText(), "a failed edit should change nothing" + which);
+            CheckEquals("new.key", result.Path, "the result should have the path" + which);
+            CheckEquals(SampleText, toml.ToText(), "a failed edit should change nothing" + which);
             CheckFalse(toml.IsModified(), "a failed edit shouldn't set the modified flag" + which);
         }
 
@@ -2103,7 +2103,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, OutOfMemory_LoadTextChangesNothing)
 
         if (result.IsOk())
         {
-            CheckEquals(std::string(SampleText), toml.ToText(), "a load that succeeded should have loaded the text" +
+            CheckEquals(SampleText, toml.ToText(), "a load that succeeded should have loaded the text" +
                 which);
             CheckFalse(toml.IsModified(), "a loaded document shouldn't be modified" + which);
         }
@@ -2163,7 +2163,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, OutOfMemory_SetOptionsChangesNothing)
             CheckFalse(hexadecimal, "a failed SetOptions() should keep the options" + which);
         }
 
-        CheckEquals(std::string(SampleText), toml.ToText(), "the text should be unchanged" + which);
+        CheckEquals(SampleText, toml.ToText(), "the text should be unchanged" + which);
         CheckEquals(640, toml.GetValue("window.width", 0), "and read as it was" + which);
         if (!failed)
             break;
@@ -2212,7 +2212,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, SetOptions_InvalidOptionsChangeNothing)
     CheckEquals(TASWTomlOptions().Writing.CommentPrefix, toml.GetOptions().Writing.CommentPrefix,
         "the options should be unchanged");
     CheckTrue(toml.GetValueOptions().IntegerBase == EIntegerBase::Auto, "all of them");
-    CheckEquals(std::string(SampleText), toml.ToText(), "the text should be unchanged");
+    CheckEquals(SampleText, toml.ToText(), "the text should be unchanged");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseAccess, SetOptions_ReadsTheTextAgain)
@@ -2262,7 +2262,7 @@ ASW_TEST(TTest_ASWToml_BaseAccess, TypedValues_UseTheValueOptions)
 
     // Assert
     CheckTrue(result.IsOk(), "the value should be set");
-    CheckContains(toml.ToText(), std::string("mask = 0xFF\n"), "an integer should be written as the object's value "
+    CheckContains(toml.ToText(), "mask = 0xFF\n", "an integer should be written as the object's value "
         "options say");
     CheckEquals(255, mask, "and read back");
     CheckEquals(640, width, "an int should be read");
@@ -2340,10 +2340,10 @@ ASW_TEST(TTest_ASWToml_BaseCallback, Callback_MayCallTheObject)
     if (seen.size() == 4)
     {
         CheckEquals(failed.Message, seen[0], "the failed rename should be reported");
-        CheckEquals(std::string("The value 80 is an integer, not a string."), seen[1],
+        CheckEquals("The value 80 is an integer, not a string.", seen[1],
             "the callback's GetValue() should report its Warning, inside the callback");
-        CheckEquals(std::string("none"), seen[2], "and give the default");
-        CheckEquals(std::string("port = 80\ncalled = true\n"), seen[3],
+        CheckEquals("none", seen[2], "and give the default");
+        CheckEquals("port = 80\ncalled = true\n", seen[3],
             "the callback's edit should be in the document");
     }
 }
@@ -2400,7 +2400,7 @@ ASW_TEST(TTest_ASWToml_BaseCallback, Callback_MayLoadAndSave)
     CheckEquals(std::size_t(1), messagesOfSave, "Save() should report its warning, and the callback's Load() nothing");
     CheckTrue(ReadTestFile(file, contents), "the file should be readable");
     CheckEquals(toml.ToText(), contents, "the callback's Load() should load the file the Save() wrote");
-    CheckEquals(std::string("app"), toml.GetValue("name", ""), "with its edit");
+    CheckEquals("app", toml.GetValue("name", ""), "with its edit");
     CheckFalse(toml.IsModified(), "the loaded document shouldn't be modified");
 }
 //---------------------------------------------------------------------------
@@ -2441,8 +2441,8 @@ ASW_TEST(TTest_ASWToml_BaseCallback, FailedBatch_IsReportedOnce)
 
     // Assert
     CheckTrue(ok.IsOk(), "the first batch should succeed");
-    CheckEquals(std::string("port.x"), results[0].Path, "a batch should fail at its first failing edit");
-    CheckEquals(std::string("name"), results[1].Path, "or at the value that didn't convert");
+    CheckEquals("port.x", results[0].Path, "a batch should fail at its first failing edit");
+    CheckEquals("name", results[1].Path, "or at the value that didn't convert");
     std::size_t const count = sizeof(results) / sizeof(results[0]);
     CheckEquals(count, messages.size(), "each failed batch, and only those, should be reported once");
     for (std::size_t i = 0; i < count && i < messages.size(); ++i)
@@ -2500,14 +2500,14 @@ ASW_TEST(TTest_ASWToml_BaseCallback, GetValue_WarningIsReported)
     std::string const width = toml.GetValue("window.width", std::string("none"));
 
     // Assert
-    CheckEquals(std::string("none"), width, "a value that doesn't convert should give the default");
+    CheckEquals("none", width, "a value that doesn't convert should give the default");
     CheckEquals(std::size_t(1), messages.size(), "the value should be reported");
     if (messages.size() == 1)
     {
         CheckTrue(messages[0].Severity == ESeverity::Warning, "as a Warning");
         CheckTrue(messages[0].Code == ETomlCode::TypeMismatch, "with the converter's code");
-        CheckEquals(std::string("The value 640 is an integer, not a string."), messages[0].Text, "and text");
-        CheckEquals(std::string("window.width"), messages[0].Path, "and the path");
+        CheckEquals("The value 640 is an integer, not a string.", messages[0].Text, "and text");
+        CheckEquals("window.width", messages[0].Path, "and the path");
     }
 }
 //---------------------------------------------------------------------------
@@ -2593,7 +2593,7 @@ ASW_TEST(TTest_ASWToml_BaseCallback, OutOfMemory_IsReportedAsAnError)
     {
         CheckTrue(messages[0].Severity == ESeverity::Error, "as an Error");
         CheckEquals(result.Message, messages[0].Text, "with the result's text");
-        CheckEquals(std::string("section.key"), messages[0].Path, "and path");
+        CheckEquals("section.key", messages[0].Path, "and path");
         CheckTrue(messages[1].Severity == ESeverity::Error && messages[1].Text == loaded.Message, "each");
     }
 }
@@ -2734,8 +2734,8 @@ ASW_TEST(TTest_ASWToml_BaseFile, FileOperations_DontOverlap)
     CheckTrue(loaded.IsOk() && saved.IsOk(), "the file should be loaded and saved");
     CheckTrue(saveWaited, "a save should wait for a load to finish");
     CheckTrue(loadWaited, "a load should wait for a save to finish");
-    CheckEquals(std::string("app.toml"), toml.GetFilePath(), "the file path should be set");
-    CheckEquals(std::string(SampleText), toml.ToText(), "the file should be loaded");
+    CheckEquals("app.toml", toml.GetFilePath(), "the file path should be set");
+    CheckEquals(SampleText, toml.ToText(), "the file should be loaded");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseFile, Load_FileErrorsChangeNothing)
@@ -2833,7 +2833,7 @@ ASW_TEST(TTest_ASWToml_BaseFile, Load_MissingFileEmptiesTheDocument)
     CheckTrue(saved.IsOk(), "Save() should create the file: " + saved.Message);
     CheckTrue(ReadTestFile(folder.Path() / "app.toml", contents), "the file should exist");
     CheckEquals(toml.ToText(), contents, "the file should have the document's text");
-    CheckStartsWith(contents, std::string("port = 0xFF"), "written with the options");
+    CheckStartsWith(contents, "port = 0xFF", "written with the options");
     CheckEquals(std::size_t(1), messages.size(), "the save should report nothing");
 }
 //---------------------------------------------------------------------------
@@ -2879,7 +2879,7 @@ ASW_TEST(TTest_ASWToml_BaseFile, Load_ReadsTheFile)
     // Assert
     CheckTrue(result.IsOk(), "the file should be loaded: " + result.Message);
     CheckEquals(std::string(), result.FilePath, "a result that is Ok should be only that");
-    CheckEquals(std::string(SampleText), toml.ToText(), "the document should have the file's text");
+    CheckEquals(SampleText, toml.ToText(), "the document should have the file's text");
     CheckFalse(toml.Contains("old"), "the old document should be gone");
     CheckFalse(toml.IsModified(), "a loaded document shouldn't be modified");
     CheckEquals(path, toml.GetFilePath(), "the file path should be the path as it was given");
@@ -2910,7 +2910,7 @@ ASW_TEST(TTest_ASWToml_BaseFile, Load_ReadsWithoutTheLock)
     CheckTrue(result.IsOk(), "the file should be loaded: " + result.Message);
     CheckEquals(640, widthDuringLoad, "a lookup during the load should see the old document");
     CheckTrue(editDuringLoad.IsOk(), "an edit during the load should succeed");
-    CheckEquals(std::string("loaded = 1\n"), toml.ToText(), "the loaded file should replace the edited document");
+    CheckEquals("loaded = 1\n", toml.ToText(), "the loaded file should replace the edited document");
     CheckFalse(toml.IsModified(), "a loaded document shouldn't be modified");
 }
 //---------------------------------------------------------------------------
@@ -2961,7 +2961,7 @@ ASW_TEST(TTest_ASWToml_BaseFile, Load_SyntaxErrorChangesNothing)
     CheckTrue(saved.IsOk(), "Save() should write the file path: " + saved.Message);
     CheckTrue(ReadTestFile(good, goodContents) && ReadTestFile(bad, badContents), "both files should be readable");
     CheckEquals(before, goodContents, "Save() should write the document to the file it was loaded from");
-    CheckEquals(std::string(InvalidText), badContents, "and leave the file with the error as it was");
+    CheckEquals(InvalidText, badContents, "and leave the file with the error as it was");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseFile, OutOfMemory_LoadChangesNothing)
@@ -3000,7 +3000,7 @@ ASW_TEST(TTest_ASWToml_BaseFile, OutOfMemory_LoadChangesNothing)
             bool const loaded = missing ? result.Code == ETomlCode::FileNotFound : result.IsOk();
             if (loaded)
             {
-                CheckEquals(std::string(missing ? "" : SampleText), toml.ToText(),
+                CheckEquals(missing ? "" : SampleText, toml.ToText(),
                     "a load that succeeded should have loaded the file, or emptied the document" + which);
                 CheckEquals(path, toml.GetFilePath(), "and set the file path" + which);
                 CheckFalse(toml.IsModified(), "a loaded document shouldn't be modified" + which);
@@ -3083,7 +3083,7 @@ ASW_TEST(TTest_ASWToml_BaseFile, OutOfMemory_SaveChangesNothing)
                 if (saveAs)
                     CheckEquals(copyPath, result.FilePath, "the failure should name the file" + which);
 
-                CheckEquals(std::string(SampleText), contents, "a failed save should leave the file as it was" + which);
+                CheckEquals(SampleText, contents, "a failed save should leave the file as it was" + which);
                 CheckEquals(std::size_t(1), CountEntries(folder.Path()), "and write no other file" + which);
                 CheckEquals(filePath, toml.GetFilePath(), "a failed save should keep the file path" + which);
                 CheckTrue(toml.IsModified(), "a failed save should keep the modified flag" + which);
@@ -3315,7 +3315,7 @@ ASW_TEST(TTest_ASWToml_BaseFile, Save_ReadOnlyFileChangesNothing)
         "the code should be ReplaceFailed");
     CheckEquals(static_cast<int>(ERROR_ACCESS_DENIED), result.SystemError, "the system error should be access denied");
     CheckTrue(read, "the file should still be readable");
-    CheckEquals(std::string(SampleText), contents, "the file should be unchanged");
+    CheckEquals(SampleText, contents, "the file should be unchanged");
     CheckTrue(toml.IsModified(), "the modified flag should be unchanged");
     CheckEquals(path, toml.GetFilePath(), "the file path should be unchanged");
     CheckEquals(std::size_t(1), messages.size(), "the failure should be reported");
@@ -3351,8 +3351,8 @@ ASW_TEST(TTest_ASWToml_BaseFile, Save_RoundTripsByteForByte)
     CheckTrue(savedAs.IsOk(), "the copy should be saved: " + savedAs.Message);
     CheckTrue(ReadTestFile(source, sourceContents), "the file should be readable");
     CheckTrue(ReadTestFile(copy, copyContents), "the copy should be readable");
-    CheckEquals(std::string(TrickyText), sourceContents, "the saved file should have the bytes it was loaded from");
-    CheckEquals(std::string(TrickyText), copyContents, "the copy should have the bytes the file was loaded from");
+    CheckEquals(TrickyText, sourceContents, "the saved file should have the bytes it was loaded from");
+    CheckEquals(TrickyText, copyContents, "the copy should have the bytes the file was loaded from");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_BaseFile, Save_WarningsAreReported)
@@ -3435,7 +3435,7 @@ ASW_TEST(TTest_ASWToml_BaseFile, Save_WritesAndClearsTheModifiedFlag)
     CheckFalse(toml.IsModified(), "a saved document shouldn't be modified");
     CheckTrue(ReadTestFile(file, contents), "the file should be readable");
     CheckEquals(toml.ToText(), contents, "the file should have the document's text");
-    CheckContains(contents, std::string("port = 8080\n"), "the file should have the edit");
+    CheckContains(contents, "port = 8080\n", "the file should have the edit");
 
     // Act
     // A document that isn't modified is saved too
@@ -3467,14 +3467,14 @@ ASW_TEST(TTest_ASWToml_BaseFile, Seams_ExceptionIsUnexpectedException)
     // Assert
     CheckEquals(static_cast<int>(ETomlCode::UnexpectedException), static_cast<int>(load.Code),
         "an exception from ReadFile() should be UnexpectedException");
-    CheckEquals(std::string("An unexpected exception was thrown: The disk is gone."), load.Message,
+    CheckEquals("An unexpected exception was thrown: The disk is gone.", load.Message,
         "the message should say what was thrown");
-    CheckEquals(std::string("app.toml"), load.FilePath, "the result should name the file Load() was given");
+    CheckEquals("app.toml", load.FilePath, "the result should name the file Load() was given");
     CheckEquals(static_cast<int>(ETomlCode::UnexpectedException), static_cast<int>(saveAs.Code),
         "an exception from WriteFile() should be UnexpectedException");
-    CheckEquals(std::string("An exception that isn't a std::exception was thrown."), saveAs.Message,
+    CheckEquals("An exception that isn't a std::exception was thrown.", saveAs.Message,
         "the message should say what was thrown");
-    CheckEquals(std::string("other.toml"), saveAs.FilePath, "the result should name the file SaveAs() was given");
+    CheckEquals("other.toml", saveAs.FilePath, "the result should name the file SaveAs() was given");
     CheckEquals(before, toml.ToText(), "the document should be unchanged");
     CheckTrue(toml.IsModified(), "the modified flag should be unchanged");
     CheckEquals(std::string(), toml.GetFilePath(), "there should still be no file path");
@@ -3483,8 +3483,8 @@ ASW_TEST(TTest_ASWToml_BaseFile, Seams_ExceptionIsUnexpectedException)
     {
         CheckTrue(messages[0].Severity == ESeverity::Error && messages[1].Severity == ESeverity::Error,
             "as Errors");
-        CheckEquals(std::string("app.toml"), messages[0].FilePath, "each with the file it was about");
-        CheckEquals(std::string("other.toml"), messages[1].FilePath, "the second too");
+        CheckEquals("app.toml", messages[0].FilePath, "each with the file it was about");
+        CheckEquals("other.toml", messages[1].FilePath, "the second too");
     }
 }
 //---------------------------------------------------------------------------
@@ -3514,25 +3514,25 @@ ASW_TEST(TTest_ASWToml_BaseFile, Seams_FailuresChangeNothing)
     // Assert
     CheckEquals(static_cast<int>(ETomlCode::WriteFailed), static_cast<int>(writeFailed.Code),
         "Save() should fail as WriteFile() did");
-    CheckEquals(std::string("app.toml"), writeFailed.FilePath, "the failed Save() should name the file path");
+    CheckEquals("app.toml", writeFailed.FilePath, "the failed Save() should name the file path");
     CheckEquals(static_cast<int>(ETomlCode::ReplaceFailed), static_cast<int>(replaceFailed.Code),
         "SaveAs() should fail as WriteFile() did");
-    CheckEquals(std::string("app.toml.tmp"), replaceFailed.FilePath, "a failure that names a file should keep it");
+    CheckEquals("app.toml.tmp", replaceFailed.FilePath, "a failure that names a file should keep it");
     CheckEquals(static_cast<int>(ETomlCode::ReadFailed), static_cast<int>(readFailed.Code),
         "Load() should fail as ReadFile() did");
-    CheckEquals(std::string("other.toml"), readFailed.FilePath, "the failed Load() should name the file it read");
+    CheckEquals("other.toml", readFailed.FilePath, "the failed Load() should name the file it read");
     CheckEquals(before, toml.ToText(), "the document should be unchanged");
     CheckTrue(toml.IsModified(), "the modified flag should be unchanged");
-    CheckEquals(std::string("app.toml"), toml.GetFilePath(), "the file path should be unchanged");
+    CheckEquals("app.toml", toml.GetFilePath(), "the file path should be unchanged");
     CheckEquals(std::size_t(3), messages.size(), "each failure should be reported");
     if (messages.size() == 3)
     {
-        CheckEquals(std::string("app.toml"), messages[0].FilePath,
+        CheckEquals("app.toml", messages[0].FilePath,
             "the failed Save() should be reported with the file path");
-        CheckEquals(std::string("app.toml.tmp"), messages[1].FilePath,
+        CheckEquals("app.toml.tmp", messages[1].FilePath,
             "the failed SaveAs() should be reported with the file it names");
         CheckEquals(5, messages[1].SystemError, "the system error should be reported");
-        CheckEquals(std::string("other.toml"), messages[2].FilePath,
+        CheckEquals("other.toml", messages[2].FilePath,
             "the failed Load() should be reported with the file it read, not the file path");
     }
 }
@@ -3555,12 +3555,12 @@ ASW_TEST(TTest_ASWToml_BaseFile, Seams_FileNotFoundIsAMissingFile)
     CheckEquals(static_cast<int>(ETomlCode::FileNotFound), static_cast<int>(result.Code),
         "Load() should fail as ReadFile() did");
     CheckEquals(std::string(), toml.ToText(), "the document should be emptied");
-    CheckEquals(std::string("app.toml"), toml.GetFilePath(), "the file Load() was given should become the file path");
+    CheckEquals("app.toml", toml.GetFilePath(), "the file Load() was given should become the file path");
     CheckEquals(std::size_t(1), messages.size(), "the missing file should be reported once");
     if (messages.size() == 1)
     {
         CheckTrue(messages[0].Severity == ESeverity::Warning, "a missing file should be a Warning");
-        CheckEquals(std::string("elsewhere.toml"), messages[0].FilePath,
+        CheckEquals("elsewhere.toml", messages[0].FilePath,
             "the warning should name the file ReadFile() named");
         CheckEquals(2, messages[0].SystemError, "the warning should have the system error");
     }
@@ -3587,9 +3587,9 @@ ASW_TEST(TTest_ASWToml_BaseFile, Seams_GetTheirArguments)
 
     // Assert
     CheckTrue(loaded.IsOk() && saved.IsOk(), "the file should be loaded and saved");
-    CheckEquals(std::string("Folder/app.toml"), arguments.ReadPath, "ReadFile() should get the path as given");
+    CheckEquals("Folder/app.toml", arguments.ReadPath, "ReadFile() should get the path as given");
     CheckEquals(std::size_t(1000), arguments.ReadMaxSize, "ReadFile() should get MaxFileSize");
-    CheckEquals(std::string("Folder/app.toml"), arguments.WritePath, "WriteFile() should get the file path");
+    CheckEquals("Folder/app.toml", arguments.WritePath, "WriteFile() should get the file path");
     CheckEquals(toml.ToText(), arguments.WriteText, "WriteFile() should get the document's text");
     CheckTrue(arguments.WriteOptions.Backup && !arguments.WriteOptions.AtomicSave &&
         arguments.WriteOptions.BackupSuffix == ".old", "WriteFile() should get the saving options");

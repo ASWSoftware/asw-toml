@@ -115,7 +115,7 @@ ASW_TEST(TTest_ASWToml_File, PathToUtf8_ReplacesLoneSurrogate)
     std::string const utf8 = ASWToml::PathToUtf8(path);
 
     // Assert
-    CheckEquals(std::string("x\xEF\xBF\xBD" "y.toml"), utf8, "the lone surrogate should become U+FFFD");
+    CheckEquals("x\xEF\xBF\xBD" "y.toml", utf8, "the lone surrogate should become U+FFFD");
 }
 #endif
 //---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ ASW_TEST(TTest_ASWToml_File, ReadWholeFile_LargerThanMaxSize)
     CheckContains(tooLarge.Message, "11 bytes", "the message should give the file's size");
     CheckEmpty(contentsAfterFailure, "nothing should be read from a file that is too large");
     CheckTrue(exactSize.IsOk(), "a file of exactly the limit should be read: " + exactSize.Message);
-    CheckEquals(std::string("0123456789A"), contents, "the whole file should be read");
+    CheckEquals("0123456789A", contents, "the whole file should be read");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_File, ReadWholeFile_MissingFile)
@@ -304,7 +304,7 @@ ASW_TEST(TTest_ASWToml_File, Utf8ToPath_InvalidUtf8)
     // Assert
 #if defined(_WIN32)
     CheckTrue(path.wstring() == std::wstring(L"a\xFFFD" L"b.toml"), "the byte should become U+FFFD");
-    CheckEquals(std::string("a\xEF\xBF\xBD" "b.toml"), ASWToml::PathToUtf8(path),
+    CheckEquals("a\xEF\xBF\xBD" "b.toml", ASWToml::PathToUtf8(path),
         "the path should convert back with U+FFFD");
 #else
     CheckEquals(utf8, path.string(), "the path should hold the bytes as they are");
@@ -332,9 +332,9 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_Backup_CopiesPreviousFile)
     CheckTrue(result.IsOk(), "the file should be saved: " + result.Message);
     CheckEmpty(warnings, "there should be no warnings");
     CheckTrue(ReadTestFile(path, contents), "the file should be readable");
-    CheckEquals(std::string("new"), contents, "the file should have the new contents");
+    CheckEquals("new", contents, "the file should have the new contents");
     CheckTrue(ReadTestFile(folder.Path() / "app.toml.bak", backup), "the backup should exist");
-    CheckEquals(std::string("old"), backup, "the backup should have the previous contents");
+    CheckEquals("old", backup, "the backup should have the previous contents");
 
     // Act
     // A second save replaces the older backup
@@ -343,7 +343,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_Backup_CopiesPreviousFile)
     // Assert
     CheckTrue(second.IsOk(), "the second save should succeed: " + second.Message);
     CheckTrue(ReadTestFile(folder.Path() / "app.toml.bak", backup), "the backup should exist");
-    CheckEquals(std::string("new"), backup, "the backup should be replaced");
+    CheckEquals("new", backup, "the backup should be replaced");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_File, WriteWholeFile_Backup_SkippedForNewFile)
@@ -402,7 +402,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_CreatesMissingFolders)
     std::string contents;
     CheckTrue(result.IsOk(), "the file should be saved: " + result.Message);
     CheckTrue(ReadTestFile(path, contents), "the file should be in the new folders");
-    CheckEquals(std::string("x"), contents, "the file should have its contents");
+    CheckEquals("x", contents, "the file should have its contents");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_File, WriteWholeFile_EmptyPath)
@@ -441,7 +441,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_FailedReplace_KeepsTargetAndRemovesT
     CheckEmpty(warnings, "the temporary file should be deleted without a warning");
     CheckEquals(1, static_cast<int>(CountEntries(folder.Path())), "no temporary file should be left");
     CheckTrue(ReadTestFile(path / "inside.txt", inside), "the folder should be untouched");
-    CheckEquals(std::string("kept"), inside, "the folder's file should be unchanged");
+    CheckEquals("kept", inside, "the folder's file should be unchanged");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_File, WriteWholeFile_InPlace_OverwritesAndTruncates)
@@ -462,7 +462,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_InPlace_OverwritesAndTruncates)
     std::string contents;
     CheckTrue(result.IsOk(), "the file should be saved: " + result.Message);
     CheckTrue(ReadTestFile(path, contents), "the file should be readable");
-    CheckEquals(std::string("short"), contents, "the old contents should be cut off");
+    CheckEquals("short", contents, "the old contents should be cut off");
     CheckEquals(1, static_cast<int>(CountEntries(folder.Path())), "no other file should be made");
 }
 //---------------------------------------------------------------------------
@@ -496,7 +496,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_KeepsHiddenAttribute)
     CheckTrue((attributesAfterInPlace & FILE_ATTRIBUTE_HIDDEN) != 0,
         "the file should still be hidden after an in-place save");
     CheckTrue(ReadTestFile(path, contents), "the file should be readable");
-    CheckEquals(std::string("newer"), contents, "the file should have the last contents");
+    CheckEquals("newer", contents, "the file should have the last contents");
 }
 #endif
 //---------------------------------------------------------------------------
@@ -546,7 +546,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_KeepsSymbolicLink)
     CheckTrue(result.IsOk(), "the file should be saved: " + result.Message);
     CheckTrue(std::filesystem::is_symlink(link, error), "the link should still be a link");
     CheckTrue(ReadTestFile(real, contents), "the linked file should be readable");
-    CheckEquals(std::string("new"), contents, "the linked file should have the new contents");
+    CheckEquals("new", contents, "the linked file should have the new contents");
 }
 #endif
 //---------------------------------------------------------------------------
@@ -569,7 +569,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_NonAsciiPath)
     // Assert
     CheckTrue(written.IsOk(), "the file should be saved: " + written.Message);
     CheckTrue(read.IsOk(), "the file should be read: " + read.Message);
-    CheckEquals(std::string("x"), contents, "the file should have its contents");
+    CheckEquals("x", contents, "the file should have its contents");
 #if defined(_WIN32)
     std::error_code error;
     CheckTrue(std::filesystem::exists(folder.Path() / L"caf\x00E9" / L"\x03BB.toml", error),
@@ -609,7 +609,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_OutOfMemory_KeepsFileAndRemovesTemp)
         CheckTrue(ReadTestFile(path, contents), "the file should be readable" + which);
         if (result.IsOk())
         {
-            CheckEquals(std::string("new"), contents, "a save that succeeded should write the contents" + which);
+            CheckEquals("new", contents, "a save that succeeded should write the contents" + which);
         }
         else
         {
@@ -617,7 +617,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_OutOfMemory_KeepsFileAndRemovesTemp)
             CheckTrue(failed, "the save should only fail when an allocation fails" + which);
             CheckEquals(ASWToml::ETomlCode::UnexpectedException, result.Code,
                 "a failed allocation should be UnexpectedException" + which);
-            CheckEquals(std::string("old"), contents, "a failed save should leave the file as it was" + which);
+            CheckEquals("old", contents, "a failed save should leave the file as it was" + which);
         }
 
         CheckEquals(1, static_cast<int>(CountEntries(folder.Path())), "no temporary file should be left" + which);
@@ -648,7 +648,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_ReadOnlyFile_Fails)
     CheckEquals(ASWToml::ETomlCode::ReplaceFailed, result.Code, "the code should be ReplaceFailed");
     CheckEquals(static_cast<int>(ERROR_ACCESS_DENIED), result.SystemError, "the system error should be access denied");
     CheckTrue(ReadTestFile(path, contents), "the file should still be readable");
-    CheckEquals(std::string("old"), contents, "the file should be unchanged");
+    CheckEquals("old", contents, "the file should be unchanged");
     CheckEquals(1, static_cast<int>(CountEntries(folder.Path())), "no temporary file should be left");
 
     // So the folder can be deleted
@@ -674,7 +674,7 @@ ASW_TEST(TTest_ASWToml_File, WriteWholeFile_ReplacesFile)
     CheckTrue(result.IsOk(), "the file should be saved: " + result.Message);
     CheckEmpty(warnings, "there should be no warnings");
     CheckTrue(ReadTestFile(path, contents), "the file should be readable");
-    CheckEquals(std::string("new"), contents, "the file should have only the new contents");
+    CheckEquals("new", contents, "the file should have only the new contents");
     CheckEquals(1, static_cast<int>(CountEntries(folder.Path())), "no temporary file should be left");
 }
 //---------------------------------------------------------------------------

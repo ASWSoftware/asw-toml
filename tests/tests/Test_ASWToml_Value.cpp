@@ -750,9 +750,9 @@ ASW_TEST(TTest_ASWToml_ValueModel, Constructors_SetEachType)
 
     // Act & Assert
     CheckEquals(ETomlType::String, TASWTomlValue("text").GetType(), "a string literal");
-    CheckEquals(std::string("text"), *TASWTomlValue(std::string_view("text")).AsString(), "a std::string_view");
-    CheckEquals(std::string("text"), *TASWTomlValue(std::string("text")).AsString(), "a std::string");
-    CheckEquals(std::string(""), *TASWTomlValue(nullText).AsString(), "a null pointer should be an empty string");
+    CheckEquals("text", *TASWTomlValue(std::string_view("text")).AsString(), "a std::string_view");
+    CheckEquals("text", *TASWTomlValue(std::string("text")).AsString(), "a std::string");
+    CheckEquals("", *TASWTomlValue(nullText).AsString(), "a null pointer should be an empty string");
     CheckEquals(ETomlType::Integer, TASWTomlValue(42).GetType(), "an int");
     CheckEquals(ETomlType::Integer, TASWTomlValue(static_cast<unsigned short>(42)).GetType(), "an unsigned short");
     CheckEquals(ETomlType::Integer, TASWTomlValue(static_cast<std::int8_t>(-5)).GetType(), "a std::int8_t");
@@ -922,8 +922,8 @@ ASW_TEST(TTest_ASWToml_ValueModel, Table_SetFindRemove)
     // Assert
     TASWTomlValue::TKeyValueVector const& entries = *table.AsTable();
     AssertEquals(2, static_cast<int>(entries.size()), "two keys should be left");
-    CheckEquals(std::string("port"), entries[0].Key, "a replaced key should keep its place");
-    CheckEquals(std::string("debug"), entries[1].Key, "the other keys should keep their order");
+    CheckEquals("port", entries[0].Key, "a replaced key should keep its place");
+    CheckEquals("debug", entries[1].Key, "the other keys should keep their order");
     CheckTrue(returnedTableValue, "Set() should return the value in the table");
     CheckTrue(*table.Find("port") == TASWTomlValue(9090), "the replaced value");
     CheckTrue(removed, "Remove() should report the removed key");
@@ -946,7 +946,7 @@ ASW_TEST(TTest_ASWToml_ValueModel, TomlType_ValuesNeverChange)
             std::string("ETomlType::") + ASWToml::ToString(types[i]) + " should keep its value");
     }
 
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ETomlType>(types.size()))),
+    CheckEquals("Unknown", ASWToml::ToString(static_cast<ETomlType>(types.size())),
         "AllTomlTypes() should list every type");
 }
 //---------------------------------------------------------------------------
@@ -961,14 +961,14 @@ ASW_TEST(TTest_ASWToml_ValueModel, ToString_TomlTypeNames)
         std::string const name = ASWToml::ToString(type);
 
         // Assert
-        CheckNotEquals(std::string("Unknown"), name, "type " + std::to_string(static_cast<int>(type)) +
+        CheckNotEquals("Unknown", name, "type " + std::to_string(static_cast<int>(type)) +
             " should have a name");
         CheckTrue(names.insert(name).second, "the name \"" + name + "\" should be unique");
     }
 
-    CheckEquals(std::string("LocalDateTime"), std::string(ASWToml::ToString(ETomlType::LocalDateTime)),
+    CheckEquals("LocalDateTime", ASWToml::ToString(ETomlType::LocalDateTime),
         "the name should be the enumerator's");
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ETomlType>(-1))),
+    CheckEquals("Unknown", ASWToml::ToString(static_cast<ETomlType>(-1)),
         "an unknown type should be \"Unknown\"");
 }
 //---------------------------------------------------------------------------

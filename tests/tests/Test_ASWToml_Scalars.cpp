@@ -2112,7 +2112,7 @@ void TTest_ASWToml_DateTimeTexts::CheckReadsUpTo(std::string const& text, std::s
     ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadDateTime(text, position, value);
 
     CheckTrue(result.IsOk(), msg + ": the date or time should read: " + result.Message, loc);
-    CheckEquals(std::string(ASWToml::ToString(expected.GetType())), std::string(ASWToml::ToString(value.GetType())),
+    CheckEquals(ASWToml::ToString(expected.GetType()), ASWToml::ToString(value.GetType()),
         msg + ": the type", loc);
     CheckTrue(value == expected, msg + ": the value should be " + ScalarText(expected) + ", not " + ScalarText(value),
         loc);
@@ -2784,7 +2784,7 @@ void TTest_ASWToml_ScalarKinds::CheckReadsUpTo(std::string const& text, std::siz
     ASWToml::TASWTomlResult const result = ASWToml::Detail::ReadScalar(text, position, value);
 
     CheckTrue(result.IsOk(), msg + ": the value should read: " + result.Message, loc);
-    CheckEquals(std::string(ASWToml::ToString(type)), std::string(ASWToml::ToString(value.GetType())),
+    CheckEquals(ASWToml::ToString(type), ASWToml::ToString(value.GetType()),
         msg + ": the type", loc);
     CheckEquals(expected, ScalarText(value), msg + ": the value", loc);
     CheckEquals(end, position, msg + ": the position should be after the value", loc);

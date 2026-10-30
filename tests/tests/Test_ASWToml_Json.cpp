@@ -742,13 +742,13 @@ ASW_TEST(TTest_ASWToml_Json, Tagged_RandomValuesReadBackIdentical)
 ASW_TEST(TTest_ASWToml_Json, ToString_NamesEachValue)
 {
     // Act & Assert
-    CheckEquals("Plain"s, std::string(ASWToml::ToString(EJsonStyle::Plain)), "Plain");
-    CheckEquals("Tagged"s, std::string(ASWToml::ToString(EJsonStyle::Tagged)), "Tagged");
-    CheckEquals("Unknown"s, std::string(ASWToml::ToString(static_cast<EJsonStyle>(2))), "a style cast from 2");
-    CheckEquals("Fail"s, std::string(ASWToml::ToString(EJsonNonFinite::Fail)), "Fail");
-    CheckEquals("Null"s, std::string(ASWToml::ToString(EJsonNonFinite::Null)), "Null");
-    CheckEquals("String"s, std::string(ASWToml::ToString(EJsonNonFinite::String)), "String");
-    CheckEquals("Unknown"s, std::string(ASWToml::ToString(static_cast<EJsonNonFinite>(3))), "a NonFinite cast from 3");
+    CheckEquals("Plain"s, ASWToml::ToString(EJsonStyle::Plain), "Plain");
+    CheckEquals("Tagged"s, ASWToml::ToString(EJsonStyle::Tagged), "Tagged");
+    CheckEquals("Unknown"s, ASWToml::ToString(static_cast<EJsonStyle>(2)), "a style cast from 2");
+    CheckEquals("Fail"s, ASWToml::ToString(EJsonNonFinite::Fail), "Fail");
+    CheckEquals("Null"s, ASWToml::ToString(EJsonNonFinite::Null), "Null");
+    CheckEquals("String"s, ASWToml::ToString(EJsonNonFinite::String), "String");
+    CheckEquals("Unknown"s, ASWToml::ToString(static_cast<EJsonNonFinite>(3)), "a NonFinite cast from 3");
 }
 //---------------------------------------------------------------------------
 

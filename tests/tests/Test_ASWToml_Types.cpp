@@ -183,15 +183,15 @@ ASW_TEST(TTest_ASWToml_Types, TomlCode_ValuesNeverChange)
     }
 
     // A code after the last one listed means a new code is missing from AllTomlCodes()
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::ETomlCode>(codes.size()))),
+    CheckEquals("Unknown", ASWToml::ToString(static_cast<ASWToml::ETomlCode>(codes.size())),
         "AllTomlCodes() should list every code");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Types, ToString_LineBreakNames)
 {
-    CheckEquals(std::string("None"), std::string(ASWToml::ToString(ASWToml::ELineBreak::None)), "None's name");
-    CheckEquals(std::string("LF"), std::string(ASWToml::ToString(ASWToml::ELineBreak::LF)), "LF's name");
-    CheckEquals(std::string("CRLF"), std::string(ASWToml::ToString(ASWToml::ELineBreak::CRLF)), "CRLF's name");
+    CheckEquals("None", ASWToml::ToString(ASWToml::ELineBreak::None), "None's name");
+    CheckEquals("LF", ASWToml::ToString(ASWToml::ELineBreak::LF), "LF's name");
+    CheckEquals("CRLF", ASWToml::ToString(ASWToml::ELineBreak::CRLF), "CRLF's name");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Types, ToString_MessageWithAllParts)
@@ -212,8 +212,8 @@ ASW_TEST(TTest_ASWToml_Types, ToString_MessageWithAllParts)
 
     // Assert
     // The path is written as it is, since it quotes its own parts
-    CheckEquals(std::string("Error DuplicateKey: The key \"port\" is defined twice. (file \"app.toml\", line 4, "
-        "column 1, path server.\"host name\".port, system error 5)"), text, "every part should be written, in order");
+    CheckEquals("Error DuplicateKey: The key \"port\" is defined twice. (file \"app.toml\", line 4, "
+        "column 1, path server.\"host name\".port, system error 5)", text, "every part should be written, in order");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Types, ToString_MessageWithLineButNoColumn)
@@ -229,7 +229,7 @@ ASW_TEST(TTest_ASWToml_Types, ToString_MessageWithLineButNoColumn)
     std::string const text = ASWToml::ToString(message);
 
     // Assert
-    CheckEquals(std::string("Warning BackupFailed: The backup couldn't be made. (line 7)"), text,
+    CheckEquals("Warning BackupFailed: The backup couldn't be made. (line 7)", text,
         "a column of 0 should be left out");
 }
 //---------------------------------------------------------------------------
@@ -245,16 +245,16 @@ ASW_TEST(TTest_ASWToml_Types, ToString_MessageWithTextOnly)
     std::string const text = ASWToml::ToString(message);
 
     // Assert
-    CheckEquals(std::string("Error InvalidOptions: Reading.MaxFileSize is 0."), text,
+    CheckEquals("Error InvalidOptions: Reading.MaxFileSize is 0.", text,
         "the parts that aren't set should be left out, with no parentheses");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Types, ToString_SeverityNames)
 {
-    CheckEquals(std::string("Info"), std::string(ASWToml::ToString(ASWToml::ESeverity::Info)), "Info's name");
-    CheckEquals(std::string("Warning"), std::string(ASWToml::ToString(ASWToml::ESeverity::Warning)),
+    CheckEquals("Info", ASWToml::ToString(ASWToml::ESeverity::Info), "Info's name");
+    CheckEquals("Warning", ASWToml::ToString(ASWToml::ESeverity::Warning),
         "Warning's name");
-    CheckEquals(std::string("Error"), std::string(ASWToml::ToString(ASWToml::ESeverity::Error)), "Error's name");
+    CheckEquals("Error", ASWToml::ToString(ASWToml::ESeverity::Error), "Error's name");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Types, ToString_TomlCodeNamesAreUnique)
@@ -268,12 +268,12 @@ ASW_TEST(TTest_ASWToml_Types, ToString_TomlCodeNamesAreUnique)
         std::string const name = ASWToml::ToString(code);
 
         // Assert
-        CheckNotEquals(std::string("Unknown"), name, "code " + std::to_string(static_cast<int>(code)) +
+        CheckNotEquals("Unknown", name, "code " + std::to_string(static_cast<int>(code)) +
             " should have a name");
         CheckTrue(names.insert(name).second, "the name \"" + name + "\" should be unique");
     }
 
-    CheckEquals(std::string("FileNotFound"), std::string(ASWToml::ToString(ASWToml::ETomlCode::FileNotFound)),
+    CheckEquals("FileNotFound", ASWToml::ToString(ASWToml::ETomlCode::FileNotFound),
         "the name should be the enumerator's");
 }
 //---------------------------------------------------------------------------
@@ -286,10 +286,10 @@ ASW_TEST(TTest_ASWToml_Types, ToString_UnknownValues)
     ASWToml::ESeverity const severity = static_cast<ASWToml::ESeverity>(-1);
 
     // Act & Assert
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(code)), "an unknown code should be \"Unknown\"");
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(lineBreak)),
+    CheckEquals("Unknown", ASWToml::ToString(code), "an unknown code should be \"Unknown\"");
+    CheckEquals("Unknown", ASWToml::ToString(lineBreak),
         "an unknown line break should be \"Unknown\"");
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(severity)),
+    CheckEquals("Unknown", ASWToml::ToString(severity),
         "an unknown severity should be \"Unknown\"");
 }
 //---------------------------------------------------------------------------
