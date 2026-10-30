@@ -233,7 +233,7 @@ ASW_TEST(TTest_ASWToml_WritingOptions, Defaults_MatchDocumentedValues)
 
     // Assert
     // The defaults the roadmap's decisions document (decisions 9 and 10)
-    CheckEquals(std::string("# "), options.CommentPrefix, "CommentPrefix");
+    CheckEquals("# ", options.CommentPrefix, "CommentPrefix");
     CheckEquals(ASWToml::ELineEnding::Auto, options.LineEnding, "LineEnding");
     CheckEquals(ASWToml::EBomMode::Auto, options.Bom, "Bom");
     CheckTrue(options.BlankLineBeforeNewTable, "BlankLineBeforeNewTable should be on");
@@ -242,23 +242,23 @@ ASW_TEST(TTest_ASWToml_WritingOptions, Defaults_MatchDocumentedValues)
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_WritingOptions, ToString_EnumNames)
 {
-    CheckEquals(std::string("Auto"), std::string(ASWToml::ToString(ASWToml::ELineEnding::Auto)), "ELineEnding::Auto");
-    CheckEquals(std::string("Native"), std::string(ASWToml::ToString(ASWToml::ELineEnding::Native)),
+    CheckEquals("Auto", ASWToml::ToString(ASWToml::ELineEnding::Auto), "ELineEnding::Auto");
+    CheckEquals("Native", ASWToml::ToString(ASWToml::ELineEnding::Native),
         "ELineEnding::Native");
-    CheckEquals(std::string("LF"), std::string(ASWToml::ToString(ASWToml::ELineEnding::LF)), "ELineEnding::LF");
-    CheckEquals(std::string("CRLF"), std::string(ASWToml::ToString(ASWToml::ELineEnding::CRLF)), "ELineEnding::CRLF");
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::ELineEnding>(99))),
+    CheckEquals("LF", ASWToml::ToString(ASWToml::ELineEnding::LF), "ELineEnding::LF");
+    CheckEquals("CRLF", ASWToml::ToString(ASWToml::ELineEnding::CRLF), "ELineEnding::CRLF");
+    CheckEquals("Unknown", ASWToml::ToString(static_cast<ASWToml::ELineEnding>(99)),
         "an unknown ELineEnding");
-    CheckEquals(std::string("Auto"), std::string(ASWToml::ToString(ASWToml::EBomMode::Auto)), "EBomMode::Auto");
-    CheckEquals(std::string("Always"), std::string(ASWToml::ToString(ASWToml::EBomMode::Always)), "EBomMode::Always");
-    CheckEquals(std::string("Never"), std::string(ASWToml::ToString(ASWToml::EBomMode::Never)), "EBomMode::Never");
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::EBomMode>(99))),
+    CheckEquals("Auto", ASWToml::ToString(ASWToml::EBomMode::Auto), "EBomMode::Auto");
+    CheckEquals("Always", ASWToml::ToString(ASWToml::EBomMode::Always), "EBomMode::Always");
+    CheckEquals("Never", ASWToml::ToString(ASWToml::EBomMode::Never), "EBomMode::Never");
+    CheckEquals("Unknown", ASWToml::ToString(static_cast<ASWToml::EBomMode>(99)),
         "an unknown EBomMode");
-    CheckEquals(std::string("CodeWins"), std::string(ASWToml::ToString(ASWToml::ECommentPolicy::CodeWins)),
+    CheckEquals("CodeWins", ASWToml::ToString(ASWToml::ECommentPolicy::CodeWins),
         "ECommentPolicy::CodeWins");
-    CheckEquals(std::string("FileWins"), std::string(ASWToml::ToString(ASWToml::ECommentPolicy::FileWins)),
+    CheckEquals("FileWins", ASWToml::ToString(ASWToml::ECommentPolicy::FileWins),
         "ECommentPolicy::FileWins");
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::ECommentPolicy>(99))),
+    CheckEquals("Unknown", ASWToml::ToString(static_cast<ASWToml::ECommentPolicy>(99)),
         "an unknown ECommentPolicy");
 }
 //---------------------------------------------------------------------------
@@ -397,7 +397,7 @@ ASW_TEST(TTest_ASWToml_SavingOptions, Defaults_MatchDocumentedValues)
     // Assert
     CheckTrue(options.AtomicSave, "AtomicSave should be on");
     CheckFalse(options.Backup, "Backup should be off");
-    CheckEquals(std::string(".bak"), options.BackupSuffix, "BackupSuffix");
+    CheckEquals(".bak", options.BackupSuffix, "BackupSuffix");
     CheckTrue(options.CreateFolders, "CreateFolders should be on");
 }
 //---------------------------------------------------------------------------
@@ -492,25 +492,25 @@ ASW_TEST(TTest_ASWToml_ValueOptions, Defaults_MatchDocumentedValues)
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_ValueOptions, ToString_EnumNames)
 {
-    CheckEquals(std::string("Auto"), std::string(ASWToml::ToString(ASWToml::EStringStyle::Auto)),
+    CheckEquals("Auto", ASWToml::ToString(ASWToml::EStringStyle::Auto),
         "EStringStyle::Auto");
-    CheckEquals(std::string("Basic"), std::string(ASWToml::ToString(ASWToml::EStringStyle::Basic)),
+    CheckEquals("Basic", ASWToml::ToString(ASWToml::EStringStyle::Basic),
         "EStringStyle::Basic");
-    CheckEquals(std::string("Literal"), std::string(ASWToml::ToString(ASWToml::EStringStyle::Literal)),
+    CheckEquals("Literal", ASWToml::ToString(ASWToml::EStringStyle::Literal),
         "EStringStyle::Literal");
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::EStringStyle>(99))),
+    CheckEquals("Unknown", ASWToml::ToString(static_cast<ASWToml::EStringStyle>(99)),
         "an unknown EStringStyle");
-    CheckEquals(std::string("Auto"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Auto)),
+    CheckEquals("Auto", ASWToml::ToString(ASWToml::EIntegerBase::Auto),
         "EIntegerBase::Auto");
-    CheckEquals(std::string("Decimal"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Decimal)),
+    CheckEquals("Decimal", ASWToml::ToString(ASWToml::EIntegerBase::Decimal),
         "EIntegerBase::Decimal");
-    CheckEquals(std::string("Hexadecimal"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Hexadecimal)),
+    CheckEquals("Hexadecimal", ASWToml::ToString(ASWToml::EIntegerBase::Hexadecimal),
         "EIntegerBase::Hexadecimal");
-    CheckEquals(std::string("Octal"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Octal)),
+    CheckEquals("Octal", ASWToml::ToString(ASWToml::EIntegerBase::Octal),
         "EIntegerBase::Octal");
-    CheckEquals(std::string("Binary"), std::string(ASWToml::ToString(ASWToml::EIntegerBase::Binary)),
+    CheckEquals("Binary", ASWToml::ToString(ASWToml::EIntegerBase::Binary),
         "EIntegerBase::Binary");
-    CheckEquals(std::string("Unknown"), std::string(ASWToml::ToString(static_cast<ASWToml::EIntegerBase>(99))),
+    CheckEquals("Unknown", ASWToml::ToString(static_cast<ASWToml::EIntegerBase>(99)),
         "an unknown EIntegerBase");
 }
 //---------------------------------------------------------------------------

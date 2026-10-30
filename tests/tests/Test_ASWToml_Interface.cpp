@@ -667,13 +667,13 @@ ASW_TEST(TTest_ASWToml_Interface, Append_ConvertsTheValue)
 
     // Assert
     CheckTrue(port.IsOk() && element.IsOk() && literal.IsOk() && view.IsOk() && null.IsOk(), "each should succeed");
-    CheckEquals(std::string("ports = [80, 443]\n"
+    CheckEquals("ports = [80, 443]\n"
         "names = [\"a\", \"b\", \"\"]\n"
         "\n"
         "[[points]]\n"
         "x = 5\n"
         "y = 6\n"
-        "label = \"none\"\n"), toml.ToText(),
+        "label = \"none\"\n", toml.ToText(),
         "a value should be appended to an array, a struct as an element of an array of tables, and a text as a string");
     CheckEquals(0U, toml.GetReported().size(), "nothing should be reported");
 }
@@ -701,9 +701,9 @@ ASW_TEST(TTest_ASWToml_Interface, Append_UsesTheValueOptions)
     // Assert
     CheckTrue(ownOptions.IsOk() && givenOptions.IsOk() && seenOwn.IsOk() && seenGiven.IsOk() && textOwn.IsOk() &&
         textGiven.IsOk() && viewGiven.IsOk(), "each should succeed");
-    CheckEquals(std::string("masks = [1, 0xFF, 0o10]\n"
+    CheckEquals("masks = [1, 0xFF, 0o10]\n"
         "seen = [0x2, 0o3]\n"
-        "paths = ['C:\\x', \"C:\\\\y\", \"C:\\\\z\"]\n"), toml.ToText(),
+        "paths = ['C:\\x', \"C:\\\\y\", \"C:\\\\z\"]\n", toml.ToText(),
         "the converter and the document should get the object's value options, or the ones given");
     CheckEquals(3, toml.GetValueOptionsAsked(), "the object's should be asked for once for each Append() without");
 }
@@ -746,8 +746,8 @@ ASW_TEST(TTest_ASWToml_Interface, Apply_ExceptionIsReported)
         "An unexpected exception was thrown: remove failed", "name"),
         "the exception should be UnexpectedException with the path of the edit it came from");
     CheckEquals(8080, toml.GetValue("port", 0), "the edit before it should be kept");
-    CheckEquals(std::string("app"), toml.GetValue("name", ""), "the removal should change nothing");
-    CheckEquals(std::string("slow"), toml.GetValue("mode", ""), "and the edit after it shouldn't be made");
+    CheckEquals("app", toml.GetValue("name", ""), "the removal should change nothing");
+    CheckEquals("slow", toml.GetValue("mode", ""), "and the edit after it shouldn't be made");
     CheckEquals(1U, toml.GetReported().size(), "it should be reported once");
     if (toml.GetReported().size() == 1)
     {
@@ -845,7 +845,7 @@ ASW_TEST(TTest_ASWToml_Interface, Apply_SettingsEditIsRefused)
     CheckEmpty(ResultProblem(result, ETomlCode::InvalidArgument, refused.Message, "general.level"),
         "the setting's edit should be refused");
     CheckEquals(8080, toml.GetValue("port", 0), "the edit before it should be kept");
-    CheckEquals(std::string("app"), toml.GetValue("name", ""), "and the one after it not made");
+    CheckEquals("app", toml.GetValue("name", ""), "and the one after it not made");
     CheckEquals(1U, toml.GetReported().size(), "the failure should be reported once");
 }
 //---------------------------------------------------------------------------
@@ -892,9 +892,9 @@ ASW_TEST(TTest_ASWToml_Interface, Apply_UsesTheValueOptions)
 
     // Assert
     CheckTrue(result.IsOk(), "the edits should succeed: " + result.Message);
-    CheckEquals(std::string("port = 0xFF\n"
+    CheckEquals("port = 0xFF\n"
         "masks = [1, 0o10, 0x10]\n"
-        "mask = 0o11\n"), toml.ToText(), "each value should be written with its edit's value options, or the object's");
+        "mask = 0o11\n", toml.ToText(), "each value should be written with its edit's value options, or the object's");
     CheckEquals(2, toml.GetValueOptionsAsked(), "the object's should be asked for once for each edit without");
 }
 //---------------------------------------------------------------------------
@@ -927,7 +927,7 @@ ASW_TEST(TTest_ASWToml_Interface, GetValue_ConverterExceptionIsThrown)
     }
 
     // Assert
-    CheckEquals(std::string("converter failed"), standard, "a converter's exception should go through GetValue()");
+    CheckEquals("converter failed", standard, "a converter's exception should go through GetValue()");
     CheckEquals(7, unknown, "any exception");
     CheckEquals(0U, toml.GetReported().size(), "and not be reported");
 }
@@ -944,7 +944,7 @@ ASW_TEST(TTest_ASWToml_Interface, GetValue_ConvertsTheValue)
     // Act & Assert
     CheckEquals(80, toml.GetValue("port", 0), "an int");
     CheckEquals(80, static_cast<int>(toml.GetValue("port", std::uint16_t{ 0 })), "an integer of another type");
-    CheckEquals(std::string("example.com"), toml.GetValue("server.host", std::string()), "a string in a table");
+    CheckEquals("example.com", toml.GetValue("server.host", std::string()), "a string in a table");
     CheckTrue(toml.GetValue("mode", ETestMode::Fast) == ETestMode::Slow, "an enum by name");
     CheckTrue(toml.GetValue("ports", std::vector<int>()) == std::vector<int>{ 80 }, "an array");
     CheckEquals(2, toml.GetValue({ "points", 0, "y" }, 0), "at a path made of parts");
@@ -964,7 +964,7 @@ ASW_TEST(TTest_ASWToml_Interface, GetValue_InvalidPathGivesTheDefaultAndAnError)
 
     // Assert
     CheckEquals(5, number, "a path that isn't valid should give the default");
-    CheckEquals(std::string("none"), text, "with a text default too");
+    CheckEquals("none", text, "with a text default too");
     CheckEquals(2U, toml.GetReported().size(), "each should be reported");
     if (toml.GetReported().size() == 2)
     {
@@ -982,7 +982,7 @@ ASW_TEST(TTest_ASWToml_Interface, GetValue_MissingValueGivesTheDefault)
 
     // Act & Assert
     CheckEquals(5, toml.GetValue("missing", 5), "a missing key should give the default");
-    CheckEquals(std::string("none"), toml.GetValue("server.missing", std::string("none")), "in a table too");
+    CheckEquals("none", toml.GetValue("server.missing", std::string("none")), "in a table too");
     CheckEquals(6, toml.GetValue("ports[1]", 6), "an index past the end of an array");
     CheckEquals(7, toml.GetValue({ "points", 2, "x" }, 7), "of an array of tables");
     CheckEquals(8, toml.GetValue("port.x", 8), "a key under a value that isn't a table");
@@ -1042,7 +1042,7 @@ ASW_TEST(TTest_ASWToml_Interface, GetValue_StructKeepsTheDefaultsMembers)
     // Assert
     CheckEquals(1, point.X, "a key the table has should be read");
     CheckEquals(5, point.Y, "a member whose key the table lacks should be the default's");
-    CheckEquals(std::string("default"), point.Label, "each of them");
+    CheckEquals("default", point.Label, "each of them");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Interface, GetValue_TextDefaultReadsAString)
@@ -1055,16 +1055,16 @@ ASW_TEST(TTest_ASWToml_Interface, GetValue_TextDefaultReadsAString)
     // Act & Assert
     static_assert(std::is_same_v<decltype(toml.GetValue("name", "none")), std::string>,
         "a text default should give a std::string");
-    CheckEquals(std::string("app"), toml.GetValue("name", "none"), "a string literal default should read a string");
-    CheckEquals(std::string("none"), toml.GetValue("missing", "none"), "and be given when there is none");
-    CheckEquals(std::string("buffer"), toml.GetValue("missing", buffer), "a char array");
-    CheckEquals(std::string("view"), toml.GetValue("missing", std::string_view("view")), "a std::string_view");
+    CheckEquals("app", toml.GetValue("name", "none"), "a string literal default should read a string");
+    CheckEquals("none", toml.GetValue("missing", "none"), "and be given when there is none");
+    CheckEquals("buffer", toml.GetValue("missing", buffer), "a char array");
+    CheckEquals("view", toml.GetValue("missing", std::string_view("view")), "a std::string_view");
     CheckEquals(std::string(), toml.GetValue("missing", static_cast<char const*>(nullptr)), "a nullptr as \"\"");
-    CheckEquals(std::string("app"), toml.GetValue("name", "none", options), "with value options too");
-    CheckEquals(std::string("app"), toml.GetValue("name", std::string_view("none"), options), "each");
+    CheckEquals("app", toml.GetValue("name", "none", options), "with value options too");
+    CheckEquals("app", toml.GetValue("name", std::string_view("none"), options), "each");
     CheckEquals(1, toml.GetValueOptionsAsked(), "which are then not asked for");
     CheckEquals(0U, toml.GetReported().size(), "nothing should be reported");
-    CheckEquals(std::string("80"), toml.GetValue("port", "80"), "a value that isn't a string should give the default");
+    CheckEquals("80", toml.GetValue("port", "80"), "a value that isn't a string should give the default");
     CheckEquals(1U, toml.GetReported().size(), "and be reported");
     if (toml.GetReported().size() == 1)
     {
@@ -1235,7 +1235,7 @@ ASW_TEST(TTest_ASWToml_Interface, SetValue_ConvertsTheValue)
     // Assert
     CheckTrue(port.IsOk() && host.IsOk() && mode.IsOk() && array.IsOk() && table.IsOk() && flag.IsOk() &&
         value.IsOk(), "each should succeed");
-    CheckEquals(std::string("port = 8080\n"
+    CheckEquals("port = 8080\n"
         "mode = \"fast\"\n"
         "flag = true\n"
         "value = 1.5\n"
@@ -1247,7 +1247,7 @@ ASW_TEST(TTest_ASWToml_Interface, SetValue_ConvertsTheValue)
         "[point]\n"
         "x = 1\n"
         "y = 2\n"
-        "label = \"none\"\n"), toml.ToText(), "each value should be converted and set at its path");
+        "label = \"none\"\n", toml.ToText(), "each value should be converted and set at its path");
     CheckEquals(0U, toml.GetReported().size(), "nothing should be reported");
 }
 //---------------------------------------------------------------------------
@@ -1289,12 +1289,12 @@ ASW_TEST(TTest_ASWToml_Interface, SetValue_TextIsSetAsAString)
 
     // Assert
     CheckTrue(literal.IsOk() && array.IsOk() && view.IsOk() && null.IsOk() && path.IsOk(), "each should succeed");
-    CheckEquals(std::string("first = 1\n"
+    CheckEquals("first = 1\n"
         "literal = \"x\"\n"
         "array = \"buffer\"\n"
         "view = \"y\"\n"
         "null = \"\"\n"
-        "path = 'C:\\x'\n"), toml.ToText(), "each text should be set as a string, a nullptr as \"\"");
+        "path = 'C:\\x'\n", toml.ToText(), "each text should be set as a string, a nullptr as \"\"");
 }
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Interface, SetValue_UsesTheValueOptions)
@@ -1318,14 +1318,14 @@ ASW_TEST(TTest_ASWToml_Interface, SetValue_UsesTheValueOptions)
     // Assert
     CheckTrue(textOwn.IsOk() && textGiven.IsOk() && viewGiven.IsOk() && numberOwn.IsOk() && numberGiven.IsOk() &&
         seenOwn.IsOk() && seenGiven.IsOk(), "each should succeed");
-    CheckEquals(std::string("first = 1\n"
+    CheckEquals("first = 1\n"
         "a = \"C:\\\\x\"\n"
         "b = 'C:\\x'\n"
         "c = 'C:\\y'\n"
         "d = 0xFF\n"
         "e = 255\n"
         "f = 0x2\n"
-        "g = 0\n"), toml.ToText(),
+        "g = 0\n", toml.ToText(),
         "the converter and the document should get the object's value options, or the ones given");
     CheckEquals(3, toml.GetValueOptionsAsked(), "the object's should be asked for once for each SetValue() without");
 }
@@ -1373,7 +1373,7 @@ ASW_TEST(TTest_ASWToml_Interface, TryGetValue_ConvertsTheValue)
     CheckEmpty(ResultProblem(portsResult, ETomlCode::Ok, "", ""), "an array");
     CheckEmpty(ResultProblem(pointResult, ETomlCode::Ok, "", ""), "a struct");
     CheckEquals(80, static_cast<int>(port), "as the value is");
-    CheckEquals(std::string("example.com"), host, "each");
+    CheckEquals("example.com", host, "each");
     CheckTrue(ports == std::vector<int>{ 80 }, "each");
     CheckTrue(point.X == 1 && point.Y == 2 && point.Label == "none", "each");
     CheckEquals(0U, toml.GetReported().size(), "nothing should be reported");

@@ -221,10 +221,10 @@ ASW_TEST(TTest_ASWToml_Utils, IsValidUtf8_RejectsInvalidSequences)
 //---------------------------------------------------------------------------
 ASW_TEST(TTest_ASWToml_Utils, LineBreakText_MatchesEachBreak)
 {
-    CheckEquals(std::string(""), std::string(ASWToml::Detail::LineBreakText(ELineBreak::None)), "None");
-    CheckEquals(std::string("\n"), std::string(ASWToml::Detail::LineBreakText(ELineBreak::LF)), "LF");
-    CheckEquals(std::string("\r\n"), std::string(ASWToml::Detail::LineBreakText(ELineBreak::CRLF)), "CRLF");
-    CheckEquals(std::string(""), std::string(ASWToml::Detail::LineBreakText(static_cast<ELineBreak>(3))),
+    CheckEquals("", std::string(ASWToml::Detail::LineBreakText(ELineBreak::None)), "None");
+    CheckEquals("\n", std::string(ASWToml::Detail::LineBreakText(ELineBreak::LF)), "LF");
+    CheckEquals("\r\n", std::string(ASWToml::Detail::LineBreakText(ELineBreak::CRLF)), "CRLF");
+    CheckEquals("", std::string(ASWToml::Detail::LineBreakText(static_cast<ELineBreak>(3))),
         "a value that isn't an ELineBreak should have no characters");
 }
 //---------------------------------------------------------------------------
@@ -234,9 +234,9 @@ ASW_TEST(TTest_ASWToml_Utils, MessageText_QuotesAndCuts)
     std::string const forty(40, 'x');
 
     // Act & Assert
-    CheckEquals(std::string("\"0x_FF\""), ASWToml::Detail::MessageText("0x_FF"), "a short text in quotes");
-    CheckEquals(std::string("\"\""), ASWToml::Detail::MessageText(""), "an empty text");
-    CheckEquals(std::string("\"a?b?c?\""), ASWToml::Detail::MessageText(Bytes("a\tb\x7F" "c\0", 6)),
+    CheckEquals("\"0x_FF\"", ASWToml::Detail::MessageText("0x_FF"), "a short text in quotes");
+    CheckEquals("\"\"", ASWToml::Detail::MessageText(""), "an empty text");
+    CheckEquals("\"a?b?c?\"", ASWToml::Detail::MessageText(Bytes("a\tb\x7F" "c\0", 6)),
         "control characters (a tab, DEL and NUL) as '?'");
     CheckEquals("\"" + forty + "\"", ASWToml::Detail::MessageText(forty), "40 bytes in full");
     CheckEquals("\"" + forty + "\"...", ASWToml::Detail::MessageText(forty + "y"), "41 bytes cut to 40");
