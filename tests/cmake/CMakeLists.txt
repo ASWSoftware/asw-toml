@@ -39,7 +39,8 @@ if(NOT TARGET ASWToml::ASWToml)
     add_subdirectory("${ASWTOML_ROOT}" aswtoml)
 endif()
 
-# The test modules and helpers, which both the console runner and, on Windows, the Win32 GUI runner run.
+# The test modules and helpers, which both the console runner and, on Windows, the Win32 GUI runner run (see
+# ASWTomlTestObjects below).
 set(ASWTOML_TEST_SOURCES
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Base.cpp"
     "${ASWTOML_TESTS_DIR}/Test_ASWToml_Converters.cpp"
@@ -73,28 +74,41 @@ set(ASWTOML_TEST_SOURCES
 # Linux and some MinGW-w64 distributions.
 find_package(Threads REQUIRED)
 
-# The settings both test runners share.
-function(aswtoml_configure_test_runner target)
-    target_include_directories(${target} PRIVATE
-        "${ASWTOML_TESTS_DIR}"
-        "${ASWTOML_TOML_TEST_DIR}"
-    )
-
-    target_link_libraries(${target} PRIVATE ASWToml::ASWToml Threads::Threads)
-
+# The warnings the tests and the test runners compile with.
+function(aswtoml_set_test_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /Zc:__cplusplus)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+endfunction()
 
-    # The converter tests instantiate thousands of templates, so an unoptimized build of them has more sections than
-    # a Windows object file holds in its usual format (MSVC's error C1128); the big object format holds them. MSVC
-    # needs the option, while Clang and GNU as (binutils 2.47) switch to that format by themselves when a file needs
-    # it.
-    if(MSVC)
-        target_compile_options(${target} PRIVATE /bigobj)
-    endif()
+# The tests, compiled once for both test runners. An object library, whose object files are all linked into each
+# runner, rather than a static library, from which a linker only takes the object files something refers to: nothing
+# refers to a test module, since each registers itself, so every test would be left out.
+add_library(ASWTomlTestObjects OBJECT ${ASWTOML_TEST_SOURCES})
+
+target_include_directories(ASWTomlTestObjects PRIVATE
+    "${ASWUNITTESTS_SOURCE_DIR}"
+    "${ASWTOML_TESTS_DIR}"
+    "${ASWTOML_TOML_TEST_DIR}"
+)
+
+# PUBLIC, so the runners link them too, and compile their own sources with ASWToml's options (ASWTOML_SANITIZE's).
+target_link_libraries(ASWTomlTestObjects PUBLIC ASWToml::ASWToml Threads::Threads)
+aswtoml_set_test_warnings(ASWTomlTestObjects)
+
+# The converter tests instantiate thousands of templates, so an unoptimized build of them has more sections than a
+# Windows object file holds in its usual format (MSVC's error C1128); the big object format holds them. MSVC needs
+# the option, while Clang and GNU as (binutils 2.47) switch to that format by themselves when a file needs it.
+if(MSVC)
+    target_compile_options(ASWTomlTestObjects PRIVATE /bigobj)
+endif()
+
+# The settings both test runners share.
+function(aswtoml_configure_test_runner target)
+    target_link_libraries(${target} PRIVATE ASWTomlTestObjects)
+    aswtoml_set_test_warnings(${target})
 
     if(MINGW)
         # Statically link the MinGW runtime so the executable launches without MinGW's bin directory on PATH (e.g. on
@@ -107,10 +121,7 @@ function(aswtoml_configure_test_runner target)
     )
 endfunction()
 
-add_executable(ASWTomlTests
-    ${ASWUNITTESTS_SOURCES}
-    ${ASWTOML_TEST_SOURCES}
-)
+add_executable(ASWTomlTests ${ASWUNITTESTS_SOURCES})
 
 target_include_directories(ASWTomlTests PRIVATE "${ASWUNITTESTS_SOURCE_DIR}")
 aswtoml_configure_test_runner(ASWTomlTests)
@@ -124,10 +135,7 @@ if(WIN32)
     # and its sources list has the icon.
     include("${ASWUNITTESTS_ROOT}/win32/gui/src/ASWUnitTests_Win32GUI_Sources.cmake")
 
-    add_executable(ASWTomlTests_Win32_GUI WIN32
-        ${ASWUNITTESTS_WIN32_GUI_SOURCES}
-        ${ASWTOML_TEST_SOURCES}
-    )
+    add_executable(ASWTomlTests_Win32_GUI WIN32 ${ASWUNITTESTS_WIN32_GUI_SOURCES})
 
     target_include_directories(ASWTomlTests_Win32_GUI PRIVATE ${ASWUNITTESTS_WIN32_GUI_INCLUDE_DIRS})
     target_link_libraries(ASWTomlTests_Win32_GUI PRIVATE ${ASWUNITTESTS_WIN32_GUI_LIBRARIES})
